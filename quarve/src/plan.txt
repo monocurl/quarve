@@ -1,0 +1,14 @@
+// so we have signals (need to decide on exact observation)
+// - inline state and global state tree (i like this)
+// - how should Observed be changed, not good right now
+// - ok just have State and everything works out
+// trans_maps (easy)
+// event handlers (relatively normal + event streams)
+// templates
+// backings
+// portals (using a conduit and .send) syntax
+    // will be a bit tricky to make sure this works
+    // multiple passes will probably fix things, and not a problem
+// i think this is it? I think this will turn out well
+
+

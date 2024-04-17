@@ -1,0 +1,8 @@
+
+struct Sender {
+
+}
+
+struct Receiver {
+
+}
