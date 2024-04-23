@@ -490,7 +490,7 @@ impl<S: Stateful, M: ActionFilter<S>> Clone for State<S, M> {
 }
 
 impl<S: Stateful, M: ActionFilter<S>> Signal<S> for State<S, M> {
-    fn borrow<'a>(&'a self, _s: &'a Slock) -> StateRef<'a, S, M> {
+    fn borrow<'a>(&'a self, _s: &'a Slock) -> impl Deref<Target=S> {
         StateRef {
             main_ref: self.inner.borrow(),
             lifetime: PhantomData,
@@ -598,7 +598,7 @@ impl<T: Send + 'static> Clone for FixedSignal<T> {
 }
 
 impl<T: Send + 'static> Signal<T> for FixedSignal<T> {
-    fn borrow<'a>(&'a self, _s: &'a Slock) -> SignalRef<'a, T, InnerFixedSignal<T>> {
+    fn borrow<'a>(&'a self, _s: &'a Slock) -> impl Deref<Target=T> {
         SignalRef {
             src: self.inner.borrow(),
             marker: PhantomData

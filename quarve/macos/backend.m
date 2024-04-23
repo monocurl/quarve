@@ -1,41 +1,21 @@
 #import <Cocoa/Cocoa.h>
 
-@interface AppDelegate : NSObject <NSApplicationDelegate>
-
-@property (strong, nonatomic) NSWindow *window;
-
-@end
-
-@implementation AppDelegate
-
-- (void)applicationDidFinishLaunching:(NSNotification *)notification {
-    // Create a window with a frame
-    NSRect frame = NSMakeRect(0, 0, 400, 200);
-    self.window = [[NSWindow alloc] initWithContentRect:frame
-                                               styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable)
-                                                 backing:NSBackingStoreBuffered
-                                                   defer:NO];
-    [self.window setTitle:@"Quarve"];
-
-    // Display the window
-    [self.window center];
-    [self.window makeKeyAndOrderFront:nil];
-}
-
-@end
-
-void launch_window() {
+void main_loop() {
     @autoreleasepool {
-        // Create the application instance
         NSApplication *application = [NSApplication sharedApplication];
+	    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
 
-        // Create an instance of AppDelegate
-        AppDelegate *appDelegate = [[AppDelegate alloc] init];
+        NSRect frame = NSMakeRect(0, 0, 400, 200);
+        NSWindow* window = [[NSWindow alloc] initWithContentRect:frame
+                                                       styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable)
+                                                         backing:NSBackingStoreBuffered
+                                                           defer:NO];
+        [window setTitle:@"Quarve"];
 
-        // Set the application's delegate
-        [application setDelegate:appDelegate];
+        // Display the window
+        [window center];
+        [window makeKeyAndOrderFront:nil];
 
-        // Run the application event loop
         [application run];
     }
 }
