@@ -1,8 +1,3 @@
 
-struct Sender {
 
-}
 
-struct Receiver {
-
-}

@@ -31,6 +31,7 @@ fn new(name: &str) {
 
     // for local builds
     let update =
+        // TODO this should instead be environment variables
         if cfg!(debug_assertions) {
             // typically done in debug or examples folder
             "quarve = { path = \"../../quarve\" }\n"

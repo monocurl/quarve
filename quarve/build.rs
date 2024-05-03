@@ -5,7 +5,7 @@ fn build() {
     println!("cargo:rerun-if-changed=macos");
 
     cc::Build::new()
-        .file("macos/backend.m")
+        .file("macos/core.m")
         .compile("backend");
 }
 

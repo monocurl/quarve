@@ -1,46 +1,40 @@
-use crate::{ChannelProvider, Slock};
+use crate::core::{MainThreadMarker, Slock};
 
-struct Rect {
-    origin: Point,
-    size: Size,
-}
+unsafe trait View: Sized + 'static {
+    fn read_intrinsic_size();
+    fn read_xsquished_size();
+    fn read_ysquished_size();
+    fn read_stretched_size();
 
-struct Point {
-    x: f32,
-    y: f32,
-}
-
-struct Size {
-    w: f32,
-    h: f32
-}
-
-struct Backing {
-
-}
-
-trait View: 'static {
     type Backing;
-    fn backing_exchange(&mut self, ex: Option<Self::Backing>) -> Option<Self::Backing>;
-    fn backing(&self) -> Option<Self::Backing>;
+    /// Populate a new backing
+    /// The structure of the old backing is undefined
+    /// it could for example, be a textview that has garbage text in it
+    fn backing_exchange(&mut self, ex: Option<Self::Backing>, s: &Slock<MainThreadMarker>);
+    fn backing(&self) -> Self::Backing;
 
-    fn layout_up(&mut self) -> bool;
-    fn layout_down(&mut self, with_frame: i32);
+    /// The children have properly calculated their
+    /// minimum, intrinsic, and maximum sizes
+    /// We must now calculate ours
+    /// If any changes to the bounds happened,
+    /// this method should return true to indicate that
+    /// the parent must recalculate as well
+    /// This method is always called before layout down
+    /// and is generally the place to relay state changes to backings
+    fn layout_up(&mut self, s: &Slock<MainThreadMarker>) -> bool;
+
+    /// The children have properly calculated their
+    /// minimum, intrinsic, and maximum sizes
+    /// (and so have we)
+    /// Now, we must position them according to the given frame
+    fn layout_down(&mut self, with_frame: i32, s: &Slock<MainThreadMarker>);
 }
 
-// trait Template<W: ChannelProvider, A: ChannelProvider>: IntoView {
-//     fn template(&self, s: &Slock, winc: &W, appc: &A) -> impl IntoView;
-// }
-
-trait InnerView: View {
-
+trait Layout {
+    fn monotonicty();
 }
 
-struct ScrollView {
-
-}
-
-// vstack, hstack, zstack, flex
+// vstack, hstack, zstack, hflex, vflex
 // scrollview
 // text, textfield, textview
 // button, link, spacer, radiobutton, checkbox
@@ -48,12 +42,9 @@ struct ScrollView {
 // router view/mux/match
 // image
 // shape/path
-// sheet, popover
+// sheet, popover, codecompletionthing that's like a new window
 
 // fonts
-struct Font {
-
-}
 
 // modifiers
 // opacity
