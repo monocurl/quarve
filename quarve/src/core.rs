@@ -8,7 +8,7 @@ use std::time::Duration;
 use crate::native;
 use crate::native::{exit_window, register_window, WindowHandle};
 
-use crate::state::{ActionFilter, FixedSignal, JoinedSignal, Signal, Store, Stateful};
+use crate::state::{ActionFilter, FixedSignal, JoinedSignal, Signal, Stateful, Binding};
 
 const ANIMATION_THREAD_TICK: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
@@ -67,7 +67,7 @@ impl<M: ThreadMarker> Slock<M> {
     }
 
     pub fn join<T, U>(&self, t: &impl Signal<T>, u: &impl Signal<U>)
-        -> impl Signal<(T, U)>
+                      -> impl Signal<(T, U)>
         where T: Send + Clone + 'static,
               U: Send + Clone + 'static
     {
@@ -75,7 +75,7 @@ impl<M: ThreadMarker> Slock<M> {
     }
 
     pub fn join_map<T, U, V, F>(&self, t: &impl Signal<T>, u: &impl Signal<U>, map: F)
-                      -> impl Signal<V>
+                                -> impl Signal<V>
         where T: Send + Clone + 'static,
               U: Send + Clone + 'static,
               V: Send + 'static,
@@ -84,13 +84,14 @@ impl<M: ThreadMarker> Slock<M> {
         JoinedSignal::from(t, u, map, self.as_ref())
     }
 
-    pub fn apply<S, F>(&self, action: S::Action, to: &Store<S, F>)
+    pub fn apply<S, F>(&self, action: S::Action, to: &impl Binding<S, F>)
         where S: Stateful, F: ActionFilter<S>
     {
         to.apply(action, self.as_ref());
     }
 
-    pub fn read<'a, T: Send + 'static>(&'a self, from: &'a impl Signal<T>) -> impl Deref<Target=T> + 'a {
+    pub fn read<'a, T>(&'a self, from: &'a impl Signal<T>)
+        -> impl Deref<Target=T> + 'a where T: Send + 'static {
         from.borrow(self.as_ref())
     }
 }

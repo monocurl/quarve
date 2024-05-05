@@ -8,6 +8,7 @@ mod native;
 
 pub mod prelude {
     pub use crate::core::*;
+    pub use crate::state::*;
 }
 
 #[cfg(target_os = "macos")]
