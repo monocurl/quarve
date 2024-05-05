@@ -294,7 +294,7 @@ pub trait ApplicationProvider: Sized + 'static {
     fn will_spawn(&self, app: AppHandle<Self>, s: &Slock<MainThreadMarker>);
 }
 
-fn timer_subscriber(func: Box<dyn FnMut() -> bool + Send>) {
+pub(crate) fn timer_subscriber(func: Box<dyn FnMut() -> bool + Send>) {
     TIMER_WORKER.get()
         .expect("Cannot call quarve functions before launch!")
         .send(func)
