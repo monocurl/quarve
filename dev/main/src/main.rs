@@ -23,7 +23,7 @@ impl quarve::prelude::ApplicationProvider for ApplicationProvider {
     fn channels(&self) -> Self::ApplicationChannels {
         Channels {
 
-        }
+
     }
 
     fn will_spawn(&self, app: AppHandle<Self>, s: &Slock<MainThreadMarker>) {

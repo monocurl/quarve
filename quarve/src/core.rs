@@ -8,7 +8,7 @@ use std::time::Duration;
 use crate::native;
 use crate::native::{exit_window, register_window, WindowHandle};
 
-use crate::state::{ActionFilter, FixedSignal, JoinedSignal, Signal, Stateful, Binding};
+use crate::state::{ActionFilter, FixedSignal, JoinedSignal, Signal, Stateful, Binding, IntoAction};
 
 const ANIMATION_THREAD_TICK: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
@@ -34,8 +34,38 @@ pub struct MainThreadMarker;
 impl sealed::ThreadMarkerBase for MainThreadMarker {}
 impl ThreadMarker for MainThreadMarker {}
 
+#[cfg(debug_assertions)]
+pub(crate) struct DebugInfo {
+    // addresses of applied states
+    pub applying_transaction: RefCell<Vec<usize>>
+}
+
+#[cfg(not(debug_assertions))]
+struct DebugInfo {
+
+}
+
+#[cfg(debug_assertions)]
+impl DebugInfo {
+    fn new() -> Self {
+        DebugInfo {
+            applying_transaction: RefCell::new(Vec::new())
+        }
+    }
+}
+
+#[cfg(not(debug_assertions))]
+impl DebugInfo {
+    fn new() -> Self {
+        DebugInfo {
+
+        }
+    }
+}
+
 pub struct Slock<M: ThreadMarker=AnyThreadMarker> {
     _guard: MutexGuard<'static, ()>,
+    pub(crate) debug_info: DebugInfo,
     unsync_unsend: PhantomData<*const ()>,
     thread_marker: PhantomData<M>
 }
@@ -84,8 +114,8 @@ impl<M: ThreadMarker> Slock<M> {
         JoinedSignal::from(t, u, map, self.as_ref())
     }
 
-    pub fn apply<S, F>(&self, action: S::Action, to: &impl Binding<S, F>)
-        where S: Stateful, F: ActionFilter<S>
+    pub fn apply<S, F>(&self, action: impl IntoAction<S::Action, S>, to: &impl Binding<S, F>)
+        where S: Stateful, F: ActionFilter<Target=S>
     {
         to.apply(action, self.as_ref());
     }
@@ -122,7 +152,7 @@ fn timer_worker(receiver: Receiver<Box<dyn FnMut() -> bool + Send>>) {
         let curr_time = std::time::SystemTime::now();
         let passed = curr_time.duration_since(start_time).unwrap();
         if passed < ANIMATION_THREAD_TICK {
-            std::thread::sleep(ANIMATION_THREAD_TICK - passed);
+            thread::sleep(ANIMATION_THREAD_TICK - passed);
         }
     }
 }
@@ -199,7 +229,7 @@ impl<A: ApplicationProvider> ApplicationBase for Application<A> {
     fn run(&self) {
         let (sender, receiver) = sync_channel(5);
         /* join handle not needed */
-        let _ = std::thread::spawn(move || {
+        let _ = thread::spawn(move || {
             timer_worker(receiver)
         });
 
@@ -353,6 +383,7 @@ fn global_guard() -> MutexGuard<'static, ()> {
 pub fn slock() -> Slock {
     Slock {
         _guard: global_guard(),
+        debug_info: DebugInfo::new(),
         unsync_unsend: PhantomData,
         thread_marker: PhantomData
     }
@@ -361,6 +392,7 @@ pub fn slock() -> Slock {
 pub(crate) unsafe fn slock_main() -> Slock<MainThreadMarker> {
     Slock {
         _guard: global_guard(),
+        debug_info: DebugInfo::new(),
         unsync_unsend: PhantomData,
         thread_marker: PhantomData
     }
@@ -374,14 +406,14 @@ mod tests {
     /* of course, should only panic in debug scenarios */
     #[test]
     #[should_panic]
-    fn recursive_lock() {
+    fn test_recursive_lock_causes_panic() {
         let _s = slock();
         let _s2 = slock();
     }
 
     /* no panic test */
     #[test]
-    fn no_panic_test() {
+    fn test_different_threads_slock_no_panic() {
         let s = slock();
         let res = std::thread::spawn(|| {
             let _s = slock();

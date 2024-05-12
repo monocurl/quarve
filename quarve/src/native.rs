@@ -37,12 +37,12 @@ extern "C" {
 
 /* back -> front call backs */
 #[no_mangle]
-pub extern "C" fn front_will_spawn() {
+extern "C" fn front_will_spawn() {
     APP.with(|m| m.get().unwrap().will_spawn());
 }
 
 #[no_mangle]
-pub extern "C" fn front_window_should_close(handle: FatPointer) -> bool {
+extern "C" fn front_window_should_close(handle: FatPointer) -> bool {
     let s = unsafe {
         slock_main()
     };
@@ -51,7 +51,7 @@ pub extern "C" fn front_window_should_close(handle: FatPointer) -> bool {
 }
 
 #[no_mangle]
-pub extern "C" fn front_execute_box(bx: FatPointer) {
+extern "C" fn front_execute_box(bx: FatPointer) {
     /* ownership taken */
     let b: Box<dyn FnOnce(&Slock<MainThreadMarker>) + Send> = unsafe {
         std::mem::transmute(bx)
