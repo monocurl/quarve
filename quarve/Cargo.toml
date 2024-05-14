@@ -6,3 +6,6 @@ edition = "2021"
 [build-dependencies]
 cc = "1.0.94"
 
+[dev-dependencies]
+rand = "0.8.5"
+

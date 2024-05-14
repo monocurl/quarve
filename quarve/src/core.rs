@@ -4,16 +4,16 @@ use std::ops::Deref;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::sync::mpsc::{Receiver, sync_channel, SyncSender};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use crate::native;
 use crate::native::{exit_window, register_window, WindowHandle};
 
-use crate::state::{ActionFilter, FixedSignal, JoinedSignal, Signal, Stateful, Binding, IntoAction};
+use crate::state::{ActionFilter, FixedSignal, JoinedSignal, Signal, Stateful, Binding, IntoAction, CapacitatedSignal};
 
 const ANIMATION_THREAD_TICK: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
 static GLOBAL_STATE_LOCK: Mutex<()> = Mutex::new(());
-static TIMER_WORKER: OnceLock<SyncSender<Box<dyn FnMut() -> bool + Send>>> = OnceLock::new();
+static TIMER_WORKER: OnceLock<SyncSender<(Box<dyn FnMut(Duration, &Slock) -> bool + Send>, Instant)>> = OnceLock::new();
 
 thread_local! {
     pub(crate) static APP: OnceCell<Box<dyn ApplicationBase>> = OnceCell::new();
@@ -83,8 +83,18 @@ impl<M: ThreadMarker> AsRef<Slock> for Slock<M> {
 }
 
 impl<M: ThreadMarker> Slock<M> {
-    pub fn fixed<T: Send + 'static>(&self, val: T) -> impl Signal<T> {
+    pub fn fixed_signal<T: Send + 'static>(&self, val: T) -> impl Signal<T> {
         FixedSignal::new(val)
+    }
+
+    pub fn clock_signal(&self) -> impl Signal<f64> {
+        CapacitatedSignal::<IncreasingCapacitor>::clock(self)
+    }
+
+    pub fn timed_worker<F>(&self, f: F)
+        where F: FnMut(Duration, &Slock) -> bool + Send + 'static
+    {
+        timed_worker(f)
     }
 
     pub fn map<S, T, U, F>(&self, signal: &S, map: F) -> impl Signal<U>
@@ -126,20 +136,22 @@ impl<M: ThreadMarker> Slock<M> {
     }
 }
 
-fn timer_worker(receiver: Receiver<Box<dyn FnMut() -> bool + Send>>) {
-    let mut subscribers: Vec<Box<dyn FnMut() -> bool>> = Vec::new();
+fn timer_worker(receiver: Receiver<(Box<dyn FnMut(Duration, &Slock) -> bool + Send>, Instant)>) {
+    let mut subscribers: Vec<(Box<dyn FnMut(Duration, &Slock) -> bool + Send>, Instant)> = Vec::new();
 
     loop {
-        let start_time = std::time::SystemTime::now();
+        let start_time = Instant::now();
 
         while let Ok(handle) = receiver.try_recv() {
             subscribers.push(handle);
         }
 
         if !subscribers.is_empty() {
-            subscribers.retain_mut(|f| f());
+            let s = slock();
+            subscribers.retain_mut(|(f, start) | f(start_time.duration_since(*start), &s));
         }
-        else {
+
+        if subscribers.is_empty() {
             // if no subscribers, wait until a subscriber comes
             match receiver.recv() {
                 Ok(handle) => {
@@ -149,8 +161,8 @@ fn timer_worker(receiver: Receiver<Box<dyn FnMut() -> bool + Send>>) {
             }
         }
 
-        let curr_time = std::time::SystemTime::now();
-        let passed = curr_time.duration_since(start_time).unwrap();
+        let curr_time = Instant::now();
+        let passed = curr_time.duration_since(start_time);
         if passed < ANIMATION_THREAD_TICK {
             thread::sleep(ANIMATION_THREAD_TICK - passed);
         }
@@ -324,79 +336,89 @@ pub trait ApplicationProvider: Sized + 'static {
     fn will_spawn(&self, app: AppHandle<Self>, s: &Slock<MainThreadMarker>);
 }
 
-pub(crate) fn timer_subscriber(func: Box<dyn FnMut() -> bool + Send>) {
-    TIMER_WORKER.get()
-        .expect("Cannot call quarve functions before launch!")
-        .send(func)
-        .unwrap()
-}
+mod global {
+    use std::marker::PhantomData;
+    use std::sync::{Mutex, MutexGuard};
+    use std::thread;
+    use std::time::{Duration, Instant};
+    use crate::native;
+    use super::{APP, Application, ApplicationProvider, DebugInfo, GLOBAL_STATE_LOCK, MainThreadMarker, Slock, TIMER_WORKER};
 
-
-/// Must be called from the main thread in the main function
-pub fn launch(provider: impl ApplicationProvider) {
-    if let Err(_) = APP.with(|m| m.set(Box::new(Application::new(provider)))) {
-        panic!("Cannot launch an app multiple times");
+    pub fn timed_worker<F: FnMut(Duration, &Slock) -> bool + Send + 'static>(func: F) {
+        TIMER_WORKER.get()
+            .expect("Cannot call quarve functions before launch!")
+            .send((Box::new(func), Instant::now()))
+            .unwrap()
     }
 
-    APP.with(|m| m.get().unwrap().run());
-}
 
-
-/// Asynchronously runs a task on the main thread
-pub fn run_main<F: FnOnce(&Slock<MainThreadMarker>) + Send +'static>(f: F) {
-    native::run_main(f)
-}
-
-fn global_guard() -> MutexGuard<'static, ()> {
-    static LOCKED_THREAD: Mutex<Option<thread::ThreadId>> = Mutex::new(None);
-
-    #[cfg(debug_assertions)]
-    {
-        let lock = GLOBAL_STATE_LOCK.try_lock();
-        let ret = if let Ok(lock) = lock {
-            lock
+    /// Must be called from the main thread in the main function
+    pub fn launch(provider: impl ApplicationProvider) {
+        if let Err(_) = APP.with(|m| m.set(Box::new(Application::new(provider)))) {
+            panic!("Cannot launch an app multiple times");
         }
-        else {
-            if *LOCKED_THREAD.lock().unwrap() == Some(thread::current().id()) {
-                panic!("Attempted to acquire state lock when the current thread already has the state lock. \
+
+        APP.with(|m| m.get().unwrap().run());
+    }
+
+
+    /// Asynchronously runs a task on the main thread
+    pub fn run_main<F: FnOnce(&Slock<MainThreadMarker>) + Send + 'static>(f: F) {
+        native::run_main(f)
+    }
+
+    fn global_guard() -> MutexGuard<'static, ()> {
+        static LOCKED_THREAD: Mutex<Option<thread::ThreadId>> = Mutex::new(None);
+
+        #[cfg(debug_assertions)]
+        {
+            let lock = GLOBAL_STATE_LOCK.try_lock();
+            let ret = if let Ok(lock) = lock {
+                lock
+            } else {
+                if *LOCKED_THREAD.lock().unwrap() == Some(thread::current().id()) {
+                    panic!("Attempted to acquire state lock when the current thread already has the state lock. \
                         In production, this will result in a deadlock! \
                         Instead of acquiring the slock multiple times, pass around the Slock by reference."
-                )
-            }
+                    )
+                }
+                GLOBAL_STATE_LOCK.lock().expect("Unable to lock context")
+            };
+
+            *LOCKED_THREAD.lock().unwrap() = Some(thread::current().id());
+
+            ret
+        }
+
+        #[cfg(not(debug_assertions))]
+        {
             GLOBAL_STATE_LOCK.lock().expect("Unable to lock context")
-        };
-
-        *LOCKED_THREAD.lock().unwrap() = Some(thread::current().id());
-
-        ret
+        }
     }
 
-    #[cfg(not(debug_assertions))]
-    {
-        GLOBAL_STATE_LOCK.lock().expect("Unable to lock context")
+    /// Returns an owned copy of the context lock
+    /// Whichever thread owns the context object is allowed to do writes/reads to the state
+    /// tree
+    pub fn slock() -> Slock {
+        Slock {
+            _guard: global_guard(),
+            debug_info: DebugInfo::new(),
+            unsync_unsend: PhantomData,
+            thread_marker: PhantomData
+        }
     }
-}
 
-/// Returns an owned copy of the context lock
-/// Whichever thread owns the context object is allowed to do writes/reads to the state
-/// tree
-pub fn slock() -> Slock {
-    Slock {
-        _guard: global_guard(),
-        debug_info: DebugInfo::new(),
-        unsync_unsend: PhantomData,
-        thread_marker: PhantomData
-    }
-}
-
-pub(crate) unsafe fn slock_main() -> Slock<MainThreadMarker> {
-    Slock {
-        _guard: global_guard(),
-        debug_info: DebugInfo::new(),
-        unsync_unsend: PhantomData,
-        thread_marker: PhantomData
+    pub(crate) unsafe fn slock_main() -> Slock<MainThreadMarker> {
+        Slock {
+            _guard: global_guard(),
+            debug_info: DebugInfo::new(),
+            unsync_unsend: PhantomData,
+            thread_marker: PhantomData
+        }
     }
 }
+pub use global::*;
+use crate::state::capacitor::IncreasingCapacitor;
 
 #[cfg(test)]
 mod tests {
