@@ -88,7 +88,8 @@ impl<M: ThreadMarker> Slock<M> {
     }
 
     pub fn clock_signal(&self) -> impl Signal<f64> {
-        CapacitatedSignal::<IncreasingCapacitor>::clock(self)
+        let constant = FixedSignal::new(0.0);
+        CapacitatedSignal::from(&constant, IncreasingCapacitor, self)
     }
 
     pub fn timed_worker<F>(&self, f: F)
@@ -237,15 +238,20 @@ pub struct AppHandle<P: ApplicationProvider> {
     handle: &'static Application<P>
 }
 
+// may also be used in some testing code
+pub(crate) fn setup_timing_thread() {
+    let (sender, receiver) = sync_channel(5);
+    /* join handle not needed */
+    let _ = thread::spawn(move || {
+        timer_worker(receiver)
+    });
+
+    TIMER_WORKER.set(sender).expect("Application should only be run once");
+}
+
 impl<A: ApplicationProvider> ApplicationBase for Application<A> {
     fn run(&self) {
-        let (sender, receiver) = sync_channel(5);
-        /* join handle not needed */
-        let _ = thread::spawn(move || {
-            timer_worker(receiver)
-        });
-
-        TIMER_WORKER.set(sender).expect("Application should only be run once");
+        setup_timing_thread();
 
         /* run app */
         native::main_loop();

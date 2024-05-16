@@ -14,7 +14,7 @@ mod listener {
         pub(in crate::state) trait DirectlyInvertibleBase {
             // This function must only be called once per instance
             // (We cannot take ownership since the caller is often unsized)
-            unsafe fn invert(&mut self, s: &Slock);
+            fn invert(&mut self, s: &Slock);
 
             /// It must be guaranteed by the caller
             /// the other type is exactly the same as our type
@@ -286,7 +286,6 @@ mod group {
                 }
             }
 
-
             impl<T> GroupAction<T> for SetAction<T>
                 where T: Stateful + Copy + 'static
             {
@@ -294,6 +293,27 @@ mod group {
                     SetAction::Identity
                 }
             }
+
+
+            macro_rules! impl_set_stateful {
+                ($($t:ty), *) => {
+                    $(
+                        impl Stateful for $t {
+                            type Action = SetAction<$t>;
+                        }
+                    )*
+                };
+            }
+
+            impl_set_stateful!(
+                bool,
+                i8, u8,
+                i16, u16,
+                i32, u32,
+                i64, u64,
+                isize, usize,
+                f32, f64
+            );
         }
         pub use set_action::*;
 
@@ -338,34 +358,34 @@ mod group {
         }
         pub use string_action::*;
 
-        mod vector_action {
+        mod vec_action {
             use crate::core::{Slock, ThreadMarker};
             use crate::state::{GeneralListener, GroupBasis, InverseListener, Stateful, StoreContainer, Word};
 
             #[derive(Clone)]
-            pub enum VectorActionBasis<T> {
+            pub enum VecActionBasis<T> {
                 /* indices */
                 Insert(T, usize),
                 Remove(usize),
                 Swap(usize, usize)
             }
 
-            impl<T> GroupBasis<Vec<T>> for VectorActionBasis<T>
+            impl<T> GroupBasis<Vec<T>> for VecActionBasis<T>
                 where T: StoreContainer
             {
                 fn apply(self, to: &mut Vec<T>) -> Self {
                     match self {
-                        VectorActionBasis::Insert(elem, at) => {
+                        VecActionBasis::Insert(elem, at) => {
                             to.insert(at, elem);
-                            VectorActionBasis::Remove(at)
+                            VecActionBasis::Remove(at)
                         },
-                        VectorActionBasis::Remove(at) => {
+                        VecActionBasis::Remove(at) => {
                             let removed = to.remove(at);
-                            VectorActionBasis::Insert(removed, at)
+                            VecActionBasis::Insert(removed, at)
                         }
-                        VectorActionBasis::Swap(a, b) => {
+                        VecActionBasis::Swap(a, b) => {
                             to.swap(a, b);
-                            VectorActionBasis::Swap(a, b)
+                            VecActionBasis::Swap(a, b)
                         }
                     }
                 }
@@ -375,7 +395,7 @@ mod group {
             /* in certain cases (for inverse listener), some listeners can be held on a bit longer than they ideally should be */
             /* but this is somewhat hard to avoid */
             impl<T> Stateful for Vec<T> where T: StoreContainer {
-                type Action = Word<Vec<T>, VectorActionBasis<T>>;
+                type Action = Word<Vec<T>, VecActionBasis<T>>;
 
                 fn subtree_general_listener<F>(&self, f: F, s: &Slock<impl ThreadMarker>)
                     -> Option<impl Send + Fn(&Self, &Self::Action, &Slock) -> bool + 'static>
@@ -385,10 +405,10 @@ mod group {
                         store.subtree_general_listener(f.clone(), s);
                     }
 
-                    Some(move |_v: &Vec<T>, w: &Word<Vec<T>, VectorActionBasis<T>>, s: &Slock| {
+                    Some(move |_v: &Vec<T>, w: &Word<Vec<T>, VecActionBasis<T>>, s: &Slock| {
                         for a in w.iter() {
                             match a {
-                                VectorActionBasis::Insert(store, _) => {
+                                VecActionBasis::Insert(store, _) => {
                                     /* make sure it is updated of the listener */
                                     store.subtree_general_listener(f.clone(), s);
                                 }
@@ -411,10 +431,10 @@ mod group {
                         store.subtree_inverse_listener(f.clone(), s);
                     }
 
-                    Some(move |_v: &Vec<T>, w: &Word<Vec<T>, VectorActionBasis<T>>, s: &Slock| {
+                    Some(move |_v: &Vec<T>, w: &Word<Vec<T>, VecActionBasis<T>>, s: &Slock| {
                         for a in w.iter() {
                             match a {
-                                VectorActionBasis::Insert(store, _) => {
+                                VecActionBasis::Insert(store, _) => {
                                     /* make sure it is updated of the inverse listener */
                                     store.subtree_inverse_listener(f.clone(), s);
                                 }
@@ -431,7 +451,109 @@ mod group {
                 }
             }
         }
-        pub use vector_action::*;
+        pub use vec_action::*;
+
+        mod vector_action {
+            use std::array;
+            use std::ops::Mul;
+            use crate::core::{Slock, ThreadMarker};
+            use crate::state::{GeneralListener, GroupAction, GroupBasis, IntoAction, InverseListener, Stateful};
+            use crate::util::Vector;
+
+            pub struct VectorAction<T, const N: usize> where T: Stateful {
+                actions: [T::Action; N]
+            }
+
+            impl<T, const N: usize> VectorAction<T, N>
+                where T: Stateful
+            {
+                fn from_array(arr: [T::Action; N]) -> Self {
+                    VectorAction {
+                        actions: arr
+                    }
+                }
+            }
+
+            impl<T, const N: usize> GroupBasis<Vector<T, N>> for VectorAction<T, N>
+                where T: Stateful
+            {
+                fn apply(self, to: &mut Vector<T, N>) -> Self {
+                    let mut ret_actions: [T::Action; N] = array::from_fn(|_| T::Action::identity());
+
+                    for (i, (action, target)) in
+                    std::iter::zip(self.actions, &mut to.0).enumerate()
+                    {
+                        ret_actions[i] = action.apply(target);
+                    }
+
+                    VectorAction {
+                        actions: ret_actions
+                    }
+                }
+            }
+
+            impl<T, const N: usize> Mul for VectorAction<T, N> where T: Stateful {
+                type Output = Self;
+
+                fn mul(self, rhs: Self) -> Self::Output {
+                    let mut ret_actions: [T::Action; N] = array::from_fn(|_| T::Action::identity());
+
+                    for (i, (lhs, rhs)) in
+                        std::iter::zip(self.actions, rhs.actions).enumerate()
+                    {
+                        ret_actions[i] = lhs * rhs
+                    }
+
+                    VectorAction {
+                        actions: ret_actions
+                    }
+                }
+            }
+
+            impl<T, const N: usize> GroupAction<Vector<T, N>> for VectorAction<T, N>
+                where T: Stateful
+            {
+                fn identity() -> Self {
+                    VectorAction {
+                        actions: array::from_fn(|_| T::Action::identity())
+                    }
+                }
+            }
+            impl<U, T, const N: usize> IntoAction<VectorAction<T, N>, Vector<T, N>> for [U; N]
+                where U: IntoAction<T::Action, T>, T: Stateful
+            {
+                fn into_action(self, target: &Vector<T, N>) -> VectorAction<T, N> {
+                    let mut i = 0;
+                    VectorAction::from_array(self.map(|action| {
+                        let ret = action.into_action(&target.0[i]);
+                        i += 1;
+                        ret
+                    }))
+                }
+            }
+
+            impl<T, const N: usize> Stateful for Vector<T, N>
+                where T: Stateful
+            {
+                type Action = VectorAction<T, N>;
+
+                fn subtree_general_listener<F>(&self, f: F, s: &Slock<impl ThreadMarker>) -> Option<impl Send + Fn(&Self, &Self::Action, &Slock) -> bool + 'static> where F: GeneralListener + Clone {
+                    for item in &self.0 {
+                        item.subtree_general_listener(f.clone(), s);
+                    }
+
+                    None::<fn(&Self, &Self::Action, &Slock) -> bool>
+                }
+
+                fn subtree_inverse_listener<F>(&self, f: F, s: &Slock<impl ThreadMarker>) -> Option<impl Send + Fn(&Self, &Self::Action, &Slock) -> bool + 'static> where F: InverseListener + Clone {
+                    for item in &self.0 {
+                        item.subtree_inverse_listener(f.clone(), s);
+                    }
+
+                    None::<fn(&Self, &Self::Action, &Slock) -> bool>
+                }
+            }
+        }
 
         // pseudo action that converts into set action
         mod numeric_action {
@@ -467,38 +589,6 @@ mod group {
     }
     pub use action::*;
 
-    mod stateful {
-        use super::action::{SetAction};
-        use crate::state::{Stateful};
-
-        impl Stateful for bool { type Action = SetAction<bool>; }
-
-        impl Stateful for usize { type Action = SetAction<Self>; }
-
-        impl Stateful for isize { type Action = SetAction<Self>; }
-
-        impl Stateful for u8 { type Action = SetAction<Self>; }
-
-        impl Stateful for u16 { type Action = SetAction<Self>; }
-
-        impl Stateful for u32 { type Action = SetAction<Self>; }
-
-        impl Stateful for u64 { type Action = SetAction<Self>; }
-
-        impl Stateful for i8 { type Action = SetAction<Self>; }
-
-        impl Stateful for i16 { type Action = SetAction<Self>; }
-
-        impl Stateful for i32 { type Action = SetAction<Self>; }
-
-        impl Stateful for i64 { type Action = SetAction<Self>; }
-
-        impl Stateful for f32 { type Action = SetAction<Self>; }
-
-        impl Stateful for f64 { type Action = SetAction<Self>; }
-    }
-    #[allow(unused_imports)]
-    pub use stateful::*;
 }
 pub use group::*;
 
@@ -676,39 +766,174 @@ pub mod coupler {
 }
 
 pub mod capacitor {
+    use std::marker::PhantomData;
+    use std::ops::Sub;
     use std::time::Duration;
     use crate::state::Stateful;
+    use crate::util::numeric::{Lerp, Norm};
 
     pub trait Capacitor: Send + 'static {
-        type Input: Stateful + Clone;
-        type Output: Stateful;
+        type Target: Stateful;
 
-        fn target_set(&mut self, target: &Self::Input, span_time: Duration);
+        fn target_set(&mut self, target: &Self::Target, span_time: Option<Duration>);
 
         /// Precondition: Must only be called after set_target has been called one or more times
-        fn sample(&self, span_time: Duration) -> Self::Output;
-
-        // is the output where it wants to be, or do we need more time to settle in
-        fn active(&self, span_time: Duration) -> bool;
+        /// second parameter is whether or not to continue
+        fn sample(&mut self, span_time: Duration) -> (Self::Target, bool);
     }
 
     // A degenerate capacitor used for ClockSignal
     pub struct IncreasingCapacitor;
 
     impl Capacitor for IncreasingCapacitor {
-        type Input = usize;
-        type Output = f64;
+        type Target = f64;
 
-        fn target_set(&mut self, _target: &Self::Input, _span_time: Duration) {
+        fn target_set(&mut self, _target: &Self::Target, _span_time: Option<Duration>) {
             // no op
         }
 
-        fn sample(&self, span_time: Duration) -> Self::Output {
-            span_time.as_secs() as f64 + span_time.subsec_nanos() as f64 / 1e9
+        fn sample(&mut self, span_time: Duration) -> (Self::Target, bool) {
+            (span_time.as_secs_f64(), true)
+        }
+    }
+
+    pub struct ConstantTimeCapacitor<T>
+        where T: Stateful + Lerp
+    {
+        time: f64,
+        // span_time of when current run started
+        start_time: Option<Duration>,
+        from: Option<T>,
+        target: Option<T>,
+        is_initial: bool
+    }
+    impl<T> ConstantTimeCapacitor<T>
+        where T: Stateful + Lerp
+    {
+        pub fn new(time: f64) -> Self {
+            assert!(time > 1e-3, "Time too small");
+
+            ConstantTimeCapacitor {
+                time,
+                start_time: None,
+                from: None,
+                target: None,
+                is_initial: true
+            }
+        }
+    }
+
+    impl<T> Capacitor for ConstantTimeCapacitor<T>
+        where T: Stateful + Lerp + Copy
+    {
+        type Target = T;
+
+        fn target_set(&mut self, target: &Self::Target, span_time: Option<Duration>) {
+            if let (Some(old_from), Some(old_target)) = (self.from, self.target) {
+                self.from = if let Some(curr) = span_time {
+                    let alpha = (curr.as_secs_f64() - self.start_time.unwrap().as_secs_f64()) / self.time;
+                    Some(T::lerp(old_from, alpha, old_target))
+                } else {
+                    // not currently active
+                    self.target
+                };
+
+                self.target = Some(*target);
+                // if start of span, set duration to be 0
+                self.start_time = span_time.or(Some(Duration::from_secs(0)))
+                self.is_initial = false;
+            }
+            else {
+                self.target = Some(*target);
+                self.from = Some(*target);
+                self.start_time = Some(Duration::from_secs(0));
+            }
         }
 
-        fn active(&self, _span_time: Duration) -> bool {
-            true
+        fn sample(&mut self, span_time: Duration) -> (Self::Target, bool) {
+            let alpha = (span_time.as_secs_f64() - self.start_time.unwrap().as_secs_f64()) / self.time;
+            if alpha > 1.0 || self.is_initial {
+                (self.target.unwrap(), false)
+            }
+            else {
+                (T::lerp(self.from.unwrap(), alpha, self.target.unwrap()), true)
+            }
+        }
+    }
+
+    pub struct ConstantSpeedCapacitor<T>
+        where T: Stateful + Lerp + Norm
+    {
+        speed: f64,
+        // span_time of when current run started
+        start_time: Option<Duration>,
+        end_time: Option<Duration>,
+        from: Option<T>,
+        target: Option<T>,
+    }
+
+    impl<T> ConstantSpeedCapacitor<T>
+        where T: Stateful + Lerp + Norm + Sub<Output=T> + Copy
+    {
+        pub fn new(speed: f64) -> Self {
+            assert!(speed > 0.0, "speed must be positive");
+
+            ConstantSpeedCapacitor {
+                speed,
+                start_time: None,
+                end_time: None,
+                from: None,
+                target: None,
+            }
+        }
+    }
+
+    impl<T> Capacitor for ConstantSpeedCapacitor<T>
+        where T: Stateful + Lerp + Norm + Sub<Output=T> + Copy
+    {
+        type Target = T;
+
+        fn target_set(&mut self, target: &Self::Target, span_time: Option<Duration>) {
+            if let (Some(old_from), Some(old_target)) = (self.from, self.target) {
+                self.from = if let Some(curr) = span_time {
+                    let total = self.end_time.unwrap().as_secs_f64() - self.start_time.unwrap().as_secs_f64();
+                    let alpha = (curr.as_secs_f64() - self.start_time.unwrap().as_secs_f64()) / total;
+                    Some(T::lerp(old_from, alpha, old_target))
+                } else {
+                    // not currently active
+                    self.target
+                };
+
+                self.target = Some(*target);
+                // if start of span, set duration to be 0
+                self.start_time = span_time.or(Some(Duration::from_secs(0)));
+                let start = self.start_time.unwrap().as_secs_f64();
+                let norm = (target - self.from.unwrap()).norm();
+                let time = norm / self.speed;
+
+                self.end_time = Some(Duration::from_secs_f64(start + time));
+            }
+            else {
+                self.target = Some(*target);
+                self.from = Some(*target);
+                // marker for initial is end < start
+                self.start_time = Some(Duration::from_secs(1));
+                self.end_time = Some(Duration::from_secs(0));
+            }
+        }
+
+        fn sample(&mut self, span_time: Duration) -> (Self::Target, bool) {
+            let is_initial = self.end_time < self.start_time;
+            let alpha = (span_time.as_secs_f64() - self.start_time.unwrap().as_secs_f64()) / (
+                    self.end_time.unwrap().as_secs_f64() - self.start_time.unwrap().as_secs_f64()
+                );
+
+            if alpha > 1.0 || is_initial {
+                (self.target.unwrap(), false)
+            }
+            else {
+                (T::lerp(self.from.unwrap(), alpha, self.target.unwrap()), true)
+            }
         }
     }
 }
@@ -891,7 +1116,7 @@ mod store {
 
         impl<S, F, I> DirectlyInvertibleBase for ActionInverter<S, F, I>
             where S: Stateful, F: ActionFilter<Target=S>, I: RawStore<S, F> {
-            unsafe fn invert(&mut self, s: &Slock) {
+            fn invert(&mut self, s: &Slock) {
                 let Some(state) = self.state.upgrade() else {
                     return;
                 };
@@ -2153,7 +2378,7 @@ mod signal {
     use std::ops::{Deref};
     use crate::core::{Slock, ThreadMarker};
 
-    pub trait Signal<T: Send + 'static> : Send + Sync + 'static {
+    pub trait Signal<T: Send + 'static> : Sized + Send + Sync + 'static {
         fn borrow<'a>(&'a self, s: &'a Slock<impl ThreadMarker>) -> impl Deref<Target=T>;
 
         fn listen<F>(&self, listener: F, _s: &Slock<impl ThreadMarker>)
@@ -2163,6 +2388,10 @@ mod signal {
         fn map<S, F>(&self, map: F, _s: &Slock<impl ThreadMarker>) -> Self::MappedOutput<S>
             where S: Send + 'static,
                   F: Send + 'static + Fn(&T) -> S;
+
+        fn with_capacitor(&self, capacitor: impl Capacitor<Target=T>, s: &Slock) -> impl Signal<T> {
+            CapacitatedSignal::from(self, capacitor, s)
+        }
     }
 
     trait InnerSignal<T: Send> {
@@ -2604,32 +2833,30 @@ mod signal {
         use std::time::Duration;
         use crate::core::{Slock, ThreadMarker, timed_worker};
         use crate::state::signal::InnerSignal;
-        use crate::state::{FixedSignal, GeneralSignal, Signal};
-        use crate::state::capacitor::{Capacitor, IncreasingCapacitor};
+        use crate::state::{GeneralSignal, Signal};
+        use crate::state::capacitor::{Capacitor};
         use crate::state::signal::signal_audience::SignalAudience;
         use crate::state::signal::signal_ref::SignalRef;
         use crate::util::test_util::QuarveAllocTag;
-        use crate::util::UnsafeForceSend;
 
         struct CapacitatedInnerSignal<C> where C: Capacitor {
             _quarve_tag: QuarveAllocTag,
-            curr: C::Output,
+            curr: C::Target,
             capacitor: C,
-            actually_is_active: bool,
-            time_active: Duration,
-            audience: SignalAudience<C::Output>,
+            time_active: Option<Duration>,
+            audience: SignalAudience<C::Target>,
             parent_retain_count: AtomicU8
         }
 
         impl<C> CapacitatedInnerSignal<C> where C: Capacitor {
-            fn set_curr(&mut self, to: C::Output, s: &Slock) {
+            fn set_curr(&mut self, to: C::Target, s: &Slock) {
                 self.curr = to;
                 self.audience.dispatch(&self.curr, s);
             }
         }
 
-        impl<C> InnerSignal<C::Output> for CapacitatedInnerSignal<C> where C: Capacitor {
-            fn borrow(&self) -> &C::Output {
+        impl<C> InnerSignal<C::Target> for CapacitatedInnerSignal<C> where C: Capacitor {
+            fn borrow(&self) -> &C::Target {
                 &self.curr
             }
         }
@@ -2662,10 +2889,8 @@ mod signal {
 
             #[inline]
             fn update_active(this: &Arc<RefCell<CapacitatedInnerSignal<C>>>, mut_ref: &mut CapacitatedInnerSignal<C>, _s: &Slock) {
-                let capacitor_wants_active = mut_ref.capacitor.active(mut_ref.time_active);
-
-                if capacitor_wants_active && !mut_ref.actually_is_active {
-                    mut_ref.actually_is_active = true;
+                if mut_ref.time_active.is_none() {
+                    mut_ref.time_active = Some(Duration::from_secs(0));
 
                     /* spawn worker */
                     let worker_arc = ParentOwner(this.clone());
@@ -2674,35 +2899,36 @@ mod signal {
 
                         let mut borrow = worker_arc.borrow_mut();
                         let mut_ref = borrow.deref_mut();
-                        if !mut_ref.capacitor.active(duration) {
-                            mut_ref.time_active = Duration::from_secs(0);
-                            mut_ref.actually_is_active = false;
-                            return false;
+
+                        let (sample, cont) = mut_ref.capacitor.sample(duration);
+                        mut_ref.set_curr(sample, s);
+
+                        if !cont {
+                            mut_ref.time_active = None;
+
+                            false
                         }
+                        else {
+                            mut_ref.time_active = Some(duration);
 
-                        mut_ref.time_active = duration;
-                        mut_ref.set_curr(mut_ref.capacitor.sample(duration), s);
-
-                        !mut_ref.audience.is_empty() ||
-                            Arc::strong_count(&worker_arc) > mut_ref.parent_retain_count.load(SeqCst) as usize
+                            !mut_ref.audience.is_empty() ||
+                                Arc::strong_count(&worker_arc) > mut_ref.parent_retain_count.load(SeqCst) as usize
+                        }
                     })
                 }
             }
         }
 
-
         impl<C> CapacitatedSignal<C> where C: Capacitor {
-            pub fn from(source: &impl Signal<C::Input>, mut capacitor: C, s: &Slock<impl ThreadMarker>) -> Self {
-                let target = source.borrow(s);
-                capacitor.target_set(&target, Duration::from_secs(0));
-                let curr = capacitor.sample(Duration::from_secs(0));
+            pub fn from(source: &impl Signal<C::Target>, mut capacitor: C, s: &Slock<impl ThreadMarker>) -> Self {
+                capacitor.target_set(&*source.borrow(s), None);
+                let (curr, initial_thread) = capacitor.sample(Duration::from_secs(0));
 
                 let arc = Arc::new(RefCell::new(CapacitatedInnerSignal {
                     _quarve_tag: QuarveAllocTag::new(),
                     curr,
                     capacitor,
-                    actually_is_active: false,
-                    time_active: Duration::from_secs(0),
+                    time_active: None,
                     audience: SignalAudience::new(),
                     // parent signal and timer_thread
                     parent_retain_count: AtomicU8::new(2)
@@ -2713,50 +2939,46 @@ mod signal {
                 // the exact semantics we want is that the worker_thread (/parent signal) owns us
                 // but if no one is listening, and no listeners in the future
                 // which we can argue via retain count, only then can we cancel
-                let parent_arc = UnsafeForceSend(arc.clone());
+                let parent_arc = ParentOwner(arc.clone());
                 source.listen(move |curr, s| {
-                    let UnsafeForceSend(parent_arc) = &parent_arc;
+                    let ParentOwner(parent_arc) = &parent_arc;
 
                     let mut borrow = parent_arc.borrow_mut();
                     let mut_ref = borrow.deref_mut();
                     mut_ref.capacitor.target_set(curr, mut_ref.time_active);
-                    mut_ref.set_curr(mut_ref.capacitor.sample(mut_ref.time_active), s);
                     CapacitatedSignal::update_active(&parent_arc, mut_ref, s);
 
                     !mut_ref.audience.is_empty() ||
                         Arc::strong_count(&parent_arc) > mut_ref.parent_retain_count.load(SeqCst) as usize
                 }, s);
 
-                CapacitatedSignal::update_active(&arc, arc.borrow_mut().deref_mut(), s.as_ref());
+                // start thread if necessary
+                if initial_thread {
+                    CapacitatedSignal::update_active(&arc, arc.borrow_mut().deref_mut(), s.as_ref());
+                }
+
                 CapacitatedSignal {
                     inner: arc
                 }
             }
         }
 
-        impl<C> CapacitatedSignal<C> where C: Capacitor {
-            pub fn clock(s: &Slock<impl ThreadMarker>) -> CapacitatedSignal<IncreasingCapacitor> {
-                let constant = FixedSignal::new(0);
-                CapacitatedSignal::from(&constant, IncreasingCapacitor, s)
-            }
-        }
-
-        impl<C> Signal<C::Output> for CapacitatedSignal<C> where C: Capacitor {
-            fn borrow<'a>(&'a self, _s: &'a Slock<impl ThreadMarker>) -> impl Deref<Target=C::Output> {
+        impl<C> Signal<C::Target> for CapacitatedSignal<C> where C: Capacitor {
+            fn borrow<'a>(&'a self, _s: &'a Slock<impl ThreadMarker>) -> impl Deref<Target=C::Target> {
                 SignalRef {
                     src: self.inner.borrow(),
                     marker: Default::default(),
                 }
             }
 
-            fn listen<F>(&self, listener: F, s: &Slock<impl ThreadMarker>) where F: Fn(&C::Output, &Slock) -> bool + Send + 'static {
+            fn listen<F>(&self, listener: F, s: &Slock<impl ThreadMarker>) where F: Fn(&C::Target, &Slock) -> bool + Send + 'static {
                 self.inner.borrow_mut().audience.listen(listener, s);
             }
 
             type MappedOutput<S: Send + 'static> = GeneralSignal<S>;
             fn map<S, F>(&self, map: F, s: &Slock<impl ThreadMarker>) -> GeneralSignal<S>
                 where S: Send + 'static,
-                      F: Send + 'static + Fn(&C::Output) -> S
+                      F: Send + 'static + Fn(&C::Target) -> S
             {
                 GeneralSignal::from(self, map, |this, listener, s| {
                     this.inner.borrow_mut().audience.listen_box(listener, s);
@@ -2769,21 +2991,24 @@ mod signal {
         unsafe impl<C> Sync for CapacitatedSignal<C> where C: Capacitor {}
     }
     pub use timed_signal::*;
+    use crate::state::capacitor::Capacitor;
 }
 pub use signal::*;
 
 #[cfg(test)]
 mod test {
     use std::sync::{Arc, Mutex};
-    use std::sync::atomic::AtomicUsize;
-    use std::sync::atomic::Ordering::SeqCst;
+    use std::thread;
+    use std::time::Duration;
     use rand::Rng;
-    use crate::core::{slock};
+    use crate::core::{setup_timing_thread, slock};
     use crate::state::{Store, Signal, TokenStore, Binding, Bindable, ActionDispatcher, StoreContainer, NumericAction, DirectlyInvertible, Filterable, DerivedStore, Stateful, CoupledStore, StringActionBasis};
+    use crate::state::capacitor::{ConstantSpeedCapacitor, ConstantTimeCapacitor};
     use crate::state::coupler::{FilterlessCoupler, NumericStringCoupler};
     use crate::state::SetAction::{Identity, Set};
-    use crate::state::VectorActionBasis::{Insert, Remove, Swap};
+    use crate::state::VecActionBasis::{Insert, Remove, Swap};
     use crate::util::test_util::HeapChecker;
+    use crate::util::Vector;
 
 
     #[test]
@@ -3014,9 +3239,7 @@ mod test {
         drop(l);
         for (i, mut item) in res.take(90) {
             assert_eq!(*state.borrow(&s), (99 - i) * (99 - i));
-            unsafe {
-                item.invert(&s);
-            }
+            item.invert(&s);
         }
     }
 
@@ -3049,9 +3272,7 @@ mod test {
         let mut l = vectors.lock().unwrap();
         let mut res = l.take().unwrap().unwrap();
         drop(l);
-        unsafe {
-            res.invert(&s);
-        }
+        res.invert(&s);
         assert_eq!(*state.borrow(&s), 0);
     }
 
@@ -3363,9 +3584,7 @@ mod test {
         actions.reverse();
 
         for (i, mut action) in actions.into_iter().enumerate() {
-            unsafe {
-                action.invert(&s);
-            }
+            action.invert(&s);
             assert_eq!(*store.borrow(&s), strings[strings.len() - 1 - i].clone());
         }
     }
@@ -3405,14 +3624,12 @@ mod test {
         let mut l = vectors.lock().unwrap();
         let mut res = l.take().unwrap().unwrap();
         drop(l);
-        unsafe {
-            res.invert(&s);
-        }
+        res.invert(&s);
         assert_eq!(*state.borrow(&s), "asfasdf".to_string());
     }
 
     #[test]
-    fn test_vector() {
+    fn test_vec() {
         let _h = HeapChecker::new();
         let s = slock();
         let actions: Arc<Mutex<Vec<Box<dyn DirectlyInvertible>>>> = Arc::new(Mutex::new(Vec::new()));
@@ -3476,9 +3693,7 @@ mod test {
         actions_.reverse();
 
         for (i, mut action) in actions_.into_iter().enumerate() {
-            unsafe {
-                action.invert(&s);
-            }
+            action.invert(&s);
             assert_eq!(store.borrow(&s).len(), items[items.len() - 1 - i].len());
             for j in 0..items[items.len() - 1 - i].len() {
                 assert_eq!(*store.borrow(&s)[j].borrow(&s), items[items.len() - 1 - i][j]);
@@ -3487,7 +3702,7 @@ mod test {
     }
 
     #[test]
-    fn test_vector_collapsed() {
+    fn test_vec_collapsed() {
         let _h = HeapChecker::new();
         let s = slock();
         let store: Store<Vec<Store<i32>>> = Store::new(vec![Store::new(1)]);
@@ -3543,9 +3758,7 @@ mod test {
         let mut l = vectors.lock().unwrap();
         let mut res = l.take().unwrap().unwrap();
         drop(l);
-        unsafe {
-            res.invert(&s);
-        }
+        res.invert(&s);
 
         assert_eq!(store.borrow(&s).len(), 1);
     }
@@ -3557,7 +3770,7 @@ mod test {
         let store = Store::new(vec![Store::new(1)]);
         let count = Arc::new(Mutex::new(0));
         let c = count.clone();
-        store.subtree_general_listener(move |s| {
+        store.subtree_general_listener(move |_s| {
             *c.lock().unwrap() += 1;
             true
         }, &s);
@@ -3568,4 +3781,309 @@ mod test {
         // if it's still relevant
         assert_eq!(*count.lock().unwrap(), 3);
     }
+
+    #[test]
+    fn test_clock_signal() {
+        setup_timing_thread();
+
+        let _h = HeapChecker::new();
+        let clock = {
+            let s = slock();
+            s.clock_signal()
+        };
+
+        thread::sleep(Duration::from_millis(800));
+
+        {
+            let s = slock();
+            assert!((*clock.borrow(&s) - 0.8).abs() < 0.16);
+        }
+
+        // wait for another tick to make sure clock is
+        // freed from timer thread
+        drop(clock);
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    #[test]
+    fn test_constant_time_capacitor() {
+        setup_timing_thread();
+
+        let _h = HeapChecker::new();
+        let store = Store::new(0.0);
+        let capacitated = {
+            let s = slock();
+            let ret = store.with_capacitor(ConstantTimeCapacitor::new(1.0), &s);
+            store.apply(Set(1.5), &s);
+
+            ret
+        };
+
+        thread::sleep(Duration::from_millis(100));
+
+        {
+            let s = slock();
+            assert!((*capacitated.borrow(&s) - 0.15) < 0.02);
+        }
+
+        thread::sleep(Duration::from_millis(1000));
+
+        {
+            let s = slock();
+            assert!((*capacitated.borrow(&s) - 1.5) < 0.001);
+            store.apply(Set(2.0), &s);
+        }
+
+        thread::sleep(Duration::from_millis(400));
+
+        {
+            let s = slock();
+            assert!((*capacitated.borrow(&s) - 1.7) < 0.02);
+            store.apply(Set(10.0), &s);
+        }
+
+        {
+            let s = slock();
+            assert!((*capacitated.borrow(&s) - 2.0) < 0.001);
+        }
+
+        thread::sleep(Duration::from_millis(100));
+
+        {
+            let s = slock();
+            assert!((*capacitated.borrow(&s) - 2.8) < 0.02);
+            store.apply(Set(3.0), &s);
+        }
+
+        thread::sleep(Duration::from_millis(100));
+
+        {
+            let s = slock();
+            assert!((*capacitated.borrow(&s) - 2.82) < 0.02);
+        }
+
+        thread::sleep(Duration::from_millis(900));
+
+        {
+            let s = slock();
+            assert!((*capacitated.borrow(&s) - 3.0) < 0.02);
+        }
+
+        thread::sleep(Duration::from_millis(900));
+
+        {
+            let s = slock();
+            assert!((*capacitated.borrow(&s) - 3.0) < 0.02);
+        }
+
+        // wait for another tick to make sure clock is
+        // freed from timer thread
+        drop(capacitated);
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    #[test]
+    fn test_constant_speed_capacitor() {
+        setup_timing_thread();
+
+        let _h = HeapChecker::new();
+        let store = Store::new(0.0);
+        let capacitated = {
+            let s = slock();
+            let ret = store.with_capacitor(ConstantSpeedCapacitor::new(1.0), &s);
+            store.apply(Set(1.5), &s);
+
+            ret
+        };
+
+        thread::sleep(Duration::from_millis(100));
+
+        {
+            let s = slock();
+            assert!((*capacitated.borrow(&s) - 0.15) < 0.02);
+        }
+
+        thread::sleep(Duration::from_millis(1000));
+
+        {
+            let s = slock();
+            assert!((*capacitated.borrow(&s) - 1.5) < 0.001);
+            store.apply(Set(2.0), &s);
+        }
+
+        thread::sleep(Duration::from_millis(400));
+
+        {
+            let s = slock();
+            assert!((*capacitated.borrow(&s) - 1.7) < 0.02);
+            store.apply(Set(10.0), &s);
+        }
+
+        {
+            let s = slock();
+            assert!((*capacitated.borrow(&s) - 2.0) < 0.001);
+        }
+
+        thread::sleep(Duration::from_millis(100));
+
+        {
+            let s = slock();
+            assert!((*capacitated.borrow(&s) - 2.8) < 0.02);
+            store.apply(Set(3.0), &s);
+        }
+
+        thread::sleep(Duration::from_millis(100));
+
+        {
+            let s = slock();
+            assert!((*capacitated.borrow(&s) - 2.82) < 0.02);
+        }
+
+        thread::sleep(Duration::from_millis(900));
+
+        {
+            let s = slock();
+            assert!((*capacitated.borrow(&s) - 3.0) < 0.02);
+        }
+
+        thread::sleep(Duration::from_millis(900));
+
+        {
+            let s = slock();
+            assert!((*capacitated.borrow(&s) - 3.0) < 0.02);
+        }
+
+        // wait for another tick to make sure clock is
+        // freed from timer thread
+        drop(capacitated);
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    #[test]
+    fn test_vector_action() {
+        let _h = HeapChecker::new();
+        let s = slock();
+        let actions: Arc<Mutex<Vec<Box<dyn DirectlyInvertible>>>> = Arc::new(Mutex::new(Vec::new()));
+        let store = Store::new(Vector([1, 2]));
+        let weak = Arc::downgrade(&actions);
+        store.subtree_inverse_listener(move |invertible, _s| {
+            let Some(strong) = weak.upgrade() else {
+                return false;
+            };
+            strong.lock().unwrap().push(invertible);
+            true
+        }, &s);
+        store.apply([Set(2), Identity], &s);
+        assert_eq!(*store.borrow(&s).x(), 2);
+        assert_eq!(*store.borrow(&s).y(), 2);
+        store.apply([Set(3), Set(1)], &s);
+        assert_eq!(*store.borrow(&s).x(), 3);
+        assert_eq!(*store.borrow(&s).y(), 1);
+
+        let mut action = actions.lock().unwrap().pop().unwrap();
+        let mut action2 = actions.lock().unwrap().pop().unwrap();
+
+        action.invert(&s);
+        assert_eq!(*store.borrow(&s).x(), 2);
+        assert_eq!(*store.borrow(&s).y(), 2);
+
+        action2.invert(&s);
+        assert_eq!(*store.borrow(&s).x(), 1);
+        assert_eq!(*store.borrow(&s).y(), 2);
+    }
+
+    #[test]
+    fn test_vector_string() {
+        let _h = HeapChecker::new();
+        let s = slock();
+        let actions: Arc<Mutex<Vec<Box<dyn DirectlyInvertible>>>> = Arc::new(Mutex::new(Vec::new()));
+        let store = Store::new(Vector(["asdfasdf".to_string()]));
+        let mut strings: Vec<String> = Vec::new();
+        let a = actions.clone();
+        store.subtree_inverse_listener(move |invertible, _s| {
+            a.lock().unwrap().push(invertible);
+            true
+        }, &s);
+        for _i in 0 .. 127 {
+            let curr = store.borrow(&s).x().clone();
+            let i = rand::thread_rng().gen_range(0 .. std::cmp::max(1, curr.len()));
+            let u = rand::thread_rng().gen_range(0 ..= curr.len() - i);
+            strings.push(curr);
+            let mut str = rand::thread_rng().gen_range(0..100).to_string();
+            str = str[0..rand::thread_rng().gen_range(0..= str.len())].to_string();
+            store.apply([StringActionBasis::ReplaceSubrange(i..u+i, str)], &s);
+        }
+
+        let mut actions = std::mem::replace(&mut *actions.lock().unwrap(), Vec::new());
+        actions.reverse();
+
+        for (i, mut action) in actions.into_iter().enumerate() {
+            action.invert(&s);
+            assert_eq!(*store.borrow(&s).x(), strings[strings.len() - 1 - i].clone());
+        }
+    }
+
+    #[test]
+    fn test_vector_vec_collapsed() {
+        let _h = HeapChecker::new();
+        let s = slock();
+        let store: Store<Vector<Vec<Store<i32>>, 1>> = Store::new(Vector([vec![Store::new(1)]]));
+        let vec: Option<Box<dyn DirectlyInvertible>> = None;
+        let vectors = Arc::new(Mutex::new(Some(vec)));
+        let c = vectors.clone();
+        store.subtree_inverse_listener(move |inv, _s| {
+            let mut l1 = c.lock().unwrap();
+            let Some(l) = l1.as_mut() else {
+                return false;
+            };
+            if l.is_none() {
+                *l = Some(inv);
+            }
+            else {
+                unsafe {
+                    l.as_mut().unwrap().right_multiply(inv);
+                }
+            }
+            true
+        }, &s);
+        for _i in 0 .. 127 {
+            let curr: Vec<_> = store.borrow(&s).x()
+                .iter()
+                .map(|x| *x.borrow(&s))
+                .collect();
+
+            let range = if curr.is_empty() {
+                2..3
+            } else {
+                0..3
+            };
+            let act = match rand::thread_rng().gen_range(range) {
+                0 => {
+                    let u = rand::thread_rng().gen_range(0..curr.len());
+                    Remove(u)
+                },
+                1 => {
+                    let u = rand::thread_rng().gen_range(0..curr.len());
+                    let v = rand::thread_rng().gen_range(0..curr.len());
+                    Swap(u, v)
+                },
+                _ => {
+                    let u = rand::thread_rng().gen_range(0..= curr.len());
+                    let v = rand::thread_rng().gen_range(-100000..100000);
+
+                    Insert(Store::new(v), u)
+                },
+            };
+            store.apply([act], &s);
+        }
+
+        let mut l = vectors.lock().unwrap();
+        let mut res = l.take().unwrap().unwrap();
+        drop(l);
+        res.invert(&s);
+
+        assert_eq!(store.borrow(&s).0.len(), 1);
+    }
+
+
 }
