@@ -64,12 +64,13 @@ pub(crate) struct UnsafeForceSend<T>(pub T);
 unsafe impl<T> Send for UnsafeForceSend<T> {}
 
 mod vector {
-    use std::ops::{Add, Mul};
+    use std::fmt::Debug;
+    use std::ops::{Add, Mul, Sub};
     use crate::state::{Stateful};
-    use crate::util::numeric::{Norm};
+    use crate::util::numeric::{Lerp, Norm};
 
     // G^N
-    #[derive(Copy, Clone)]
+    #[derive(Copy, Clone, Debug)]
     pub struct Vector<T, const N: usize>(pub [T; N]) where T: Stateful;
 
     macro_rules! vector_get_set {
@@ -102,7 +103,7 @@ mod vector {
         }
     }
 
-    // scalar multiplication and addition are provided
+    // scalar multiplication, addition, and multiplication are provided
     impl<T, const N: usize> Add for Vector<T, N>
         where T: Stateful,
               T: Add<Output=T> + Copy {
@@ -112,6 +113,23 @@ mod vector {
             let mut i = 0;
             self.0 = self.0.map(|x| {
                 let ret = x + rhs.0[i];
+                i += 1;
+                ret
+            });
+
+            self
+        }
+    }
+
+    impl<T, const N: usize> Sub for Vector<T, N>
+        where T: Stateful,
+              T: Sub<Output=T> + Copy {
+        type Output = Vector<T, N>;
+
+        fn sub(mut self, rhs: Vector<T, N>) -> Self::Output {
+            let mut i = 0;
+            self.0 = self.0.map(|x| {
+                let ret = x - rhs.0[i];
                 i += 1;
                 ret
             });
@@ -169,6 +187,18 @@ mod vector {
         f32, f64
     );
 
+    impl<T, const N: usize> Lerp for Vector<T, N>
+        where T: Stateful + Copy + Lerp + Debug
+    {
+        fn lerp(mut lhs: Self, factor: f64, rhs: Self) -> Self {
+            for i in 0 .. N {
+                lhs.0[i] = T::lerp(lhs.0[i], factor, rhs.0[i]);
+            }
+
+            lhs
+        }
+    }
+
     impl<T, const N: usize> Norm for Vector<T, N>
         where T: Stateful + Copy + Mul<Output=T> + Into<f64>
     {
@@ -196,7 +226,7 @@ pub mod numeric {
             $(
                 impl Lerp for $t {
                     fn lerp(lhs: Self, factor: f64, rhs: Self) -> Self {
-                         ((lhs as f64) * factor + (rhs as f64) * factor) as $t
+                         ((lhs as f64) * (1.0 - factor) + (rhs as f64) * factor) as $t
                     }
                 }
             )*
@@ -256,4 +286,36 @@ pub mod numeric {
         isize,
         f32, f64
     );
+}
+
+pub mod markers {
+    use crate::util::markers::sealed_base::BoolMarkerBase;
+
+    mod sealed_base {
+        pub trait BoolMarkerBase {
+
+        }
+
+        pub trait ThreadMarkerBase {
+
+        }
+    }
+
+    pub trait BoolMarker: BoolMarkerBase { }
+    pub struct TrueMarker { }
+    pub struct FalseMarker { }
+
+    impl BoolMarkerBase for TrueMarker { }
+    impl BoolMarkerBase for FalseMarker { }
+    impl BoolMarker for TrueMarker { }
+    impl BoolMarker for FalseMarker { }
+
+    pub trait ThreadMarker: sealed_base::ThreadMarkerBase {}
+    pub struct AnyThreadMarker;
+    pub struct MainThreadMarker;
+
+    impl sealed_base::ThreadMarkerBase for AnyThreadMarker {}
+    impl ThreadMarker for AnyThreadMarker {}
+    impl sealed_base::ThreadMarkerBase for MainThreadMarker {}
+    impl ThreadMarker for MainThreadMarker {}
 }

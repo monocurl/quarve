@@ -1,4 +1,5 @@
-use crate::core::{MainThreadMarker, Slock};
+use crate::core::{Slock};
+use crate::util::markers::MainThreadMarker;
 
 unsafe trait View: Sized + 'static {
     fn read_intrinsic_size();

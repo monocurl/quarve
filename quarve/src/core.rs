@@ -21,23 +21,13 @@ thread_local! {
 
 pub trait ChannelProvider: 'static { }
 
-mod sealed {
-    pub trait ThreadMarkerBase {
 
-    }
-}
-pub trait ThreadMarker: sealed::ThreadMarkerBase {}
-pub struct AnyThreadMarker;
-impl sealed::ThreadMarkerBase for AnyThreadMarker {}
-impl ThreadMarker for AnyThreadMarker {}
-pub struct MainThreadMarker;
-impl sealed::ThreadMarkerBase for MainThreadMarker {}
-impl ThreadMarker for MainThreadMarker {}
 
 #[cfg(debug_assertions)]
 pub(crate) struct DebugInfo {
     // addresses of applied states
-    pub applying_transaction: RefCell<Vec<usize>>
+    pub applying_transaction: RefCell<Vec<usize>>,
+    start_time: Instant
 }
 
 #[cfg(not(debug_assertions))]
@@ -49,10 +39,22 @@ struct DebugInfo {
 impl DebugInfo {
     fn new() -> Self {
         DebugInfo {
-            applying_transaction: RefCell::new(Vec::new())
+            applying_transaction: RefCell::new(Vec::new()),
+            start_time: Instant::now()
         }
     }
 }
+#[cfg(debug_assertions)]
+impl Drop for DebugInfo {
+    fn drop(&mut self) {
+        let hang =  Instant::now().duration_since(self.start_time);
+        if hang > Duration::from_millis(200) {
+            println!("quarve: state locked attained for {} milliseconds. \
+            This may cause visible stalls; please try to release the state lock as soon as the transaction is complete.", hang.as_millis());
+        }
+    }
+}
+
 
 #[cfg(not(debug_assertions))]
 impl DebugInfo {
@@ -348,7 +350,8 @@ mod global {
     use std::thread;
     use std::time::{Duration, Instant};
     use crate::native;
-    use super::{APP, Application, ApplicationProvider, DebugInfo, GLOBAL_STATE_LOCK, MainThreadMarker, Slock, TIMER_WORKER};
+    use crate::util::markers::MainThreadMarker;
+    use super::{APP, Application, ApplicationProvider, DebugInfo, GLOBAL_STATE_LOCK, Slock, TIMER_WORKER};
 
     pub fn timed_worker<F: FnMut(Duration, &Slock) -> bool + Send + 'static>(func: F) {
         TIMER_WORKER.get()
@@ -425,9 +428,11 @@ mod global {
 }
 pub use global::*;
 use crate::state::capacitor::IncreasingCapacitor;
+use crate::util::markers::{AnyThreadMarker, MainThreadMarker, ThreadMarker};
 
 #[cfg(test)]
 mod tests {
+    use std::thread::sleep;
     use std::time::Duration;
     use crate::core::slock;
 
@@ -449,7 +454,7 @@ mod tests {
             return 1;
         });
 
-        std::thread::sleep(Duration::from_millis(100));
+        sleep(Duration::from_millis(100));
         drop(s);
 
         assert_eq!(res.join().unwrap(), 1);

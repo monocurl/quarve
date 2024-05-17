@@ -1,6 +1,7 @@
 use std::ffi::c_void;
 use std::ops::{Deref};
-use crate::core::{APP, ApplicationProvider, MainThreadMarker, Slock, slock_main, WindowBase, WindowProvider};
+use crate::core::{APP, ApplicationProvider, Slock, slock_main, WindowBase, WindowProvider};
+use crate::util::markers::MainThreadMarker;
 
 pub type WindowHandle = usize;
 
