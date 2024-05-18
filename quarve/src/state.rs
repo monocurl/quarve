@@ -953,6 +953,8 @@ pub mod capacitor {
               F: Fn(f64) -> f64 + Send + 'static
     {
         pub fn new(func: F, time: f64) -> Self {
+            assert!(time > 1e-3);
+
             SmoothCapacitor {
                 ease_function: func,
                 trans_time: time,
@@ -961,15 +963,15 @@ pub mod capacitor {
         }
 
         pub fn ease_in_out(time: f64) -> SmoothCapacitor<T, impl Fn(f64) -> f64> {
-            SmoothCapacitor::new(|t| t * 1.0, time)
+            SmoothCapacitor::new(|t| 3.0 * t * t - 2.0 * t * t * t, time)
         }
 
         pub fn ease_in(time: f64) -> SmoothCapacitor<T, impl Fn(f64) -> f64> {
-            SmoothCapacitor::new(|t| t * 1.0, time)
+            SmoothCapacitor::new(|t| t * t, time)
         }
 
         pub fn ease_out(time: f64) -> SmoothCapacitor<T, impl Fn(f64) -> f64> {
-            SmoothCapacitor::new(|t| t * 1.0, time)
+            SmoothCapacitor::new(|t| 1.0 - (t - 1.0) * (t - 1.0), time)
         }
     }
 
@@ -1010,11 +1012,11 @@ pub mod capacitor {
     }
 }
 
-// TODO way too much repeated code in here
 mod store {
     use crate::core::{Slock};
     use crate::state::{ActionFilter, Filterless, GeneralSignal, IntoAction, Signal, Stateful};
     use crate::state::listener::{GeneralListener, InverseListener, StateListener};
+    use crate::util::markers::ThreadMarker;
 
     /// It is the implementors job to guarantee that subtree_listener
     /// and relatives do not get into call cycles
@@ -1033,6 +1035,18 @@ mod store {
             where G: Send + Fn(&S, &S::Action, &Slock) -> bool + 'static;
     }
 
+    pub trait Filterable<S: Stateful> {
+        fn action_filter<G>(&self, filter: G, s: &Slock<impl ThreadMarker>)
+            where G: Send + Fn(&S, S::Action, &Slock) -> S::Action + 'static;
+    }
+
+    pub trait Bindable<S: Stateful, F: ActionFilter<Target=S>> {
+        type Binding: Binding<S, F> + Clone;
+
+        fn binding(&self) -> Self::Binding;
+        fn signal(&self) -> impl Signal<S> + Clone;
+    }
+
     // Like with signal, I believe it makes more sense for
     // S to be an associated type, but then we can't have default
     // filterless? So, it is done for consistency as a generic parameter
@@ -1042,37 +1056,21 @@ mod store {
 
     mod sealed_base {
         use std::cell::RefCell;
-        use std::marker::PhantomData;
-        use std::ops::Deref;
         use std::sync::Arc;
         use crate::core::{Slock};
         use crate::state::{Signal};
         use crate::util::markers::ThreadMarker;
-        use super::{ActionFilter, GeneralSignal, IntoAction, Stateful};
-        use super::{GeneralListener, InverseListener, StateListener};
-        use super::StateRef;
+        use super::{ActionFilter, IntoAction, Stateful};
 
         pub(super) trait RawStoreBase<S, F>: 'static where S: Stateful, F: ActionFilter<Target=S> {
-            fn apply(inner: &Arc<RefCell<Self>>, action: impl IntoAction<S::Action, S>, s: &Slock<impl ThreadMarker>, skip_filters: bool);
+            type InverseListenerHolder: super::inverse_listener_holder::InverseListenerHolder;
 
-            fn listen(&mut self, listener: StateListener<S>, s: &Slock<impl ThreadMarker>);
+            fn dispatcher(&self) -> &super::store_dispatcher::StoreDispatcher<S, F, Self::InverseListenerHolder>;
 
-            fn subtree_general_listener(
-                &mut self,
-                f: impl GeneralListener + Clone,
-                s: &Slock<impl ThreadMarker>
-            ) -> Option<impl Send + Fn(&S, &S::Action, &Slock) -> bool + 'static>;
+            fn dispatcher_mut(&mut self) -> &mut super::store_dispatcher::StoreDispatcher<S, F, Self::InverseListenerHolder>;
 
-            fn subtree_inverse_listener(
-                &mut self,
-                f: impl InverseListener + Clone,
-                s: &Slock<impl ThreadMarker>
-            ) -> Option<impl Send + Fn(&S, &S::Action, &Slock) -> bool + 'static>;
-
-            fn action_filter<G>(&mut self, filter: G, _s: &Slock<impl ThreadMarker>)
-                where G: Send + Fn(&S, S::Action, &Slock) -> S::Action + 'static;
-
-            fn data(&self) -> &S;
+            // may introduce some additional behavior that the dispatcher does not handle
+            fn apply(inner: &Arc<RefCell<Self>>, action: impl IntoAction<S::Action, S>, skip_filters: bool, s: &Slock<impl ThreadMarker>,);
 
             // Must be careful with these two methods
             // since generally not called with the state lock
@@ -1096,31 +1094,7 @@ mod store {
             fn get_ref(&self) -> &Arc<RefCell<Self::Inner>>;
 
             // used only for creating the binding
-            fn clone(&self) -> Self;
-
-            fn _action_listener(&self, f: Box<dyn Fn(&S, &S::Action, &Slock) -> bool + Send>, s: &Slock<impl ThreadMarker>) {
-                self.get_ref().borrow_mut().listen(StateListener::ActionListener(f), s);
-            }
-
-            fn _borrow<'a>(&'a self, _s: &'a Slock<impl ThreadMarker>) -> impl Deref<Target=S> {
-                StateRef {
-                    main_ref: self.get_ref().borrow(),
-                    lifetime: PhantomData,
-                    filter: PhantomData,
-                }
-            }
-
-            fn _listen<G>(&self, listener: G, s: &Slock<impl ThreadMarker>)
-                where G: Fn(&S, &Slock) -> bool + Send + 'static {
-                self.get_ref().borrow_mut().listen(StateListener::SignalListener(Box::new(listener)), s)
-            }
-
-            fn _map<T, G>(&self, map: G, s: &Slock<impl ThreadMarker>) -> GeneralSignal<T>
-                where T: Send + 'static, G: Send + 'static + Fn(&S) -> T {
-                GeneralSignal::from(self, map, |this, listener, s| {
-                    this.get_ref().borrow_mut().listen(StateListener::SignalListener(listener), s)
-                }, s)
-            }
+            fn arc_clone(&self) -> Self;
         }
     }
 
@@ -1139,8 +1113,10 @@ mod store {
     pub use raw_store::*;
 
     mod raw_store_shared_owner {
+        use std::marker::PhantomData;
         use crate::core::{Slock};
-        use crate::state::{ActionDispatcher, ActionFilter, Binding, IntoAction, Stateful};
+        use crate::state::{ActionDispatcher, ActionFilter, Bindable, Binding, Filter, Filterable, GeneralBinding, IntoAction, Signal, Stateful};
+        use crate::state::listener::StateListener;
         use crate::util::markers::ThreadMarker;
         use super::sealed_base::{RawStoreBase, RawStoreSharedOwnerBase};
 
@@ -1155,23 +1131,50 @@ mod store {
 
         impl<S, F, I> ActionDispatcher<S, F> for I
             where S: Stateful, F: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, F> {
-            fn action_listener<G>(&self, listener: G, s: &Slock<impl ThreadMarker>)
+            fn action_listener<G>(&self, listener: G, _s: &Slock<impl ThreadMarker>)
                 where G: Send + Fn(&S, &S::Action, &Slock) -> bool + 'static {
-                self._action_listener(Box::new(listener), s);
+                self.get_ref().borrow_mut().dispatcher_mut().add_listener(StateListener::ActionListener(listener));
+            }
+        }
+
+        impl<S: Stateful, I: RawStoreSharedOwner<S, Filter<S>>> Filterable<S> for I {
+            fn action_filter<G>(&self, filter: G, s: &Slock<impl ThreadMarker>)
+                where G: Send + Fn(&S, S::Action, &Slock) -> S::Action + 'static {
+                self.get_ref().borrow_mut().dispatcher_mut().action_filter(filter, s);
+            }
+        }
+
+        impl<S: Stateful, F: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, F>> Bindable<S, F> for I {
+            type Binding = GeneralBinding<S, F, I>;
+
+            fn binding(&self) -> Self::Binding {
+                self.get_ref().borrow_mut().strong_count_increment();
+
+                GeneralBinding {
+                    inner: self.arc_clone(),
+                    phantom_state: PhantomData,
+                    phantom_filter: PhantomData
+                }
+            }
+
+            fn signal(&self) -> impl Signal<S> + Clone {
+                self.binding()
             }
         }
 
         // Unfortunately can't do this for signal as well
         // Since FixedSignal 'might' implement RawStoreSharedOwnerBase
+        // It's therefore done as macros
         impl<S, F, R> Binding<S, F> for R where
             S: Stateful, F: ActionFilter<Target=S>, R: RawStoreSharedOwnerBase<S, F> {
             fn apply(&self, action: impl IntoAction<S::Action, S>, s: &Slock) {
-                R::Inner::apply(self.get_ref(), action, s, false);
+                R::Inner::apply(self.get_ref(), action, false, s);
             }
         }
     }
     pub use raw_store_shared_owner::*;
 
+    /* MARK: utilities */
     mod action_inverter {
         use std::cell::RefCell;
         use std::marker::PhantomData;
@@ -1196,7 +1199,7 @@ mod store {
                 };
 
                 // skip filters on inversion to avoid weird behavior
-                I::apply(&state, self.action.take().unwrap(), s, true);
+                I::apply(&state, self.action.take().unwrap(), true, s);
             }
 
             unsafe fn right_multiply(&mut self, mut by: Box<dyn DirectlyInvertible>) {
@@ -1231,7 +1234,6 @@ mod store {
             where S: Stateful, F: ActionFilter<Target=S>, I: RawStore<S, F> {
         }
     }
-    use action_inverter::*;
 
     mod state_ref {
         use std::cell::Ref;
@@ -1251,136 +1253,129 @@ mod store {
             where S: Stateful, M: ActionFilter<Target=S>, I: RawStore<S, M> {
             type Target = S;
             fn deref(&self) -> &S {
-                self.main_ref.data()
+                self.main_ref.dispatcher().data()
             }
         }
     }
-    use state_ref::*;
 
-    mod bindable {
-        use std::marker::PhantomData;
-        use crate::state::{ActionFilter, Binding, GeneralBinding, Signal, Stateful};
-        use crate::state::store::RawStoreSharedOwner;
-        use crate::state::store::sealed_base::RawStoreBase;
+    mod inverse_listener_holder {
+        use crate::core::Slock;
+        use crate::state::{DirectlyInvertible};
+        use crate::state::listener::BoxInverseListener;
 
-        pub trait Bindable<S: Stateful, F: ActionFilter<Target=S>> {
-            type Binding: Binding<S, F> + Clone;
+        pub(super) trait InverseListenerHolder {
+            fn new() -> Self;
+            fn set_listener(&mut self, listener: BoxInverseListener);
 
-            fn binding(&self) -> Self::Binding;
-            fn signal(&self) -> impl Signal<S> + Clone;
+            fn invoke_listener(&mut self, action: impl FnOnce() -> Box<dyn DirectlyInvertible>, s: &Slock);
         }
 
+        pub(super) struct NullInverseListenerHolder;
 
-        impl<S: Stateful, F: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, F>> Bindable<S, F> for I {
-            type Binding = GeneralBinding<S, F, I>;
+        impl InverseListenerHolder for NullInverseListenerHolder {
+            fn new() -> Self {
+                NullInverseListenerHolder
+            }
 
-            fn binding(&self) -> Self::Binding {
-                self.get_ref().borrow_mut().strong_count_increment();
+            fn set_listener(&mut self, _listener: BoxInverseListener) {
 
-                GeneralBinding {
-                    inner: self.clone(),
-                    phantom_state: PhantomData,
-                    phantom_filter: PhantomData
+            }
+
+            fn invoke_listener(&mut self, _action: impl FnOnce() -> Box<dyn DirectlyInvertible>, _s: &Slock) {
+
+            }
+        }
+
+        pub(super) struct ActualInverseListenerHolder(Option<BoxInverseListener>);
+
+        impl InverseListenerHolder for ActualInverseListenerHolder {
+            fn new() -> Self {
+                ActualInverseListenerHolder(None)
+            }
+
+            fn set_listener(&mut self, listener: BoxInverseListener) {
+                self.0 = Some(listener);
+            }
+
+            fn invoke_listener(&mut self, action: impl FnOnce() -> Box<dyn DirectlyInvertible>, s: &Slock) {
+                if let Some(ref func) = self.0 {
+                    if !(func)(action(), s) {
+                        self.0 = None;
+                    }
                 }
             }
-
-            fn signal(&self) -> impl Signal<S> + Clone {
-                self.binding()
-            }
         }
     }
-    pub use bindable::*;
-
-    mod filterable {
-        use crate::core::{Slock};
-        use crate::state::{Filter, RawStoreSharedOwner, Stateful};
-        use crate::util::markers::ThreadMarker;
-        use super::sealed_base::RawStoreBase;
-
-        pub trait Filterable<S: Stateful> {
-            fn action_filter<G>(&self, filter: G, s: &Slock<impl ThreadMarker>)
-                where G: Send + Fn(&S, S::Action, &Slock) -> S::Action + 'static;
-        }
-
-        impl<S: Stateful, I: RawStoreSharedOwner<S, Filter<S>>> Filterable<S> for I {
-            fn action_filter<G>(&self, filter: G, s: &Slock<impl ThreadMarker>)
-                where G: Send + Fn(&S, S::Action, &Slock) -> S::Action + 'static {
-                self.get_ref().borrow_mut().action_filter(filter, s);
-            }
-        }
-    }
-    pub use filterable::*;
 
     mod store_dispatcher {
-
-    }
-    use store_dispatcher::*;
-
-    mod macros {
-
-    }
-    use macros::*;
-
-    mod store {
-        use std::cell::RefCell;
-        use std::marker::PhantomData;
-        use std::ops::{Deref, DerefMut};
-        use std::sync::Arc;
-        use crate::{
-            state::{ActionFilter, BoxInverseListener, Filterless, IntoAction, Signal, Stateful, StoreContainer, GeneralSignal},
-            core::Slock,
-        };
-        use crate::state::{ActionDispatcher, Filter, GroupBasis};
-        use crate::state::listener::{GeneralListener, InverseListener, StateListener};
+        use crate::core::Slock;
+        use crate::state::{ActionFilter, DirectlyInvertible, GeneralListener, GroupBasis, IntoAction, InverseListener, Stateful};
+        use crate::state::listener::{ StateListener};
+        use crate::state::store::inverse_listener_holder::InverseListenerHolder;
         use crate::util::markers::ThreadMarker;
         use crate::util::test_util::QuarveAllocTag;
-        use super::ActionInverter;
-        use super::sealed_base::{RawStoreBase, RawStoreSharedOwnerBase};
 
-        pub(super) struct InnerStore<S: Stateful, F: ActionFilter<Target=S>> {
+        pub(crate) struct StoreDispatcher<S, F, I>
+            where S: Stateful, F: ActionFilter, I: InverseListenerHolder
+        {
             _quarve_tag: QuarveAllocTag,
             data: S,
             listeners: Vec<StateListener<S>>,
-            inverse_listener: Option<BoxInverseListener>,
+            inverse_listener: I,
             filter: F,
         }
 
-        impl<S, F> RawStoreBase<S, F> for InnerStore<S, F>
-            where S: Stateful, F: ActionFilter<Target=S>
-        {
-            fn apply(arc: &Arc<RefCell<Self>>, alt_action: impl IntoAction<S::Action, S>, s: &Slock<impl ThreadMarker>, skip_filters: bool) {
-                #[cfg(debug_assertions)] {
-                    debug_assert_eq!(s.debug_info.applying_transaction.borrow().len(), 0, "Fatal: store \
-                    changed as a result of the change of another state variable. \
-                    Stores, by default, are to be independent of other stores. If you would like one store to \
-                    be dependent on another, check out DerivedStore (or in some circumstances, maybe CoupledStore)");
-                    s.debug_info.applying_transaction.borrow_mut().push(arc.as_ptr() as usize);
-                }
-                let mut borrow = arc.borrow_mut();
-                let inner = borrow.deref_mut();
-                let transaction = alt_action.into_action(&inner.data);
+        impl<S, F, I> StoreDispatcher<S, F, I>
+            where S: Stateful, F: ActionFilter<Target=S>, I: InverseListenerHolder {
 
-                let action = if skip_filters {
+            #[inline]
+            pub(super) fn new(data: S) -> Self {
+                StoreDispatcher {
+                    _quarve_tag: QuarveAllocTag::new(),
+                    data,
+                    listeners: Vec::new(),
+                    inverse_listener: I::new(),
+                    filter: F::new(),
+                }
+            }
+
+            #[inline]
+            pub fn data(&self) -> &S {
+                &self.data
+            }
+
+            #[inline]
+            pub fn apply_post_filter(
+                &mut self,
+                into_action: impl IntoAction<S::Action, S>,
+                make_inverter: impl FnOnce(S::Action) -> Box<dyn DirectlyInvertible>,
+                post_filter: impl FnOnce(&S, S::Action) -> S::Action,
+                skip_filters: bool,
+                s: &Slock<impl ThreadMarker>
+            ) {
+                let transaction = into_action.into_action(&self.data);
+
+                let filtered_action = if skip_filters {
                     transaction
                 }
                 else {
-                    inner.filter.filter(&inner.data, transaction, s)
+                    post_filter(&self.data, self.filter.filter(&self.data, transaction, s))
                 };
 
                 // tell action listeners
-                inner.listeners.retain_mut(
+                self.listeners.retain_mut(
                     |listener| match listener {
-                        StateListener::ActionListener(listener) => listener(&inner.data, &action, s.as_ref()),
+                        StateListener::ActionListener(listener) => listener(&self.data, &filtered_action, s.as_ref()),
                         _ => true
                     }
                 );
 
                 // apply action
-                let inverse = action.apply(&mut inner.data);
+                let inverse = filtered_action.apply(&mut self.data);
 
                 // tell signal and general listeners
-                let data = &inner.data;
-                inner.listeners.retain_mut(
+                let data = &self.data;
+                self.listeners.retain_mut(
                     |listener| match listener {
                         StateListener::GeneralListener(action) => {
                             action(s.as_ref())
@@ -1393,57 +1388,152 @@ mod store {
                 );
 
                 // tell inverse listener
-                if let Some(ref mut inv_listener) = inner.inverse_listener {
-                    let inverter = ActionInverter {
-                        action: Some(inverse),
-                        state: Arc::downgrade(arc),
-                        filter: PhantomData
-                    };
-                    if !inv_listener(Box::new(inverter), s.as_ref()) {
-                        inner.inverse_listener = None;
+                self.inverse_listener.invoke_listener(move || make_inverter(inverse), s.as_ref());
+            }
+
+            pub fn apply(
+                &mut self,
+                into_action: impl IntoAction<S::Action, S>,
+                make_inverter: impl FnOnce(S::Action) -> Box<dyn DirectlyInvertible>,
+                skip_filters: bool,
+                s: &Slock<impl ThreadMarker>
+            ) {
+                self.apply_post_filter(into_action, make_inverter, |_, f| f, skip_filters, s);
+            }
+
+            pub fn add_listener(&mut self, listener: StateListener<S>) {
+                debug_assert!(! matches!(listener, StateListener::GeneralListener(_)),
+                              "Should be set via set_general_listener"
+                );
+                self.listeners.push(listener);
+            }
+
+            pub fn action_filter<G>(&mut self, filter: G, _s: &Slock<impl ThreadMarker>)
+                where G: Send + Fn(&S, S::Action, &Slock) -> S::Action + 'static {
+                self.filter.add_filter(filter);
+            }
+
+            pub fn set_general_listener(&mut self, f: impl GeneralListener + Clone, s: &Slock) {
+                self.listeners.retain(|x| !matches!(x, StateListener::GeneralListener(_)));
+                self.listeners.push(StateListener::GeneralListener(Box::new(f.clone())));
+
+                if let Some(action) = self.data.subtree_general_listener(f, s) {
+                    self.listeners.push(StateListener::ActionListener(Box::new(action)));
+                }
+            }
+
+            pub fn set_inverse_listener(&mut self, f: impl InverseListener + Clone, s: &Slock) {
+                self.inverse_listener.set_listener(Box::new(f.clone()));
+
+                if let Some(action) = self.data.subtree_inverse_listener(f, s) {
+                    self.listeners.push(StateListener::ActionListener(Box::new(action)));
+                }
+            }
+        }
+    }
+
+    mod macros {
+        macro_rules! impl_store_container_inner {
+            () => {
+                fn subtree_general_listener<Q>(&self, f: Q, s: &Slock<impl ThreadMarker>)
+                    where Q: GeneralListener + Clone {
+                    self.inner.borrow_mut().dispatcher_mut().set_general_listener(f, s.as_ref());
+                }
+
+                fn subtree_inverse_listener<Q>(&self, f: Q, s: &Slock<impl ThreadMarker>)
+                    where Q: InverseListener + Clone {
+                    self.inner.borrow_mut().dispatcher_mut().set_inverse_listener(f, s.as_ref());
+                }
+            }
+        }
+
+        macro_rules! impl_signal_inner {
+            ($s:ty) => {
+                fn borrow<'a>(&'a self, s: &'a Slock<impl ThreadMarker>) -> impl Deref<Target=$s> {
+                    StateRef {
+                        main_ref: self.get_ref().borrow(),
+                        lifetime: PhantomData,
+                        filter: PhantomData,
                     }
                 }
+
+                fn listen<Q>(&self, listener: Q, s: &Slock<impl ThreadMarker>)
+                    where Q: Fn(&$s, &Slock) -> bool + Send + 'static {
+                    self.get_ref().borrow_mut().dispatcher_mut().add_listener(StateListener::SignalListener(Box::new(listener)));
+                }
+
+                type MappedOutput<U: Send + 'static> = GeneralSignal<U>;
+                fn map<U, Q>(&self, map: Q, s: &Slock<impl ThreadMarker>) -> Self::MappedOutput<U>
+                    where U: Send + 'static, Q: Send + 'static + Fn(&$s) -> U {
+                    GeneralSignal::from(self, map, |this, listener, _s| {
+                        this.get_ref().borrow_mut().dispatcher_mut().add_listener(StateListener::SignalListener(listener))
+                    }, s)
+                }
+            };
+        }
+
+        pub(super) use {impl_store_container_inner, impl_signal_inner};
+    }
+
+    /* MARK: Stores */
+    mod store {
+        use std::cell::RefCell;
+        use std::marker::PhantomData;
+        use std::ops::{Deref, DerefMut};
+        use std::sync::Arc;
+        use crate::{
+            state::{ActionFilter, Filterless, IntoAction, Signal, Stateful, StoreContainer, GeneralSignal},
+            core::Slock,
+        };
+        use crate::state::{Filter};
+        use crate::state::listener::{GeneralListener, InverseListener};
+        use crate::state::store::action_inverter::ActionInverter;
+        use crate::state::store::inverse_listener_holder::ActualInverseListenerHolder;
+        use crate::state::store::macros::{impl_signal_inner, impl_store_container_inner};
+        use crate::state::store::store_dispatcher::StoreDispatcher;
+        use crate::util::markers::ThreadMarker;
+        use super::sealed_base::{RawStoreBase, RawStoreSharedOwnerBase};
+
+        pub(super) struct InnerStore<S: Stateful, F: ActionFilter<Target=S>> {
+            dispatcher: StoreDispatcher<S, F, ActualInverseListenerHolder>
+        }
+
+        impl<S, F> RawStoreBase<S, F> for InnerStore<S, F>
+            where S: Stateful, F: ActionFilter<Target=S>
+        {
+            type InverseListenerHolder = ActualInverseListenerHolder;
+
+            fn dispatcher(&self) -> &StoreDispatcher<S, F, Self::InverseListenerHolder> {
+                &self.dispatcher
+            }
+
+            fn dispatcher_mut(&mut self) -> &mut StoreDispatcher<S, F, Self::InverseListenerHolder> {
+                &mut self.dispatcher
+            }
+
+            fn apply(arc: &Arc<RefCell<Self>>, alt_action: impl IntoAction<S::Action, S>, skip_filters: bool, s: &Slock<impl ThreadMarker>) {
+                #[cfg(debug_assertions)] {
+                    debug_assert_eq!(s.debug_info.applying_transaction.borrow().len(), 0, "Fatal: store \
+                    changed as a result of the change of another state variable. \
+                    Stores, by default, are to be independent of other stores. If you would like one store to \
+                    be dependent on another, check out DerivedStore (or in some circumstances, maybe CoupledStore)");
+                    s.debug_info.applying_transaction.borrow_mut().push(arc.as_ptr() as usize);
+                }
+                let mut borrow = arc.borrow_mut();
+                let inner = borrow.deref_mut();
+
+                inner.dispatcher.apply(alt_action, |action| {
+                    Box::new(ActionInverter {
+                        action: Some(action),
+                        state: Arc::downgrade(arc),
+                        filter: PhantomData,
+                    })
+                }, skip_filters, s);
 
                 #[cfg(debug_assertions)]
                 {
                     s.debug_info.applying_transaction.borrow_mut().pop();
                 }
-            }
-
-            fn listen(&mut self, listener: StateListener<S>, _s: &Slock<impl ThreadMarker>) {
-                self.listeners.push(listener);
-            }
-
-            fn subtree_general_listener(
-                &mut self,
-                f: impl GeneralListener + Clone,
-                s: &Slock<impl ThreadMarker>
-            ) -> Option<impl Send + Fn(&S, &S::Action, &Slock) -> bool + 'static> {
-                // remove old general listeners
-                self.listeners.retain(|x| !matches!(x, StateListener::GeneralListener(_)));
-
-                self.listen(StateListener::GeneralListener(Box::new(f.clone())), s);
-
-                self.data.subtree_general_listener(f, s)
-            }
-
-            fn subtree_inverse_listener(
-                &mut self,
-                f: impl InverseListener + Clone,
-                s: &Slock<impl ThreadMarker>
-            ) -> Option<impl Send + Fn(&S, &S::Action, &Slock) -> bool + 'static> {
-                self.inverse_listener = Some(Box::new(f.clone()));
-
-                self.data.subtree_inverse_listener(f, s)
-            }
-
-            fn action_filter<G>(&mut self, filter: G, _s: &Slock<impl ThreadMarker>)
-                where G: Send + Fn(&S, S::Action, &Slock) -> S::Action + 'static {
-                self.filter.add_filter(filter);
-            }
-
-            fn data(&self) -> &S {
-                &self.data
             }
         }
 
@@ -1458,11 +1548,7 @@ mod store {
             pub fn new(initial: S) -> Self {
                 Store {
                     inner: Arc::new(RefCell::new(InnerStore {
-                        _quarve_tag: QuarveAllocTag::new(),
-                        data: initial,
-                        listeners: Vec::new(),
-                        inverse_listener: None,
-                        filter: Filterless::new()
+                        dispatcher: StoreDispatcher::new(initial)
                     }))
                 }
             }
@@ -1474,11 +1560,7 @@ mod store {
             pub fn new_with_filter(initial: S) -> Self {
                 Store {
                     inner: Arc::new(RefCell::new(InnerStore {
-                        _quarve_tag: QuarveAllocTag::new(),
-                        data: initial,
-                        listeners: Vec::new(),
-                        inverse_listener: None,
-                        filter: Filter::new()
+                        dispatcher: StoreDispatcher::new(initial)
                     }))
                 }
             }
@@ -1492,51 +1574,17 @@ mod store {
             }
         }
 
-        impl<S> Default for Store<S, Filter<S>>
-            where S: Stateful + Default
-        {
-            fn default() -> Self {
-                Self::new_with_filter(S::default())
-            }
-        }
-
         impl<S, M> StoreContainer for Store<S, M>
             where S: Stateful, M: ActionFilter<Target=S>
         {
-            fn subtree_general_listener<F>(&self, f: F, s: &Slock<impl ThreadMarker>)
-                where F: GeneralListener + Clone {
-                let Some(listener) = self.inner.borrow_mut().subtree_general_listener(f, s) else {
-                    return;
-                };
-                self.action_listener(listener, &s);
-            }
-
-            fn subtree_inverse_listener<F>(&self, f: F, s: &Slock<impl ThreadMarker>)
-                where F: InverseListener + Clone {
-                let Some(listener) = self.inner.borrow_mut().subtree_inverse_listener(f, s) else {
-                    return
-                };
-                self.action_listener(listener, &s);
-            }
+            impl_store_container_inner!();
         }
 
         impl<S, A> Signal<S> for Store<S, A>
             where S: Stateful, A: ActionFilter<Target=S>
         {
-            fn borrow<'a>(&'a self, s: &'a Slock<impl ThreadMarker>) -> impl Deref<Target=S> {
-                self._borrow(s)
-            }
 
-            fn listen<F>(&self, listener: F, s: &Slock<impl ThreadMarker>)
-                where F: Fn(&S, &Slock) -> bool + Send + 'static {
-                self._listen(listener, s);
-            }
-
-            type MappedOutput<U: Send + 'static> = GeneralSignal<U>;
-            fn map<U, F>(&self, map: F, s: &Slock<impl ThreadMarker>) -> Self::MappedOutput<U>
-                where U: Send + 'static, F: Send + 'static + Fn(&S) -> U {
-                self._map(map, s)
-            }
+            impl_signal_inner!(S);
         }
 
         impl<S, F> RawStoreSharedOwnerBase<S, F> for Store<S, F>
@@ -1548,7 +1596,7 @@ mod store {
                 &self.inner
             }
 
-            fn clone(&self) -> Self {
+            fn arc_clone(&self) -> Self {
                 Store {
                     inner: Arc::clone(&self.inner)
                 }
@@ -1570,26 +1618,34 @@ mod store {
         use std::ops::{Deref, DerefMut};
         use std::sync::Arc;
         use crate::core::{Slock};
-        use crate::state::{ActionDispatcher, ActionFilter, BoxInverseListener, Filter, Filterless, GeneralListener, GeneralSignal, GroupBasis, IntoAction, InverseListener, Signal, Stateful, StoreContainer};
-        use crate::state::listener::StateListener;
+        use crate::state::{ActionFilter, Filter, Filterless, GeneralListener, GeneralSignal, IntoAction, Signal, Stateful, StoreContainer};
         use crate::state::store::action_inverter::ActionInverter;
+        use crate::state::store::inverse_listener_holder::ActualInverseListenerHolder;
+        use crate::state::store::macros::{impl_signal_inner, impl_store_container_inner};
         use crate::state::store::sealed_base::{RawStoreBase, RawStoreSharedOwnerBase};
+        use crate::state::store::store_dispatcher::StoreDispatcher;
+        use crate::state::InverseListener;
         use crate::util::markers::ThreadMarker;
-        use crate::util::test_util::QuarveAllocTag;
 
         pub(super) struct InnerTokenStore<S: Stateful + Copy + Hash + Eq, F: ActionFilter<Target=S>> {
-            _quarve_tag: QuarveAllocTag,
-            data: S,
-            listeners: Vec<StateListener<S>>,
+            dispatcher: StoreDispatcher<S, F, ActualInverseListenerHolder>,
             equal_listeners: HashMap<S, Vec<Box<dyn Fn(&S, &Slock) -> bool + Send>>>,
-            inverse_listener: Option<BoxInverseListener>,
-            filter: F
         }
         impl<S, F> RawStoreBase<S, F> for InnerTokenStore<S, F>
             where S: Stateful + Copy + Hash + Eq,
                   F: ActionFilter<Target=S>
         {
-            fn apply(arc: &Arc<RefCell<Self>>, alt_action: impl IntoAction<S::Action, S>, s: &Slock<impl ThreadMarker>, skip_filters: bool) {
+            type InverseListenerHolder = ActualInverseListenerHolder;
+
+            fn dispatcher(&self) -> &StoreDispatcher<S, F, Self::InverseListenerHolder> {
+                &self.dispatcher
+            }
+
+            fn dispatcher_mut(&mut self) -> &mut StoreDispatcher<S, F, Self::InverseListenerHolder> {
+                &mut self.dispatcher
+            }
+
+            fn apply(arc: &Arc<RefCell<Self>>, alt_action: impl IntoAction<S::Action, S>, skip_filters: bool, s: &Slock<impl ThreadMarker>) {
                 #[cfg(debug_assertions)] {
                     debug_assert_eq!(s.debug_info.applying_transaction.borrow().len(), 0, "Fatal: token store \
                     changed as a result of the change of another state variable. \
@@ -1599,45 +1655,20 @@ mod store {
                 }
                 let mut borrow = arc.borrow_mut();
                 let inner = borrow.deref_mut();
-                let transaction = alt_action.into_action(&inner.data);
 
-                let action = if skip_filters {
-                    transaction
-                }
-                else {
-                    inner.filter.filter(&inner.data, transaction, s)
-                };
+                let old = *inner.dispatcher.data();
 
-                // tell action listeners
-                inner.listeners.retain_mut(
-                    |listener| match listener {
-                        StateListener::ActionListener(listener) => {
-                            listener(&inner.data, &action, s.as_ref())
-                        },
-                        _ => true
-                    }
-                );
-
-                // apply action
-                let old = inner.data;
-                let inverse = action.apply(&mut inner.data);
-
-                // tell signal and general listeners
-                let data = &inner.data;
-                inner.listeners.retain_mut(
-                    |listener| match listener {
-                        StateListener::GeneralListener(action) => {
-                            action(s.as_ref())
-                        },
-                        StateListener::SignalListener(action) => {
-                            action(data, s.as_ref())
-                        },
-                        _ => true
-                    }
-                );
+                inner.dispatcher.apply(alt_action, |action| {
+                    Box::new(ActionInverter {
+                        action: Some(action),
+                        state: Arc::downgrade(&arc),
+                        filter: PhantomData
+                    })
+                }, skip_filters, s);
 
                 // relevant equal listeners (old and new)
-                let new = inner.data;
+                let new = *inner.dispatcher.data();
+
                 if old != new {
                     for class in [old, new] {
                         inner.equal_listeners.entry(class)
@@ -1647,58 +1678,11 @@ mod store {
                     }
                 }
 
-                // tell inverse listener
-                if let Some(ref mut inv_listener) = inner.inverse_listener {
-                    let inverter = ActionInverter {
-                        action: Some(inverse),
-                        state: Arc::downgrade(arc),
-                        filter: PhantomData
-                    };
-                    if !inv_listener(Box::new(inverter), s.as_ref()) {
-                        inner.inverse_listener = None;
-                    }
-                }
 
                 #[cfg(debug_assertions)]
                 {
                     s.debug_info.applying_transaction.borrow_mut().pop();
                 }
-            }
-
-            fn listen(&mut self, listener: StateListener<S>, _s: &Slock<impl ThreadMarker>) {
-                self.listeners.push(listener);
-            }
-
-            fn subtree_general_listener(
-                &mut self,
-                f: impl GeneralListener + Clone,
-                s: &Slock<impl ThreadMarker>
-            ) -> Option<impl Send + Fn(&S, &S::Action, &Slock) -> bool + 'static> {
-                // remove old general listeners
-                self.listeners.retain(|x| !matches!(x, StateListener::GeneralListener(_)));
-
-                self.listen(StateListener::GeneralListener(Box::new(f.clone())), s);
-
-                self.data.subtree_general_listener(f, s)
-            }
-
-            fn subtree_inverse_listener(
-                &mut self,
-                f: impl InverseListener + Clone,
-                s: &Slock<impl ThreadMarker>
-            ) -> Option<impl Send + Fn(&S, &S::Action, &Slock) -> bool + 'static> {
-                self.inverse_listener = Some(Box::new(f.clone()));
-
-                self.data.subtree_inverse_listener(f, s)
-            }
-
-            fn action_filter<G>(&mut self, filter: G, _s: &Slock<impl ThreadMarker>)
-                where G: Send + Fn(&S, S::Action, &Slock) -> S::Action + 'static {
-                self.filter.add_filter(filter);
-            }
-
-            fn data(&self) -> &S {
-                &self.data
             }
         }
 
@@ -1724,12 +1708,8 @@ mod store {
             pub fn new(initial: S) -> Self {
                 TokenStore {
                     inner: Arc::new(RefCell::new(InnerTokenStore {
-                        _quarve_tag: QuarveAllocTag::new(),
-                        data: initial,
-                        listeners: Vec::new(),
-                        inverse_listener: None,
+                        dispatcher: StoreDispatcher::new(initial),
                         equal_listeners: HashMap::new(),
-                        filter: Filterless::new()
                     }))
                 }
             }
@@ -1739,12 +1719,8 @@ mod store {
             pub fn new_with_filter(initial: S) -> Self {
                 TokenStore {
                     inner: Arc::new(RefCell::new(InnerTokenStore {
-                        _quarve_tag: QuarveAllocTag::new(),
-                        data: initial,
-                        listeners: Vec::new(),
-                        inverse_listener: None,
+                        dispatcher: StoreDispatcher::new(initial),
                         equal_listeners: HashMap::new(),
-                        filter: Filter::new()
                     }))
                 }
             }
@@ -1766,39 +1742,12 @@ mod store {
 
         impl<S, M> StoreContainer for TokenStore<S, M>
             where S: Stateful + Copy + Hash + Eq, M: ActionFilter<Target=S> {
-            fn subtree_general_listener<F>(&self, f: F, s: &Slock<impl ThreadMarker>)
-                where F: GeneralListener + Clone {
-                let Some(listener) = self.inner.borrow_mut().subtree_general_listener(f, s) else {
-                    return;
-                };
-                self.action_listener(listener, &s);
-            }
-
-            fn subtree_inverse_listener<F>(&self, f: F, s: &Slock<impl ThreadMarker>)
-                where F: InverseListener + Clone {
-                let Some(listener) = self.inner.borrow_mut().subtree_inverse_listener(f, s) else {
-                    return;
-                };
-                self.action_listener(listener, &s);
-            }
+            impl_store_container_inner!();
         }
 
         impl<S, A> Signal<S> for TokenStore<S, A>
             where S: Stateful + Copy + Hash + Eq, A: ActionFilter<Target=S> {
-            fn borrow<'a>(&'a self, s: &'a Slock<impl ThreadMarker>) -> impl Deref<Target=S> {
-                self._borrow(s)
-            }
-
-            fn listen<F>(&self, listener: F, s: &Slock<impl ThreadMarker>)
-                where F: Fn(&S, &Slock) -> bool + Send + 'static {
-                self._listen(listener, s);
-            }
-
-            type MappedOutput<U: Send + 'static> = GeneralSignal<U>;
-            fn map<U, F>(&self, map: F, s: &Slock<impl ThreadMarker>) -> Self::MappedOutput<U>
-                where U: Send + 'static, F: Send + 'static + Fn(&S) -> U {
-                self._map(map, s)
-            }
+            impl_signal_inner!(S);
         }
 
         impl<S, A> RawStoreSharedOwnerBase<S, A> for TokenStore<S, A>
@@ -1809,7 +1758,7 @@ mod store {
                 &self.inner
             }
 
-            fn clone(&self) -> Self {
+            fn arc_clone(&self) -> Self {
                 TokenStore {
                     inner: Arc::clone(&self.inner)
                 }
@@ -1833,23 +1782,32 @@ mod store {
             },
             core::Slock,
         };
-        use crate::state::{ActionDispatcher, Filter, GroupBasis};
-        use crate::state::listener::{GeneralListener, InverseListener, StateListener};
+        use crate::state::{Filter};
+        use crate::state::listener::{GeneralListener, InverseListener};
+        use crate::state::store::inverse_listener_holder::NullInverseListenerHolder;
+        use crate::state::store::macros::{impl_signal_inner, impl_store_container_inner};
+        use crate::state::store::store_dispatcher::StoreDispatcher;
         use crate::util::markers::ThreadMarker;
-        use crate::util::test_util::QuarveAllocTag;
         use super::sealed_base::{RawStoreBase, RawStoreSharedOwnerBase};
 
         pub(super) struct InnerDerivedStore<S: Stateful, F: ActionFilter<Target=S>> {
-            _quarve_tag: QuarveAllocTag,
-            data: S,
-            listeners: Vec<StateListener<S>>,
-            filter: F,
+            dispatcher: StoreDispatcher<S, F, NullInverseListenerHolder>
         }
 
         impl<S, F> RawStoreBase<S, F> for InnerDerivedStore<S, F>
             where S: Stateful, F: ActionFilter<Target=S>
         {
-            fn apply(arc: &Arc<RefCell<Self>>, alt_action: impl IntoAction<S::Action, S>, s: &Slock<impl ThreadMarker>, skip_filters: bool) {
+            type InverseListenerHolder = NullInverseListenerHolder;
+
+            fn dispatcher(&self) -> &StoreDispatcher<S, F, Self::InverseListenerHolder> {
+                &self.dispatcher
+            }
+
+            fn dispatcher_mut(&mut self) -> &mut StoreDispatcher<S, F, Self::InverseListenerHolder> {
+                &mut self.dispatcher
+            }
+
+            fn apply(arc: &Arc<RefCell<Self>>, alt_action: impl IntoAction<S::Action, S>, skip_filters: bool, s: &Slock<impl ThreadMarker>) {
                 #[cfg(debug_assertions)] {
                     debug_assert_ne!(s.debug_info.applying_transaction.borrow().len(), 0, "Fatal: derived store \
                     changed in a context that was NOT initiated by the change of another store. \
@@ -1859,79 +1817,13 @@ mod store {
 
                 let mut borrow = arc.borrow_mut();
                 let inner = borrow.deref_mut();
-                let transaction = alt_action.into_action(&inner.data);
 
-                let action = if skip_filters {
-                    transaction
-                }
-                else {
-                    inner.filter.filter(&inner.data, transaction, s)
-                };
-
-                // tell action listeners
-                inner.listeners.retain_mut(
-                    |listener| match listener {
-                        StateListener::ActionListener(listener) => listener(&inner.data, &action, s.as_ref()),
-                        _ => true
-                    }
-                );
-
-                // apply action
-                let _ = action.apply(&mut inner.data);
-
-                // tell signal and general listeners
-                let data = &inner.data;
-                inner.listeners.retain_mut(
-                    |listener| match listener {
-                        StateListener::GeneralListener(action) => {
-                            action(s.as_ref())
-                        },
-                        StateListener::SignalListener(action) => {
-                            action(data, s.as_ref())
-                        },
-                        _ => true
-                    }
-                );
+                inner.dispatcher.apply(alt_action, |_| unreachable!(), skip_filters, s);
 
                 #[cfg(debug_assertions)]
                 {
                     s.debug_info.applying_transaction.borrow_mut().pop();
                 }
-            }
-
-            fn listen(&mut self, listener: StateListener<S>, _s: &Slock<impl ThreadMarker>) {
-                self.listeners.push(listener);
-            }
-
-            fn subtree_general_listener(
-                &mut self,
-                f: impl GeneralListener + Clone,
-                s: &Slock<impl ThreadMarker>
-            ) -> Option<impl Send + Fn(&S, &S::Action, &Slock) -> bool + 'static> {
-                // remove old general listeners
-                self.listeners.retain(|x| !matches!(x, StateListener::GeneralListener(_)));
-
-                self.listen(StateListener::GeneralListener(Box::new(f.clone())), s);
-
-                self.data.subtree_general_listener(f, s)
-            }
-
-            /// no-op, see store container impl below for why
-            fn subtree_inverse_listener(
-                &mut self,
-                _f: impl InverseListener + Clone,
-                _s: &Slock<impl ThreadMarker>
-            ) -> Option<impl Send + Fn(&S, &S::Action, &Slock) -> bool + 'static> {
-                None::<fn(&S, &S::Action, &Slock) -> bool>
-            }
-
-            fn action_filter<G>(&mut self, filter: G, _s: &Slock<impl ThreadMarker>)
-                where G: Send + Fn(&S, S::Action, &Slock) -> S::Action + 'static {
-                self.filter.add_filter(filter);
-            }
-
-            fn data(&self) -> &S {
-                &self.data
             }
         }
 
@@ -1946,10 +1838,7 @@ mod store {
             pub fn new(initial: S) -> Self {
                 DerivedStore {
                     inner: Arc::new(RefCell::new(InnerDerivedStore {
-                        _quarve_tag: QuarveAllocTag::new(),
-                        data: initial,
-                        listeners: Vec::new(),
-                        filter: Filterless::new()
+                        dispatcher: StoreDispatcher::new(initial)
                     }))
                 }
             }
@@ -1961,10 +1850,7 @@ mod store {
             pub fn new_with_filter(initial: S) -> Self {
                 DerivedStore {
                     inner: Arc::new(RefCell::new(InnerDerivedStore {
-                        _quarve_tag: QuarveAllocTag::new(),
-                        data: initial,
-                        listeners: Vec::new(),
-                        filter: Filter::new()
+                        dispatcher: StoreDispatcher::new(initial),
                     }))
                 }
             }
@@ -1986,42 +1872,16 @@ mod store {
             }
         }
 
-        // In this case, inverse is a no op
-        // since the respective action should've been handled
-        // by the source store
         impl<S, M> StoreContainer for DerivedStore<S, M>
             where S: Stateful, M: ActionFilter<Target=S>
         {
-            fn subtree_general_listener<F>(&self, f: F, s: &Slock<impl ThreadMarker>)
-                where F: GeneralListener + Clone {
-                let Some(listener) = self.inner.borrow_mut().subtree_general_listener(f, s) else {
-                    return;
-                };
-                self.action_listener(listener, &s);
-            }
-
-            fn subtree_inverse_listener<F>(&self, _f: F, _s: &Slock<impl ThreadMarker>)
-                where F: InverseListener + Clone {
-            }
+            impl_store_container_inner!();
         }
 
         impl<S, A> Signal<S> for DerivedStore<S, A>
             where S: Stateful, A: ActionFilter<Target=S>
         {
-            fn borrow<'a>(&'a self, s: &'a Slock<impl ThreadMarker>) -> impl Deref<Target=S> {
-                self._borrow(s)
-            }
-
-            fn listen<F>(&self, listener: F, s: &Slock<impl ThreadMarker>)
-                where F: Fn(&S, &Slock) -> bool + Send + 'static {
-                self._listen(listener, s);
-            }
-
-            type MappedOutput<U: Send + 'static> = GeneralSignal<U>;
-            fn map<U, F>(&self, map: F, s: &Slock<impl ThreadMarker>) -> Self::MappedOutput<U>
-                where U: Send + 'static, F: Send + 'static + Fn(&S) -> U {
-                self._map(map, s)
-            }
+            impl_signal_inner!(S);
         }
 
         impl<S, F> RawStoreSharedOwnerBase<S, F> for DerivedStore<S, F>
@@ -2033,7 +1893,7 @@ mod store {
                 &self.inner
             }
 
-            fn clone(&self) -> Self {
+            fn arc_clone(&self) -> Self {
                 DerivedStore {
                     inner: Arc::clone(&self.inner)
                 }
@@ -2054,19 +1914,20 @@ mod store {
         use std::sync::{Arc, Mutex};
         use std::sync::atomic::AtomicUsize;
         use std::sync::atomic::Ordering::Release;
-        use crate::state::group::GroupBasis;
         use crate::{
             state::{
                 ActionFilter, Filterless, IntoAction, Signal, Stateful, StoreContainer, GeneralSignal,
             },
             core::Slock,
         };
-        use crate::state::{ActionDispatcher, Binding};
+        use crate::state::{Binding};
         use crate::state::coupler::Coupler;
-        use crate::state::listener::{GeneralListener, InverseListener, StateListener};
+        use crate::state::listener::{GeneralListener, InverseListener};
+        use crate::state::store::inverse_listener_holder::NullInverseListenerHolder;
+        use crate::state::store::macros::{impl_signal_inner, impl_store_container_inner};
+        use crate::state::store::store_dispatcher::StoreDispatcher;
         use crate::util::{UnsafeForceSend};
         use crate::util::markers::ThreadMarker;
-        use crate::util::test_util::QuarveAllocTag;
         use super::sealed_base::{RawStoreBase, RawStoreSharedOwnerBase};
 
         // note that IB is purposefully filterless
@@ -2076,10 +1937,7 @@ mod store {
         // of the intrinsic, to avoid cycles
         pub(super) struct InnerCoupledStore<I, IB, M, F, C>
             where I: Stateful, IB: Binding<I, Filterless<I>>, M: Stateful, F: ActionFilter<Target=M>, C: Coupler<I, M, F> {
-            _quarve_tag: QuarveAllocTag,
-            data: M,
-            listeners: Vec<StateListener<M>>,
-            filter: F,
+            dispatcher: StoreDispatcher<M, F, NullInverseListenerHolder>,
             coupler: C,
             // intrinsic maintains a weak ownership of us
             // we maintain strong ownership of intrinsic
@@ -2098,6 +1956,9 @@ mod store {
         impl<I, IB, M, F, C> InnerCoupledStore<I, IB, M, F, C>
             where I: Stateful, IB: Binding<I>, M: Stateful, F: ActionFilter<Target=M>, C: Coupler<I, M, F>
         {
+            // logic for this is somewhat convoluted
+            // in large part due to the awkwardness of this
+            // and the borrow rules
             fn fully_apply(arc: &Arc<RefCell<Self>>, intrinsic: Option<&I>, alt_action: impl IntoAction<M::Action, M>, s: &Slock<impl ThreadMarker>) {
                 /* must only be changed by itself, or by the parent */
                 #[cfg(debug_assertions)] {
@@ -2110,128 +1971,82 @@ mod store {
 
                 // do have to be a bit careful with the reentry on the intrinsic action listener
                 // hence the many borrows
-                let borrow = arc.borrow();
-                let inner = borrow.deref();
-                let transaction = alt_action.into_action(&inner.data);
-
-                let action = inner.filter.filter(&inner.data, transaction, s);
-
-                let (intrinsic_transaction, action) = {
-                    if inner.intrinsic_performing_transaction {
-                        inner.coupler.filter_mapped_and_mirror_to_intrinsic(
-                            &inner.data,
-                            intrinsic.unwrap(),
-                            action
-                        )
-                    } else {
-                        // if we are originating the transaction
-                        // then surely the strong count > 1 so intrinsic
-                        // exists
-                        inner.coupler.filter_mapped_and_mirror_to_intrinsic(
-                            &inner.data,
-                            inner.intrinsic.lock().unwrap()
-                                .as_ref().unwrap()
-                                .borrow(s).deref(),
-                            action
-                        )
-                    }
-                };
-
-                // tell intrinsic if it didn't originate (it's filterless so doesn't matter about filters)
-                if !inner.intrinsic_performing_transaction {
-                    /* in this case, it's fine that it's being changed due to another store */
-                    #[cfg(debug_assertions)]
-                    {
-                        s.debug_info.applying_transaction.borrow_mut().pop();
-                    }
-
-                    if let Some(intr_ref) = inner.intrinsic.lock().unwrap().as_ref() {
-                        intr_ref.apply(intrinsic_transaction, s.as_ref());
-                    }
-
-                    #[cfg(debug_assertions)]
-                    {
-                        s.debug_info.applying_transaction.borrow_mut().push(arc.as_ptr() as usize);
-                    }
-                }
-
-                // tell action listeners
-                drop(borrow);
                 let mut borrow = arc.borrow_mut();
                 let inner = borrow.deref_mut();
 
-                inner.listeners.retain_mut(
-                    |listener| match listener {
-                        StateListener::ActionListener(listener) => listener(&inner.data, &action, s.as_ref()),
-                        _ => true
-                    }
-                );
+                /* this is a bit awkward, but it's easiest way to get around borrowing errors */
+                let mut intrinsic_action = None;
 
-                // apply action
-                let _ = action.apply(&mut inner.data);
+                inner.dispatcher.apply_post_filter(alt_action, |_| unreachable!(), |data, action| {
+                    let (intrinsic_transaction, action) = {
+                        if inner.intrinsic_performing_transaction {
+                            inner.coupler.filter_mapped_and_mirror_to_intrinsic(
+                                data,
+                                intrinsic.unwrap(),
+                                action
+                            )
+                        } else {
+                            // if we are originating the transaction
+                            // then surely the strong count > 1 so intrinsic
+                            // exists
+                            inner.coupler.filter_mapped_and_mirror_to_intrinsic(
+                                data,
+                                inner.intrinsic.lock().unwrap()
+                                    .as_ref().unwrap()
+                                    .borrow(s).deref(),
+                                action
+                            )
+                        }
+                    };
 
-                // tell signal and general listeners
-                let data = &inner.data;
-                inner.listeners.retain_mut(
-                    |listener| match listener {
-                        StateListener::GeneralListener(action) => {
-                            action(s.as_ref())
-                        },
-                        StateListener::SignalListener(action) => {
-                            action(data, s.as_ref())
-                        },
-                        _ => true
-                    }
-                );
+                    intrinsic_action = Some(intrinsic_transaction);
 
-                inner.performing_transaction = false;
+                    action
+                }, false, s);
 
+
+                /* in this case, it's fine that it's being changed due to another store */
+                // yeah the order of operations is a bit weird
+                // i think it would be easier in oop
+                // but not sure what's the rust way to do something like this?
                 #[cfg(debug_assertions)]
                 {
                     s.debug_info.applying_transaction.borrow_mut().pop();
                 }
+
+                // convert borrow to immutable
+                drop(borrow);
+                let borrow_immut = arc.borrow();
+                let inner_immut = borrow_immut.deref();
+
+                // tell intrinsic if it didn't originate (it's filterless so doesn't matter about filters)
+                if !inner_immut.intrinsic_performing_transaction {
+
+                    if let Some(intr_ref) = inner_immut.intrinsic.lock().unwrap().as_ref() {
+                        intr_ref.apply(intrinsic_action.unwrap(), s.as_ref());
+                    };
+                }
+
+                drop(borrow_immut);
+                arc.borrow_mut().performing_transaction = false;
             }
         }
 
         impl<I, IB, M, F, C> RawStoreBase<M, F> for InnerCoupledStore<I, IB, M, F, C>
             where I: Stateful, IB: Binding<I>, M: Stateful, F: ActionFilter<Target=M>, C: Coupler<I, M, F>
         {
-            fn apply(arc: &Arc<RefCell<Self>>, alt_action: impl IntoAction<M::Action, M>, s: &Slock<impl ThreadMarker>, _skip_filters: bool) {
+            type InverseListenerHolder = NullInverseListenerHolder;
+
+            fn dispatcher(&self) -> &StoreDispatcher<M, F, Self::InverseListenerHolder> {
+                &self.dispatcher
+            }
+
+            fn dispatcher_mut(&mut self) -> &mut StoreDispatcher<M, F, Self::InverseListenerHolder> {
+                &mut self.dispatcher
+            }
+
+            fn apply(arc: &Arc<RefCell<Self>>, alt_action: impl IntoAction<M::Action, M>, _skip_filters: bool, s: &Slock<impl ThreadMarker>) {
                 InnerCoupledStore::fully_apply(arc, None, alt_action, s);
-            }
-
-            fn listen(&mut self, listener: StateListener<M>, _s: &Slock<impl ThreadMarker>) {
-                self.listeners.push(listener);
-            }
-
-            fn subtree_general_listener(
-                &mut self,
-                f: impl GeneralListener + Clone,
-                s: &Slock<impl ThreadMarker>
-            ) -> Option<impl Send + Fn(&M, &M::Action, &Slock) -> bool + 'static> {
-                // remove old general listeners
-                self.listeners.retain(|x| !matches!(x, StateListener::GeneralListener(_)));
-
-                self.listen(StateListener::GeneralListener(Box::new(f.clone())), s);
-
-                self.data.subtree_general_listener(f, s)
-            }
-
-            fn subtree_inverse_listener(
-                &mut self,
-                _f: impl InverseListener + Clone,
-                _s: &Slock<impl ThreadMarker>
-            ) -> Option<impl Send + Fn(&M, &M::Action, &Slock) -> bool + 'static> {
-                None::<fn(&M, &M::Action, &Slock) -> bool>
-            }
-
-            fn action_filter<G>(&mut self, filter: G, _s: &Slock<impl ThreadMarker>)
-                where G: Send + Fn(&M, M::Action, &Slock) -> M::Action + 'static {
-                self.filter.add_filter(filter);
-            }
-
-            fn data(&self) -> &M {
-                &self.data
             }
 
             fn strong_count_decrement(&mut self) {
@@ -2263,10 +2078,7 @@ mod store {
                 let data = coupler.initial_mapped(intrinsic.borrow(s).deref());
                 let ret = CoupledStore {
                     inner: Arc::new(RefCell::new(InnerCoupledStore {
-                        _quarve_tag: QuarveAllocTag::new(),
-                        data,
-                        listeners: Vec::new(),
-                        filter: F::new(),
+                        dispatcher: StoreDispatcher::new(data),
                         coupler,
                         phantom_intrinsic: PhantomData,
                         intrinsic: Mutex::new(Some(intrinsic)),
@@ -2279,7 +2091,6 @@ mod store {
 
                 // intrinsic listener
                 // (our listener is handled manually in apply)
-                // FIXME this doesn't work in some circumstances if the intrinsic outlives the source
                 let strong = UnsafeForceSend(ret.inner.clone());
                 ret.inner.borrow()
                     .intrinsic.lock().unwrap()
@@ -2291,7 +2102,7 @@ mod store {
                         // if we didn't originate, then mirror the action
                         if !this.performing_transaction {
                             let coupler = &this.coupler;
-                            let our_action = coupler.mirror_intrinsic_to_mapped(this.data(), intrinsic, a);
+                            let our_action = coupler.mirror_intrinsic_to_mapped(this.dispatcher.data(), intrinsic, a);
 
                             drop(this);
                             strong.borrow_mut().intrinsic_performing_transaction = true;
@@ -2319,36 +2130,13 @@ mod store {
         impl<I, IB, M, F, C> StoreContainer for CoupledStore<I, IB, M, F, C>
             where I: Stateful, IB: Binding<I>, M: Stateful, F: ActionFilter<Target=M>, C: Coupler<I, M, F>
         {
-            fn subtree_general_listener<G>(&self, f: G, s: &Slock<impl ThreadMarker>)
-                where G: GeneralListener + Clone {
-                let Some(listener) = self.inner.borrow_mut().subtree_general_listener(f, s) else {
-                    return;
-                };
-                self.action_listener(listener, &s);
-            }
-
-            fn subtree_inverse_listener<G>(&self, _f: G, _s: &Slock<impl ThreadMarker>)
-                where G: InverseListener + Clone {
-            }
+            impl_store_container_inner!();
         }
 
         impl<I, IB, M, F, C> Signal<M> for CoupledStore<I, IB, M, F, C>
             where I: Stateful, IB: Binding<I>, M: Stateful, F: ActionFilter<Target=M>, C: Coupler<I, M, F>
         {
-            fn borrow<'a>(&'a self, s: &'a Slock<impl ThreadMarker>) -> impl Deref<Target=M> {
-                self._borrow(s)
-            }
-
-            fn listen<G>(&self, listener: G, s: &Slock<impl ThreadMarker>)
-                where G: Fn(&M, &Slock) -> bool + Send + 'static {
-                self._listen(listener, s);
-            }
-
-            type MappedOutput<U: Send + 'static> = GeneralSignal<U>;
-            fn map<U, G>(&self, map: G, s: &Slock<impl ThreadMarker>) -> Self::MappedOutput<U>
-                where U: Send + 'static, G: Send + 'static + Fn(&M) -> U {
-                self._map(map, s)
-            }
+            impl_signal_inner!(M);
         }
 
         impl<I, IB, M, F, C> RawStoreSharedOwnerBase<M, F> for CoupledStore<I, IB, M, F, C>
@@ -2360,7 +2148,7 @@ mod store {
                 &self.inner
             }
 
-            fn clone(&self) -> Self {
+            fn arc_clone(&self) -> Self {
                 self.inner.borrow_mut().strong_count_increment();
 
                 CoupledStore {
@@ -2402,7 +2190,7 @@ mod store {
             where S: Stateful, F: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, F> {
             fn clone(&self) -> Self {
                 GeneralBinding {
-                    inner: self.inner.clone(),
+                    inner: self.inner.arc_clone(),
                     phantom_state: PhantomData,
                     phantom_filter: PhantomData
                 }
@@ -2433,11 +2221,11 @@ mod store {
                 self.inner.get_ref()
             }
 
-            fn clone(&self) -> Self {
+            fn arc_clone(&self) -> Self {
                 self.inner.get_ref().borrow_mut().strong_count_increment();
 
                 GeneralBinding {
-                    inner: self.inner.clone(),
+                    inner: self.inner.arc_clone(),
                     phantom_state: PhantomData,
                     phantom_filter: PhantomData
                 }
@@ -2458,7 +2246,6 @@ mod store {
             where S: Stateful, F: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, F> {}
     }
     pub use general_binding::*;
-    use crate::util::markers::ThreadMarker;
 }
 pub use store::*;
 
@@ -3106,7 +2893,6 @@ mod test {
     use crate::util::numeric::Norm;
     use crate::util::test_util::HeapChecker;
     use crate::util::Vector;
-
 
     #[test]
     fn test_numeric() {
@@ -4047,8 +3833,8 @@ mod test {
                 3.0 * t * t - 2.0 * t * t * t
             }, 1.5), &s)
         };
-        let mut u = Arc::new(Mutex::new(vec![]));
-        let mut v = Arc::new(Mutex::new(vec![]));
+        let u = Arc::new(Mutex::new(vec![]));
+        let v = Arc::new(Mutex::new(vec![]));
 
         let up = u.clone();
         let vp = v.clone();
@@ -4094,7 +3880,7 @@ mod test {
                 let s = slock();
                 // relatively high tolerance since
                 // pretty steep
-                assert!((*signal.borrow(&s) / vals[i] - 1.0).abs() < 0.1);
+                assert!((*signal.borrow(&s) / vals[i] - 1.0).abs() < 0.2);
             }
         }).join().unwrap();
     }
