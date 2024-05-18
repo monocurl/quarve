@@ -1014,8 +1014,8 @@ pub mod capacitor {
 
 mod store {
     use crate::core::{Slock};
-    use crate::state::{ActionFilter, Filterless, GeneralSignal, IntoAction, Signal, Stateful};
-    use crate::state::listener::{GeneralListener, InverseListener, StateListener};
+    use crate::state::{ActionFilter, Filterless, IntoAction, Signal, Stateful};
+    use crate::state::listener::{GeneralListener, InverseListener};
     use crate::util::markers::ThreadMarker;
 
     /// It is the implementors job to guarantee that subtree_listener
@@ -1133,7 +1133,7 @@ mod store {
             where S: Stateful, F: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, F> {
             fn action_listener<G>(&self, listener: G, _s: &Slock<impl ThreadMarker>)
                 where G: Send + Fn(&S, &S::Action, &Slock) -> bool + 'static {
-                self.get_ref().borrow_mut().dispatcher_mut().add_listener(StateListener::ActionListener(listener));
+                self.get_ref().borrow_mut().dispatcher_mut().add_listener(StateListener::ActionListener(Box::new(listener)));
             }
         }
 
@@ -1449,7 +1449,7 @@ mod store {
 
         macro_rules! impl_signal_inner {
             ($s:ty) => {
-                fn borrow<'a>(&'a self, s: &'a Slock<impl ThreadMarker>) -> impl Deref<Target=$s> {
+                fn borrow<'a>(&'a self, _s: &'a Slock<impl ThreadMarker>) -> impl Deref<Target=$s> {
                     StateRef {
                         main_ref: self.get_ref().borrow(),
                         lifetime: PhantomData,
@@ -1457,7 +1457,7 @@ mod store {
                     }
                 }
 
-                fn listen<Q>(&self, listener: Q, s: &Slock<impl ThreadMarker>)
+                fn listen<Q>(&self, listener: Q, _s: &Slock<impl ThreadMarker>)
                     where Q: Fn(&$s, &Slock) -> bool + Send + 'static {
                     self.get_ref().borrow_mut().dispatcher_mut().add_listener(StateListener::SignalListener(Box::new(listener)));
                 }
@@ -1485,6 +1485,8 @@ mod store {
             state::{ActionFilter, Filterless, IntoAction, Signal, Stateful, StoreContainer, GeneralSignal},
             core::Slock,
         };
+        use crate::state::StateListener;
+        use crate::state::store::state_ref::StateRef;
         use crate::state::{Filter};
         use crate::state::listener::{GeneralListener, InverseListener};
         use crate::state::store::action_inverter::ActionInverter;
@@ -1583,7 +1585,6 @@ mod store {
         impl<S, A> Signal<S> for Store<S, A>
             where S: Stateful, A: ActionFilter<Target=S>
         {
-
             impl_signal_inner!(S);
         }
 
@@ -1617,6 +1618,8 @@ mod store {
         use std::marker::PhantomData;
         use std::ops::{Deref, DerefMut};
         use std::sync::Arc;
+        use crate::state::StateListener;
+        use crate::state::store::state_ref::StateRef;
         use crate::core::{Slock};
         use crate::state::{ActionFilter, Filter, Filterless, GeneralListener, GeneralSignal, IntoAction, Signal, Stateful, StoreContainer};
         use crate::state::store::action_inverter::ActionInverter;
@@ -1776,12 +1779,15 @@ mod store {
         use std::cell::RefCell;
         use std::ops::{Deref, DerefMut};
         use std::sync::Arc;
+        use std::marker::PhantomData;
+        use crate::state::store::state_ref::StateRef;
         use crate::{
             state::{
                 ActionFilter, Filterless, IntoAction, Signal, Stateful, StoreContainer, GeneralSignal,
             },
             core::Slock,
         };
+        use crate::state::StateListener;
         use crate::state::{Filter};
         use crate::state::listener::{GeneralListener, InverseListener};
         use crate::state::store::inverse_listener_holder::NullInverseListenerHolder;
@@ -1914,6 +1920,8 @@ mod store {
         use std::sync::{Arc, Mutex};
         use std::sync::atomic::AtomicUsize;
         use std::sync::atomic::Ordering::Release;
+        use crate::state::StateListener;
+        use crate::state::store::state_ref::StateRef;
         use crate::{
             state::{
                 ActionFilter, Filterless, IntoAction, Signal, Stateful, StoreContainer, GeneralSignal,
@@ -2173,8 +2181,11 @@ mod store {
         use std::ops::Deref;
         use std::sync::Arc;
         use crate::core::{Slock};
+        use crate::state::StateListener;
+        use crate::state::store::state_ref::StateRef;
         use crate::state::{RawStoreSharedOwner, Signal};
         use crate::state::signal::GeneralSignal;
+        use crate::state::store::macros::impl_signal_inner;
         use crate::util::markers::ThreadMarker;
         use super::{ActionFilter, Stateful};
         use super::sealed_base::{RawStoreBase, RawStoreSharedOwnerBase};
@@ -2199,18 +2210,7 @@ mod store {
 
         impl<S, A, I> Signal<S> for GeneralBinding<S, A, I>
             where S: Stateful, A: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, A> {
-            fn borrow<'a>(&'a self, s: &'a Slock<impl ThreadMarker>) -> impl Deref<Target=S> {
-                self._borrow(s)
-            }
-
-            fn listen<F>(&self, listener: F, s: &Slock<impl ThreadMarker>) where F: Fn(&S, &Slock) -> bool + Send + 'static {
-                self._listen(listener, s);
-            }
-
-            type MappedOutput<U: Send + 'static> = GeneralSignal<U>;
-            fn map<U, F>(&self, map: F, s: &Slock<impl ThreadMarker>) -> Self::MappedOutput<U> where U: Send + 'static, F: Send + 'static + Fn(&S) -> U {
-                self._map(map, s)
-            }
+            impl_signal_inner!(S);
         }
 
         impl<S, A, I> RawStoreSharedOwnerBase<S, A> for GeneralBinding<S, A, I>
@@ -3986,5 +3986,55 @@ mod test {
         drop(l);
         res.invert(&s);
         assert_eq!(*state.borrow(&s).x(), "asfasdf".to_string());
+    }
+
+    #[test]
+    fn test_filter() {
+        let _h = HeapChecker::new();
+        let s = slock();
+        let state = Store::new_with_filter(0);
+        state.action_filter(|curr, action, _s| {
+            if *curr > 50 {
+                Set(40)
+            }
+            else if let Set(target) = action {
+                if target % 2 == 1 {
+                    Set(target + 1)
+                }
+                else {
+                    Set(target)
+                }
+            }
+            else {
+                Set(-1)
+            }
+        }, &s);
+        let vec: Option<Box<dyn DirectlyInvertible>> = None;
+        let vectors = Arc::new(Mutex::new(Some(vec)));
+        let c = vectors.clone();
+        state.subtree_inverse_listener(move |inv, _s| {
+            let mut l1 = c.lock().unwrap();
+            let Some(l) = l1.as_mut() else {
+                return false;
+            };
+            if l.is_none() {
+                *l = Some(inv);
+            }
+            else {
+                unsafe {
+                    l.as_mut().unwrap().right_multiply(inv);
+                }
+            }
+            true
+        }, &s);
+        for i in 0.. 100 {
+            state.apply(Set(i * i), &s);
+            assert_eq!(*state.borrow(&s) % 2, 0)
+        }
+        let mut l = vectors.lock().unwrap();
+        let mut res = l.take().unwrap().unwrap();
+        drop(l);
+        res.invert(&s);
+        assert_eq!(*state.borrow(&s), 0);
     }
 }
