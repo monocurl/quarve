@@ -1,5 +1,42 @@
-mod listener {
+// TODO
+// TokenStore should be removed and replaced with a dispatcher
+// dependency injection
+// CRDT stores at some point
+// path listeners and path appliers
+
+pub mod slock_cell {
+    use std::cell::{Ref, RefCell, RefMut};
     use crate::core::Slock;
+    use crate::util::markers::ThreadMarker;
+
+    pub struct SlockCell<T>(RefCell<T>) where T: Send;
+
+    impl<T> SlockCell<T> where T: Send {
+        pub fn new(val: T) -> Self {
+            SlockCell(RefCell::new(val))
+        }
+
+        pub fn borrow(&self, _s: &'_ Slock<impl ThreadMarker>) -> Ref<'_, T> {
+            self.0.borrow()
+        }
+
+        pub fn borrow_mut(&self, _s: &'_ Slock<impl ThreadMarker>) -> RefMut<'_, T>  {
+            self.0.borrow_mut()
+        }
+
+        pub unsafe fn as_ptr(&self) -> *const T {
+            self.0.as_ptr()
+        }
+    }
+
+    // Safety: all borrows require the state lock
+    // or are unsafe
+    unsafe impl<T> Send for SlockCell<T> where T: Send {}
+    unsafe impl<T> Sync for SlockCell<T> where T: Send {}
+}
+
+mod listener {
+     use crate::core::Slock;
     use crate::state::Stateful;
 
     pub(super) mod sealed {
@@ -19,14 +56,14 @@ mod listener {
             /// It must be guaranteed by the caller
             /// the other type is exactly the same as our type
             /// and with the same id
-            unsafe fn right_multiply(&mut self, by: Box<dyn DirectlyInvertible>);
+            unsafe fn right_multiply(&mut self, by: Box<dyn DirectlyInvertible>, s: &Slock);
 
             // gets a pointer to the action instance
             // (void pointer)
-            unsafe fn action_pointer(&self) -> *const ();
+            unsafe fn action_pointer(&self, s: &Slock) -> *const ();
 
             // forgets the reference action without dropping it
-            unsafe fn forget_action(&mut self);
+            unsafe fn forget_action(&mut self, s: &Slock);
         }
     }
 
@@ -59,7 +96,6 @@ mod group {
     use crate::state::{GeneralListener, InverseListener};
     use crate::core::{Slock};
     use crate::util::markers::{BoolMarker, ThreadMarker};
-
 
     pub trait Stateful: Send + Sized + 'static {
         type Action: GroupAction<Self>;
@@ -206,7 +242,7 @@ mod group {
 
         pub trait ActionFilter: Send + 'static {
             type Target: Stateful;
-            
+
             fn new() -> Self;
 
             fn add_filter<F>(&mut self, f: F)
@@ -1067,14 +1103,14 @@ mod store {
     }
 
     mod sealed_base {
-        use std::cell::RefCell;
         use std::sync::Arc;
         use crate::core::{Slock};
         use crate::state::{Signal};
+        use crate::state::slock_cell::SlockCell;
         use crate::util::markers::ThreadMarker;
         use super::{ActionFilter, IntoAction, Stateful};
 
-        pub(super) trait RawStoreBase<S, F>: 'static where S: Stateful, F: ActionFilter<Target=S> {
+        pub(super) trait RawStoreBase<S, F>: Sized + Send + 'static where S: Stateful, F: ActionFilter<Target=S> {
             type InverseListenerHolder: super::inverse_listener_holder::InverseListenerHolder;
 
             fn dispatcher(&self) -> &super::store_dispatcher::StoreDispatcher<S, F, Self::InverseListenerHolder>;
@@ -1082,15 +1118,11 @@ mod store {
             fn dispatcher_mut(&mut self) -> &mut super::store_dispatcher::StoreDispatcher<S, F, Self::InverseListenerHolder>;
 
             // may introduce some additional behavior that the dispatcher does not handle
-            fn apply(inner: &Arc<RefCell<Self>>, action: impl IntoAction<S::Action, S>, skip_filters: bool, s: &Slock<impl ThreadMarker>,);
+            fn apply(inner: &Arc<SlockCell<Self>>, action: impl IntoAction<S::Action, S>, skip_filters: bool, s: &Slock<impl ThreadMarker>,);
 
             // Must be careful with these two methods
             // since generally not called with the state lock
-            fn strong_count_decrement(&mut self) {
-
-            }
-
-            fn strong_count_increment(&mut self) {
+            fn strong_count_decrement(_this: &Arc<SlockCell<Self>>) {
 
             }
         }
@@ -1100,10 +1132,10 @@ mod store {
            as impl<R: RawStore...> Binding for R now becomes an awkward
            derivation, with lots of duplicate code
          */
-        pub(super) trait RawStoreSharedOwnerBase<S, F> : Sized + Signal<S> where S: Stateful, F: ActionFilter<Target=S> {
+        pub(super) trait RawStoreSharedOwnerBase<S, F> : Send + Sync + Sized + Signal<S> where S: Stateful, F: ActionFilter<Target=S> {
             type Inner: RawStoreBase<S, F>;
 
-            fn get_ref(&self) -> &Arc<RefCell<Self::Inner>>;
+            fn get_ref(&self) -> &Arc<SlockCell<Self::Inner>>;
 
             // used only for creating the binding
             fn arc_clone(&self) -> Self;
@@ -1115,6 +1147,7 @@ mod store {
         use crate::state::store::sealed_base::RawStoreBase;
 
         #[allow(private_bounds)]
+        #[doc(hidden)]
         pub trait RawStore<S, F>: RawStoreBase<S, F>
             where S: Stateful, F: ActionFilter<Target=S> {}
 
@@ -1133,6 +1166,7 @@ mod store {
         use super::sealed_base::{RawStoreBase, RawStoreSharedOwnerBase};
 
         #[allow(private_bounds)]
+        #[doc(hidden)]
         pub trait RawStoreSharedOwner<S, F>: RawStoreSharedOwnerBase<S, F>
             where S: Stateful, F: ActionFilter<Target=S> {}
 
@@ -1143,16 +1177,16 @@ mod store {
 
         impl<S, F, I> ActionDispatcher<S, F> for I
             where S: Stateful, F: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, F> {
-            fn action_listener<G>(&self, listener: G, _s: &Slock<impl ThreadMarker>)
+            fn action_listener<G>(&self, listener: G, s: &Slock<impl ThreadMarker>)
                 where G: Send + FnMut(&S, &S::Action, &Slock) -> bool + 'static {
-                self.get_ref().borrow_mut().dispatcher_mut().add_listener(StateListener::ActionListener(Box::new(listener)));
+                self.get_ref().borrow_mut(s).dispatcher_mut().add_listener(StateListener::ActionListener(Box::new(listener)));
             }
         }
 
         impl<S: Stateful, I: RawStoreSharedOwner<S, Filter<S>>> Filterable<S> for I {
             fn action_filter<G>(&self, filter: G, s: &Slock<impl ThreadMarker>)
                 where G: Send + Fn(&S, S::Action, &Slock) -> S::Action + 'static {
-                self.get_ref().borrow_mut().dispatcher_mut().action_filter(filter, s);
+                self.get_ref().borrow_mut(s).dispatcher_mut().action_filter(filter, s);
             }
         }
 
@@ -1160,8 +1194,6 @@ mod store {
             type Binding = GeneralBinding<S, F, I>;
 
             fn binding(&self) -> Self::Binding {
-                self.get_ref().borrow_mut().strong_count_increment();
-
                 GeneralBinding {
                     inner: self.arc_clone(),
                     phantom_state: PhantomData,
@@ -1188,18 +1220,18 @@ mod store {
 
     /* MARK: utilities */
     mod action_inverter {
-        use std::cell::RefCell;
         use std::marker::PhantomData;
         use std::sync::Weak;
         use crate::core::Slock;
         use crate::state::listener::DirectlyInvertible;
         use crate::state::listener::sealed::DirectlyInvertibleBase;
         use crate::state::{ActionFilter, Stateful};
+        use crate::state::slock_cell::SlockCell;
         use super::RawStore;
 
         pub(super) struct ActionInverter<S, F, I> where S: Stateful, F: ActionFilter<Target=S>, I: RawStore<S, F> {
             pub action: Option<S::Action>,
-            pub state: Weak<RefCell<I>>,
+            pub state: Weak<SlockCell<I>>,
             pub filter: PhantomData<F>
         }
 
@@ -1214,21 +1246,21 @@ mod store {
                 I::apply(&state, self.action.take().unwrap(), true, s);
             }
 
-            unsafe fn right_multiply(&mut self, mut by: Box<dyn DirectlyInvertible>) {
+            unsafe fn right_multiply(&mut self, mut by: Box<dyn DirectlyInvertible>, s: &Slock) {
                 /* we are free to assume by is of type Self, allowing us to do this conversion */
-                let ptr = by.action_pointer() as *const S::Action;
+                let ptr = by.action_pointer(s) as *const S::Action;
                 self.action = Some(self.action.take().unwrap() * std::ptr::read(ptr));
                 /* we have implicitly moved the other's action, now we must tell it to forget to
                    avoid double free
                  */
-                by.forget_action();
+                by.forget_action(s);
             }
 
-            unsafe fn action_pointer(&self) -> *const () {
+            unsafe fn action_pointer(&self, _s: &Slock) -> *const () {
                 self.action.as_ref().unwrap() as *const S::Action as *const ()
             }
 
-            unsafe fn forget_action(&mut self) {
+            unsafe fn forget_action(&mut self, _s: &Slock) {
                 std::mem::forget(self.action.take());
             }
         }
@@ -1239,11 +1271,6 @@ mod store {
             fn id(&self) -> usize {
                 self.state.as_ptr() as usize
             }
-        }
-
-        // safety: all operations are either unsafe or require the s
-        unsafe impl<S, F, I> Send for ActionInverter<S, F, I>
-            where S: Stateful, F: ActionFilter<Target=S>, I: RawStore<S, F> {
         }
     }
 
@@ -1449,36 +1476,36 @@ mod store {
             () => {
                 fn subtree_general_listener<Q>(&self, f: Q, s: &Slock<impl ThreadMarker>)
                     where Q: GeneralListener + Clone {
-                    self.inner.borrow_mut().dispatcher_mut().set_general_listener(f, s.as_ref());
+                    self.inner.borrow_mut(s).dispatcher_mut().set_general_listener(f, s.as_ref());
                 }
 
                 fn subtree_inverse_listener<Q>(&self, f: Q, s: &Slock<impl ThreadMarker>)
                     where Q: InverseListener + Clone {
-                    self.inner.borrow_mut().dispatcher_mut().set_inverse_listener(f, s.as_ref());
+                    self.inner.borrow_mut(s).dispatcher_mut().set_inverse_listener(f, s.as_ref());
                 }
             }
         }
 
         macro_rules! impl_signal_inner {
             ($s:ty) => {
-                fn borrow<'a>(&'a self, _s: &'a Slock<impl ThreadMarker>) -> impl Deref<Target=$s> {
+                fn borrow(&self, s: &'_ Slock<impl ThreadMarker>) -> impl Deref<Target=$s> + '_ {
                     StateRef {
-                        main_ref: self.get_ref().borrow(),
+                        main_ref: self.get_ref().borrow(s),
                         lifetime: PhantomData,
                         filter: PhantomData,
                     }
                 }
 
-                fn listen<Q>(&self, listener: Q, _s: &Slock<impl ThreadMarker>)
+                fn listen<Q>(&self, listener: Q, s: &Slock<impl ThreadMarker>)
                     where Q: FnMut(&$s, &Slock) -> bool + Send + 'static {
-                    self.get_ref().borrow_mut().dispatcher_mut().add_listener(StateListener::SignalListener(Box::new(listener)));
+                    self.get_ref().borrow_mut(s).dispatcher_mut().add_listener(StateListener::SignalListener(Box::new(listener)));
                 }
 
                 type MappedOutput<U: Send + 'static> = GeneralSignal<U>;
                 fn map<U, Q>(&self, map: Q, s: &Slock<impl ThreadMarker>) -> Self::MappedOutput<U>
                     where U: Send + 'static, Q: Send + 'static + Fn(&$s) -> U {
-                    GeneralSignal::from(self, map, |this, listener, _s| {
-                        this.get_ref().borrow_mut().dispatcher_mut().add_listener(StateListener::SignalListener(listener))
+                    GeneralSignal::from(self, map, |this, listener, s| {
+                        this.get_ref().borrow_mut(s).dispatcher_mut().add_listener(StateListener::SignalListener(listener))
                     }, s)
                 }
             };
@@ -1489,7 +1516,6 @@ mod store {
 
     /* MARK: Stores */
     mod store {
-        use std::cell::RefCell;
         use std::marker::PhantomData;
         use std::ops::{Deref, DerefMut};
         use std::sync::Arc;
@@ -1501,6 +1527,7 @@ mod store {
         use crate::state::store::state_ref::StateRef;
         use crate::state::{Filter};
         use crate::state::listener::{GeneralListener, InverseListener};
+        use crate::state::slock_cell::SlockCell;
         use crate::state::store::action_inverter::ActionInverter;
         use crate::state::store::inverse_listener_holder::ActualInverseListenerHolder;
         use crate::state::store::macros::{impl_signal_inner, impl_store_container_inner};
@@ -1525,15 +1552,15 @@ mod store {
                 &mut self.dispatcher
             }
 
-            fn apply(arc: &Arc<RefCell<Self>>, alt_action: impl IntoAction<S::Action, S>, skip_filters: bool, s: &Slock<impl ThreadMarker>) {
+            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<S::Action, S>, skip_filters: bool, s: &Slock<impl ThreadMarker>) {
                 #[cfg(debug_assertions)] {
                     debug_assert_eq!(s.debug_info.applying_transaction.borrow().len(), 0, "Fatal: store \
                     changed as a result of the change of another state variable. \
                     Stores, by default, are to be independent of other stores. If you would like one store to \
                     be dependent on another, check out DerivedStore (or in some circumstances, maybe CoupledStore)");
-                    s.debug_info.applying_transaction.borrow_mut().push(arc.as_ptr() as usize);
+                    s.debug_info.applying_transaction.borrow_mut().push(Arc::as_ptr(arc) as usize);
                 }
-                let mut borrow = arc.borrow_mut();
+                let mut borrow = arc.borrow_mut(s);
                 let inner = borrow.deref_mut();
 
                 inner.dispatcher.apply(alt_action, |action| {
@@ -1553,7 +1580,7 @@ mod store {
 
         pub struct Store<S: Stateful, F: ActionFilter<Target=S>=Filterless<S>>
         {
-            pub(super) inner: Arc<RefCell<InnerStore<S, F>>>
+            pub(super) inner: Arc<SlockCell<InnerStore<S, F>>>
         }
 
         impl<S> Store<S, Filterless<S>>
@@ -1561,7 +1588,7 @@ mod store {
         {
             pub fn new(initial: S) -> Self {
                 Store {
-                    inner: Arc::new(RefCell::new(InnerStore {
+                    inner: Arc::new(SlockCell::new(InnerStore {
                         dispatcher: StoreDispatcher::new(initial)
                     }))
                 }
@@ -1573,7 +1600,7 @@ mod store {
         {
             pub fn new_with_filter(initial: S) -> Self {
                 Store {
-                    inner: Arc::new(RefCell::new(InnerStore {
+                    inner: Arc::new(SlockCell::new(InnerStore {
                         dispatcher: StoreDispatcher::new(initial)
                     }))
                 }
@@ -1605,7 +1632,7 @@ mod store {
         {
             type Inner = InnerStore<S, F>;
 
-            fn get_ref(&self) -> &Arc<RefCell<Self::Inner>> {
+            fn get_ref(&self) -> &Arc<SlockCell<Self::Inner>> {
                 &self.inner
             }
 
@@ -1615,16 +1642,10 @@ mod store {
                 }
             }
         }
-
-        // safety: all accesses to inner are done using the global state lock
-        // and Stateful: Send
-        unsafe impl<S, F> Send for Store<S, F> where S: Stateful, F: ActionFilter<Target=S> { }
-        unsafe impl<S, F> Sync for Store<S, F> where S: Stateful, F: ActionFilter<Target=S> { }
     }
     pub use store::*;
 
     mod token_store {
-        use std::cell::RefCell;
         use std::collections::HashMap;
         use std::hash::Hash;
         use std::marker::PhantomData;
@@ -1640,6 +1661,7 @@ mod store {
         use crate::state::store::sealed_base::{RawStoreBase, RawStoreSharedOwnerBase};
         use crate::state::store::store_dispatcher::StoreDispatcher;
         use crate::state::InverseListener;
+        use crate::state::slock_cell::SlockCell;
         use crate::util::markers::ThreadMarker;
 
         pub(super) struct InnerTokenStore<S: Stateful + Copy + Hash + Eq, F: ActionFilter<Target=S>> {
@@ -1660,15 +1682,15 @@ mod store {
                 &mut self.dispatcher
             }
 
-            fn apply(arc: &Arc<RefCell<Self>>, alt_action: impl IntoAction<S::Action, S>, skip_filters: bool, s: &Slock<impl ThreadMarker>) {
+            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<S::Action, S>, skip_filters: bool, s: &Slock<impl ThreadMarker>) {
                 #[cfg(debug_assertions)] {
                     debug_assert_eq!(s.debug_info.applying_transaction.borrow().len(), 0, "Fatal: token store \
                     changed as a result of the change of another state variable. \
                     Stores, by default, are to be independent of other stores. If you would like one store to \
                     be dependent on another, check out DerivedStore (or in some circumstances, maybe CoupledStore)");
-                    s.debug_info.applying_transaction.borrow_mut().push(arc.as_ptr() as usize);
+                    s.debug_info.applying_transaction.borrow_mut().push(Arc::as_ptr(arc) as usize);
                 }
-                let mut borrow = arc.borrow_mut();
+                let mut borrow = arc.borrow_mut(s);
                 let inner = borrow.deref_mut();
 
                 let old = *inner.dispatcher.data();
@@ -1703,14 +1725,14 @@ mod store {
 
         pub struct TokenStore<S, F=Filterless<S>>
             where S: Stateful + Copy + Hash + Eq, F: ActionFilter<Target=S> {
-            inner: Arc<RefCell<InnerTokenStore<S, F>>>
+            inner: Arc<SlockCell<InnerTokenStore<S, F>>>
         }
 
         impl<S, F> TokenStore<S, F> where S: Stateful + Copy + Hash + Eq, F: ActionFilter<Target=S> {
             pub fn equals(&self, target: S, s: &Slock) -> impl Signal<bool> + Clone {
                 GeneralSignal::from(self, move |u| *u == target,
                     |this, listener, _s | {
-                        this.inner.borrow_mut().equal_listeners.entry(target)
+                        this.inner.borrow_mut(s).equal_listeners.entry(target)
                             .or_insert(Vec::new())
                             .push(listener);
                     },
@@ -1722,7 +1744,7 @@ mod store {
         impl<S> TokenStore<S, Filterless<S>> where S: Stateful + Copy + Hash + Eq {
             pub fn new(initial: S) -> Self {
                 TokenStore {
-                    inner: Arc::new(RefCell::new(InnerTokenStore {
+                    inner: Arc::new(SlockCell::new(InnerTokenStore {
                         dispatcher: StoreDispatcher::new(initial),
                         equal_listeners: HashMap::new(),
                     }))
@@ -1733,7 +1755,7 @@ mod store {
         impl<S> TokenStore<S, Filter<S>> where S: Stateful + Copy + Hash + Eq {
             pub fn new_with_filter(initial: S) -> Self {
                 TokenStore {
-                    inner: Arc::new(RefCell::new(InnerTokenStore {
+                    inner: Arc::new(SlockCell::new(InnerTokenStore {
                         dispatcher: StoreDispatcher::new(initial),
                         equal_listeners: HashMap::new(),
                     }))
@@ -1769,7 +1791,7 @@ mod store {
             where S: Stateful + Copy + Hash + Eq, A: ActionFilter<Target=S> {
             type Inner = InnerTokenStore<S, A>;
 
-            fn get_ref(&self) -> &Arc<RefCell<Self::Inner>> {
+            fn get_ref(&self) -> &Arc<SlockCell<Self::Inner>> {
                 &self.inner
             }
 
@@ -1779,16 +1801,10 @@ mod store {
                 }
             }
         }
-
-        // safety: all accesses to inner are done using the global state lock
-        // and Stateful: Send
-        unsafe impl<S, F> Send for TokenStore<S, F> where S: Stateful + Copy + Hash + Eq, F: ActionFilter<Target=S> { }
-        unsafe impl<S, F> Sync for TokenStore<S, F> where S: Stateful + Copy + Hash + Eq, F: ActionFilter<Target=S> { }
     }
     pub use token_store::*;
 
     mod derived_store {
-        use std::cell::RefCell;
         use std::ops::{Deref, DerefMut};
         use std::sync::Arc;
         use std::marker::PhantomData;
@@ -1802,6 +1818,7 @@ mod store {
         use crate::state::StateListener;
         use crate::state::{Filter};
         use crate::state::listener::{GeneralListener, InverseListener};
+        use crate::state::slock_cell::SlockCell;
         use crate::state::store::inverse_listener_holder::NullInverseListenerHolder;
         use crate::state::store::macros::{impl_signal_inner, impl_store_container_inner};
         use crate::state::store::store_dispatcher::StoreDispatcher;
@@ -1825,15 +1842,15 @@ mod store {
                 &mut self.dispatcher
             }
 
-            fn apply(arc: &Arc<RefCell<Self>>, alt_action: impl IntoAction<S::Action, S>, skip_filters: bool, s: &Slock<impl ThreadMarker>) {
+            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<S::Action, S>, skip_filters: bool, s: &Slock<impl ThreadMarker>) {
                 #[cfg(debug_assertions)] {
                     debug_assert_ne!(s.debug_info.applying_transaction.borrow().len(), 0, "Fatal: derived store \
                     changed in a context that was NOT initiated by the change of another store. \
                     Derived store, being 'derived', must only be a function of other state variables. ");
-                    s.debug_info.applying_transaction.borrow_mut().push(arc.as_ptr() as usize);
+                    s.debug_info.applying_transaction.borrow_mut().push(Arc::as_ptr(arc) as usize);
                 }
 
-                let mut borrow = arc.borrow_mut();
+                let mut borrow = arc.borrow_mut(s);
                 let inner = borrow.deref_mut();
 
                 inner.dispatcher.apply(alt_action, |_| unreachable!(), skip_filters, s);
@@ -1847,7 +1864,7 @@ mod store {
 
         pub struct DerivedStore<S: Stateful, F: ActionFilter<Target=S>=Filterless<S>>
         {
-            inner: Arc<RefCell<InnerDerivedStore<S, F>>>
+            inner: Arc<SlockCell<InnerDerivedStore<S, F>>>
         }
 
         impl<S> DerivedStore<S, Filterless<S>>
@@ -1855,7 +1872,7 @@ mod store {
         {
             pub fn new(initial: S) -> Self {
                 DerivedStore {
-                    inner: Arc::new(RefCell::new(InnerDerivedStore {
+                    inner: Arc::new(SlockCell::new(InnerDerivedStore {
                         dispatcher: StoreDispatcher::new(initial)
                     }))
                 }
@@ -1867,7 +1884,7 @@ mod store {
         {
             pub fn new_with_filter(initial: S) -> Self {
                 DerivedStore {
-                    inner: Arc::new(RefCell::new(InnerDerivedStore {
+                    inner: Arc::new(SlockCell::new(InnerDerivedStore {
                         dispatcher: StoreDispatcher::new(initial),
                     }))
                 }
@@ -1907,7 +1924,7 @@ mod store {
         {
             type Inner = InnerDerivedStore<S, F>;
 
-            fn get_ref(&self) -> &Arc<RefCell<Self::Inner>> {
+            fn get_ref(&self) -> &Arc<SlockCell<Self::Inner>> {
                 &self.inner
             }
 
@@ -1917,22 +1934,14 @@ mod store {
                 }
             }
         }
-
-        // safety: all accesses to inner are done using the global state lock
-        // and Stateful: Send
-        unsafe impl<S, F> Send for DerivedStore<S, F> where S: Stateful, F: ActionFilter<Target=S> { }
-        unsafe impl<S, F> Sync for DerivedStore<S, F> where S: Stateful, F: ActionFilter<Target=S> { }
     }
     pub use derived_store::*;
 
     mod coupled_store {
-        use std::cell::RefCell;
         use std::marker::PhantomData;
         use std::ops::{Deref, DerefMut};
         use std::sync::{Arc, Mutex};
-        use std::sync::atomic::AtomicUsize;
-        use std::sync::atomic::Ordering::Release;
-        use crate::state::StateListener;
+        use crate::state::{StateListener};
         use crate::state::store::state_ref::StateRef;
         use crate::{
             state::{
@@ -1943,6 +1952,7 @@ mod store {
         use crate::state::{Binding};
         use crate::state::coupler::Coupler;
         use crate::state::listener::{GeneralListener, InverseListener};
+        use crate::state::slock_cell::SlockCell;
         use crate::state::store::inverse_listener_holder::NullInverseListenerHolder;
         use crate::state::store::macros::{impl_signal_inner, impl_store_container_inner};
         use crate::state::store::store_dispatcher::StoreDispatcher;
@@ -1964,13 +1974,12 @@ mod store {
             // this may seem a bit backwards, but if you think about it
             // it's okay if intrinsic outlives us, but not ok if
             // we outlive intrinsic
-            phantom_intrinsic: PhantomData<&'static I>,
+            phantom_intrinsic: PhantomData<I>,
             // set to None once we have a ref count of 1
             // therefore, we need a mutex since we may not have state lock
             intrinsic: Mutex<Option<IB>>,
             intrinsic_performing_transaction: bool,
-            performing_transaction: bool,
-            strong_count: AtomicUsize,
+            performing_transaction: bool
         }
 
         impl<I, IB, M, F, C> InnerCoupledStore<I, IB, M, F, C>
@@ -1979,19 +1988,19 @@ mod store {
             // logic for this is somewhat convoluted
             // in large part due to the awkwardness of this
             // and the borrow rules
-            fn fully_apply(arc: &Arc<RefCell<Self>>, intrinsic: Option<&I>, alt_action: impl IntoAction<M::Action, M>, s: &Slock<impl ThreadMarker>) {
+            fn fully_apply(arc: &Arc<SlockCell<Self>>, intrinsic: Option<&I>, alt_action: impl IntoAction<M::Action, M>, s: &Slock<impl ThreadMarker>) {
                 /* must only be changed by itself, or by the parent */
                 #[cfg(debug_assertions)] {
                     // no need for self checks since if someone other than the parent initiates a transaction
                     // this will be caught by the parent anyways
-                    s.debug_info.applying_transaction.borrow_mut().push(arc.as_ptr() as usize);
+                    s.debug_info.applying_transaction.borrow_mut().push(Arc::as_ptr(arc) as usize);
                 }
 
-                arc.borrow_mut().performing_transaction = true;
+                arc.borrow_mut(s).performing_transaction = true;
 
                 // do have to be a bit careful with the reentry on the intrinsic action listener
                 // hence the many borrows
-                let mut borrow = arc.borrow_mut();
+                let mut borrow = arc.borrow_mut(s);
                 let inner = borrow.deref_mut();
 
                 /* this is a bit awkward, but it's easiest way to get around borrowing errors */
@@ -2036,7 +2045,7 @@ mod store {
 
                 // convert borrow to immutable
                 drop(borrow);
-                let borrow_immut = arc.borrow();
+                let borrow_immut = arc.borrow(s);
                 let inner_immut = borrow_immut.deref();
 
                 // tell intrinsic if it didn't originate (it's filterless so doesn't matter about filters)
@@ -2048,7 +2057,7 @@ mod store {
                 }
 
                 drop(borrow_immut);
-                arc.borrow_mut().performing_transaction = false;
+                arc.borrow_mut(s).performing_transaction = false;
             }
         }
 
@@ -2065,30 +2074,36 @@ mod store {
                 &mut self.dispatcher
             }
 
-            fn apply(arc: &Arc<RefCell<Self>>, alt_action: impl IntoAction<M::Action, M>, _skip_filters: bool, s: &Slock<impl ThreadMarker>) {
+            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<M::Action, M>, _skip_filters: bool, s: &Slock<impl ThreadMarker>) {
                 InnerCoupledStore::fully_apply(arc, None, alt_action, s);
             }
 
-            fn strong_count_decrement(&mut self) {
-                if self.strong_count.fetch_sub(1, Release) == 2 {
+            fn strong_count_decrement(this: &Arc<SlockCell<Self>>) {
+                // calling thread is owner and intrinsic is owner
+                // after this point, only intrinsic is owner
+                // and we must delete backref
+                // (possibly this can be invoked twice, that's not an issue)
+                if Arc::strong_count(this) == 2 {
                     // in some testing code validating should_panic
                     // we want to avoid non-unwinding panic
                     // in production, this will not be an issue however
-                    if let Ok(mut res) = self.intrinsic.lock() {
-                        *res = None;
+                    unsafe {
+                        // safety: the only immutable part we are touching
+                        // is already covered by a mutex and hence will not
+                        // be an issue in terms of multiple access
+                        // this is true even if slockcell is being borrowed mutably
+                        if let Ok(mut res) = (*this.as_ptr()).intrinsic.lock() {
+                            *res = None;
+                        }
                     }
                 }
-            }
-
-            fn strong_count_increment(&mut self) {
-                self.strong_count.fetch_add(1, Release);
             }
         }
 
         // IB purposefully filterless
         pub struct CoupledStore<I, IB, M, F, C>
             where I: Stateful, IB: Binding<I>, M: Stateful, F: ActionFilter<Target=M>, C: Coupler<I, M, F> {
-            inner: Arc<RefCell<InnerCoupledStore<I, IB, M, F, C>>>
+            inner: Arc<SlockCell<InnerCoupledStore<I, IB, M, F, C>>>
         }
 
         impl<I, IB, M, F, C> CoupledStore<I, IB, M, F, C>
@@ -2097,37 +2112,35 @@ mod store {
             pub fn new(intrinsic: IB, coupler: C, s: &Slock<impl ThreadMarker>) -> Self {
                 let data = coupler.initial_mapped(intrinsic.borrow(s).deref());
                 let ret = CoupledStore {
-                    inner: Arc::new(RefCell::new(InnerCoupledStore {
+                    inner: Arc::new(SlockCell::new(InnerCoupledStore {
                         dispatcher: StoreDispatcher::new(data),
                         coupler,
                         phantom_intrinsic: PhantomData,
                         intrinsic: Mutex::new(Some(intrinsic)),
                         intrinsic_performing_transaction: false,
                         performing_transaction: false,
-                        // one is the obvious one, other is the one owned by intrinsic
-                        strong_count: AtomicUsize::new(2)
                     }))
                 };
 
                 // intrinsic listener
                 // (our listener is handled manually in apply)
                 let strong = UnsafeForceSend(ret.inner.clone());
-                ret.inner.borrow()
+                ret.inner.borrow(s)
                     .intrinsic.lock().unwrap()
                     .as_ref().unwrap()
                     .action_listener(move |intrinsic, a, s| {
                         let UnsafeForceSend(strong) = &strong;
 
-                        let this = strong.borrow();
+                        let this = strong.borrow(s);
                         // if we didn't originate, then mirror the action
                         if !this.performing_transaction {
                             let coupler = &this.coupler;
                             let our_action = coupler.mirror_intrinsic_to_mapped(this.dispatcher.data(), intrinsic, a);
 
                             drop(this);
-                            strong.borrow_mut().intrinsic_performing_transaction = true;
+                            strong.borrow_mut(s).intrinsic_performing_transaction = true;
                             InnerCoupledStore::fully_apply(&strong, Some(intrinsic), our_action, s);
-                            strong.borrow_mut().intrinsic_performing_transaction = false;
+                            strong.borrow_mut(s).intrinsic_performing_transaction = false;
                         }
 
                         true
@@ -2140,7 +2153,7 @@ mod store {
         impl<I, IB, M, F, C> Drop for CoupledStore<I, IB, M, F, C>
             where I: Stateful, IB: Binding<I>, M: Stateful, F: ActionFilter<Target=M>, C: Coupler<I, M, F> {
             fn drop(&mut self) {
-                self.inner.borrow_mut().strong_count_decrement();
+                InnerCoupledStore::strong_count_decrement(&self.inner);
             }
         }
 
@@ -2164,31 +2177,20 @@ mod store {
         {
             type Inner = InnerCoupledStore<I, IB, M, F, C>;
 
-            fn get_ref(&self) -> &Arc<RefCell<Self::Inner>> {
+            fn get_ref(&self) -> &Arc<SlockCell<Self::Inner>> {
                 &self.inner
             }
 
             fn arc_clone(&self) -> Self {
-                self.inner.borrow_mut().strong_count_increment();
-
                 CoupledStore {
                     inner: Arc::clone(&self.inner)
                 }
             }
         }
-
-        // safety: all accesses to inner are done using the global state lock
-        // and Stateful: Send
-        unsafe impl<I, IB, M, F, C> Send for CoupledStore<I, IB, M, F, C>
-            where I: Stateful, IB: Binding<I>, M: Stateful, F: ActionFilter<Target=M>, C: Coupler<I, M, F> {}
-
-        unsafe impl<I, IB, M, F, C> Sync for CoupledStore<I, IB, M, F, C>
-            where I: Stateful, IB: Binding<I>, M: Stateful, F: ActionFilter<Target=M>, C: Coupler<I, M, F> {}
     }
     pub use coupled_store::*;
 
     mod general_binding {
-        use std::cell::RefCell;
         use std::marker::PhantomData;
         use std::ops::Deref;
         use std::sync::Arc;
@@ -2197,6 +2199,7 @@ mod store {
         use crate::state::store::state_ref::StateRef;
         use crate::state::{RawStoreSharedOwner, Signal};
         use crate::state::signal::GeneralSignal;
+        use crate::state::slock_cell::SlockCell;
         use crate::state::store::macros::impl_signal_inner;
         use crate::util::markers::ThreadMarker;
         use super::{ActionFilter, Stateful};
@@ -2205,8 +2208,8 @@ mod store {
         pub struct GeneralBinding<S, F, I>
             where S: Stateful, F: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, F> {
             pub(super) inner: I,
-            pub(super) phantom_state: PhantomData<S>,
-            pub(super) phantom_filter: PhantomData<F>,
+            pub(super) phantom_state: PhantomData<SlockCell<S>>,
+            pub(super) phantom_filter: PhantomData<SlockCell<F>>,
         }
 
         impl<S, F, I> Clone for GeneralBinding<S, F, I>
@@ -2229,13 +2232,11 @@ mod store {
             where S: Stateful, A: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, A> {
             type Inner = I::Inner;
 
-            fn get_ref(&self) -> &Arc<RefCell<Self::Inner>> {
+            fn get_ref(&self) -> &Arc<SlockCell<Self::Inner>> {
                 self.inner.get_ref()
             }
 
             fn arc_clone(&self) -> Self {
-                self.inner.get_ref().borrow_mut().strong_count_increment();
-
                 GeneralBinding {
                     inner: self.inner.arc_clone(),
                     phantom_state: PhantomData,
@@ -2247,43 +2248,37 @@ mod store {
         impl<S, A, I> Drop for GeneralBinding<S, A, I>
             where S: Stateful, A: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, A> {
             fn drop(&mut self) {
-                self.inner.get_ref().borrow_mut().strong_count_decrement();
+                I::Inner::strong_count_decrement(self.inner.get_ref());
             }
         }
-
-        // Safety: all operations require the state lock
-        unsafe impl<S, F, I> Send for GeneralBinding<S, F, I>
-            where S: Stateful, F: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, F> {}
-        unsafe impl<S, F, I> Sync for GeneralBinding<S, F, I>
-            where S: Stateful, F: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, F> {}
     }
     pub use general_binding::*;
 }
 pub use store::*;
 
 mod buffer {
-    use std::cell::{Ref, RefCell, RefMut};
-    use std::ops::DerefMut;
+    use std::ops::{Deref, DerefMut};
     use std::sync::Arc;
     use crate::core::Slock;
+    use crate::state::slock_cell::SlockCell;
     use crate::util::markers::ThreadMarker;
     use crate::util::test_util::QuarveAllocTag;
 
-    pub struct Buffer<T>(Arc<(RefCell<T>, QuarveAllocTag)>, ) where T: Send;
+    pub struct Buffer<T>(Arc<(SlockCell<T>, QuarveAllocTag)>, ) where T: Send;
 
     impl<T> Buffer<T>
         where T: Send
     {
         pub fn new(initial: T) -> Buffer<T> {
-            Buffer(Arc::new((RefCell::new(initial), QuarveAllocTag::new())))
+            Buffer(Arc::new((SlockCell::new(initial), QuarveAllocTag::new())))
         }
 
-        pub fn borrow(&self, _s: &'_ Slock<impl ThreadMarker>) -> Ref<'_, T> {
-            self.0.0.borrow()
+        pub fn borrow(&self, s: &'_ Slock<impl ThreadMarker>) -> impl Deref<Target=T> + '_ {
+            self.0.0.borrow(s)
         }
 
-        pub fn borrow_mut(&self, _s: &'_ Slock<impl ThreadMarker>) -> RefMut<'_, T> {
-            self.0.0.borrow_mut()
+        pub fn borrow_mut(&self, s: &'_ Slock<impl ThreadMarker>) -> impl DerefMut<Target=T> + '_  {
+            self.0.0.borrow_mut(s)
         }
 
         pub fn replace(&self, with: T, s: &'_ Slock<impl ThreadMarker>) -> T {
@@ -2298,11 +2293,6 @@ mod buffer {
             Buffer(Arc::clone(&self.0))
         }
     }
-
-    // safety: accesses are done using the state lock
-    // and T: Send
-    unsafe impl<T> Send for Buffer<T> where T: Send {}
-    unsafe impl<T> Sync for Buffer<T> where T: Send {}
 }
 pub use buffer::*;
 
@@ -2311,7 +2301,7 @@ mod signal {
     use crate::core::{Slock};
 
     pub trait Signal<T: Send + 'static> : Sized + Send + Sync + 'static {
-        fn borrow<'a>(&'a self, s: &'a Slock<impl ThreadMarker>) -> impl Deref<Target=T>;
+        fn borrow(&self, s: &'_ Slock<impl ThreadMarker>) -> impl Deref<Target=T> + '_;
 
         fn listen<F>(&self, listener: F, _s: &Slock<impl ThreadMarker>)
             where F: (FnMut(&T, &Slock) -> bool) + Send + 'static;
@@ -2392,12 +2382,12 @@ mod signal {
     use signal_ref::*;
 
     mod fixed_signal {
-        use std::cell::RefCell;
         use std::marker::PhantomData;
         use std::ops::Deref;
         use std::sync::Arc;
         use crate::core::{Slock};
         use crate::state::Signal;
+        use crate::state::slock_cell::SlockCell;
         use crate::util::markers::ThreadMarker;
         use crate::util::test_util::QuarveAllocTag;
         use super::SignalRef;
@@ -2412,13 +2402,13 @@ mod signal {
         }
 
         pub struct FixedSignal<T: Send + 'static> {
-            inner: Arc<RefCell<InnerFixedSignal<T>>>
+            inner: Arc<SlockCell<InnerFixedSignal<T>>>
         }
 
         impl<T> FixedSignal<T> where T: Send + 'static {
             pub fn new(val: T) -> FixedSignal<T> {
                 FixedSignal {
-                    inner: Arc::new(RefCell::new(InnerFixedSignal(QuarveAllocTag::new(), val)))
+                    inner: Arc::new(SlockCell::new(InnerFixedSignal(QuarveAllocTag::new(), val)))
                 }
             }
         }
@@ -2432,9 +2422,9 @@ mod signal {
         }
 
         impl<T> Signal<T> for FixedSignal<T> where T: Send + 'static {
-            fn borrow<'a>(&'a self, _s: &'a Slock<impl ThreadMarker>) -> impl Deref<Target=T> {
+            fn borrow(&self, s: &'_ Slock<impl ThreadMarker>) -> impl Deref<Target=T> + '_ {
                 SignalRef {
-                    src: self.inner.borrow(),
+                    src: self.inner.borrow(s),
                     marker: PhantomData
                 }
             }
@@ -2445,33 +2435,28 @@ mod signal {
             }
 
             type MappedOutput<S: Send + 'static> = FixedSignal<S>;
-            fn map<S, F>(&self, map: F, _s: &Slock<impl ThreadMarker>) -> FixedSignal<S>
+            fn map<S, F>(&self, map: F, s: &Slock<impl ThreadMarker>) -> FixedSignal<S>
                 where S: Send + 'static,
                       F: Send + 'static + Fn(&T) -> S
             {
-                let inner = self.inner.borrow();
+                let inner = self.inner.borrow(s);
                 let data = map(&inner.1);
 
                 FixedSignal {
-                    inner: Arc::new(RefCell::new(InnerFixedSignal(QuarveAllocTag::new(), data)))
+                    inner: Arc::new(SlockCell::new(InnerFixedSignal(QuarveAllocTag::new(), data)))
                 }
             }
         }
-
-        // Safety: all types require T to be Send
-        // and can only be read or written to using the global state lock
-        unsafe impl<T> Send for FixedSignal<T> where T: Send + 'static {}
-        unsafe impl<T> Sync for FixedSignal<T> where T: Send + 'static {}
     }
     pub use fixed_signal::*;
 
     mod general_signal {
-        use std::cell::RefCell;
         use std::marker::PhantomData;
         use std::ops::{Deref, DerefMut};
         use std::sync::Arc;
         use crate::core::{Slock};
         use crate::state::Signal;
+        use crate::state::slock_cell::SlockCell;
         use crate::util::markers::ThreadMarker;
         use crate::util::test_util::QuarveAllocTag;
         use super::SignalRef;
@@ -2489,10 +2474,8 @@ mod signal {
             }
         }
 
-        struct GeneralSyncCell<T: Send>(RefCell<GeneralInnerSignal<T>>);
-
         pub struct GeneralSignal<T: Send + 'static> {
-            inner: Arc<GeneralSyncCell<T>>
+            inner: Arc<SlockCell<GeneralInnerSignal<T>>>
         }
 
         impl<T> Clone for GeneralSignal<T> where T: Send + 'static {
@@ -2523,10 +2506,10 @@ mod signal {
                     };
                 }
 
-                let arc = Arc::new(GeneralSyncCell(RefCell::new(inner)));
+                let arc = Arc::new(SlockCell::new(inner));
                 let pseudo_weak = arc.clone();
                 add_listener(source, Box::new(move |val, s| {
-                    let mut binding = pseudo_weak.0.borrow_mut();
+                    let mut binding = pseudo_weak.borrow_mut(s);
                     let inner = binding.deref_mut();
 
                     // no longer any point
@@ -2543,37 +2526,30 @@ mod signal {
         }
 
         impl<T> Signal<T> for GeneralSignal<T> where T: Send + 'static {
-            fn borrow<'a>(&'a self, _s: &'a Slock<impl ThreadMarker>) -> impl Deref<Target=T> {
+            fn borrow(&self, s: &'_ Slock<impl ThreadMarker>) -> impl Deref<Target=T> + '_ {
                 SignalRef {
-                    src: self.inner.0.borrow(),
+                    src: self.inner.borrow(s),
                     marker: PhantomData,
                 }
             }
 
             fn listen<F>(&self, listener: F, s: &Slock<impl ThreadMarker>)
                 where F: FnMut(&T, &Slock) -> bool + Send + 'static {
-                self.inner.0.borrow_mut().audience.listen(listener, s);
+                self.inner.borrow_mut(s).audience.listen(listener, s);
             }
 
             type MappedOutput<S: Send + 'static> = GeneralSignal<S>;
             fn map<S, F>(&self, map: F, s: &Slock<impl ThreadMarker>) -> GeneralSignal<S>
                 where S: Send + 'static, F: Fn(&T) -> S + Send + 'static {
                 GeneralSignal::from(self, map, |this, listener, s| {
-                    this.inner.0.borrow_mut().audience.listen_box(listener, s);
+                    this.inner.borrow_mut(s).audience.listen_box(listener, s);
                 }, s)
             }
         }
-
-        unsafe impl<T> Send for GeneralSignal<T> where T: Send + 'static {}
-        unsafe impl<T> Sync for GeneralSignal<T> where T: Send + 'static {}
-
-        // safety: the refcell will only be accessed by a single thread at a time
-        unsafe impl<T> Sync for GeneralSyncCell<T> where T: Send { }
     }
     pub use general_signal::*;
 
     mod joined_signal {
-        use std::cell::RefCell;
         use std::ops::{Deref, DerefMut};
         use std::sync::Arc;
         use std::sync::atomic::{AtomicU8};
@@ -2583,6 +2559,7 @@ mod signal {
         use crate::state::signal::InnerSignal;
         use crate::state::signal::signal_audience::SignalAudience;
         use crate::state::signal::signal_ref::SignalRef;
+        use crate::state::slock_cell::SlockCell;
         use crate::util::markers::ThreadMarker;
         use crate::util::test_util::QuarveAllocTag;
 
@@ -2596,8 +2573,6 @@ mod signal {
             u: U,
             ours: V,
             audience: SignalAudience<V>,
-            // how many parents are causing a strong count for arc
-            num_parents_owning: AtomicU8,
         }
 
         impl<T, U, V> InnerSignal<V> for JoinedInnerSignal<T, U, V>
@@ -2610,17 +2585,13 @@ mod signal {
             }
         }
 
-        struct JoinedSyncCell<T, U, V>(RefCell<JoinedInnerSignal<T, U, V>>)
-            where T: Send + Clone + 'static,
-                  U: Send + Clone + 'static,
-                  V: Send + 'static;
-
         pub struct JoinedSignal<T, U, V>
             where T: Send + Clone + 'static,
                   U: Send + Clone + 'static,
                   V: Send + 'static
         {
-            inner: Arc<JoinedSyncCell<T, U, V>>
+            // first field is the number of parents (i.e. lhs, rhs) owning it
+            inner: Arc<(AtomicU8, SlockCell<JoinedInnerSignal<T, U, V>>)>
         }
 
         impl<T, U, V> Clone for JoinedSignal<T, U, V>
@@ -2635,7 +2606,7 @@ mod signal {
             }
         }
 
-        struct ParentOwner<T, U, V>(Arc<JoinedSyncCell<T, U, V>>)
+        struct ParentOwner<T, U, V>(Arc<(AtomicU8, SlockCell<JoinedInnerSignal<T, U, V>>)>)
             where T: Send + Clone + 'static,
                   U: Send + Clone + 'static,
                   V: Send + 'static;
@@ -2649,7 +2620,10 @@ mod signal {
                 // it's important that this is subtracted at a time
                 // strictly before the ARC strong counter
                 // so that we do not falsely free early
-                self.0.0.borrow_mut().num_parents_owning.fetch_sub(1, SeqCst);
+
+                // safety: performed on atomic value
+                // todo this is unsafe!
+                self.0.0.fetch_sub(1, SeqCst);
             }
         }
 
@@ -2672,18 +2646,18 @@ mod signal {
                         u: r.clone(),
                         ours: map(&*l, &*r),
                         audience: SignalAudience::new(),
-                        num_parents_owning: AtomicU8::new(2),
                     }
                 };
 
-                let arc = Arc::new(JoinedSyncCell(RefCell::new(inner)));
+                // initially, there are two parents owning this
+                let arc = Arc::new((AtomicU8::new(2), SlockCell::new(inner)));
 
                 let pseudo_weak = ParentOwner(arc.clone());
                 let lhs_map = map.clone();
                 lhs.listen(move |lhs, s| {
                     let ParentOwner(pseudo_weak) = &pseudo_weak;
 
-                    let mut binding = pseudo_weak.0.borrow_mut();
+                    let mut binding = pseudo_weak.1.borrow_mut(s);
                     let inner = binding.deref_mut();
                     inner.t = lhs.clone();
                     inner.ours = lhs_map(&inner.t, &inner.u);
@@ -2693,21 +2667,21 @@ mod signal {
                     // since this is just an early exit, not necessarily the final
 
                     !inner.audience.is_empty() ||
-                        Arc::strong_count(&pseudo_weak) > inner.num_parents_owning.load(SeqCst) as usize
+                        Arc::strong_count(&pseudo_weak) > pseudo_weak.0.load(SeqCst) as usize
                 }, s);
 
                 let pseudo_weak = ParentOwner(arc.clone());
                 rhs.listen(move |rhs, s| {
                     let ParentOwner(pseudo_weak) = &pseudo_weak;
 
-                    let mut binding = pseudo_weak.0.borrow_mut();
+                    let mut binding = pseudo_weak.1.borrow_mut(s);
                     let inner = binding.deref_mut();
                     inner.u = rhs.clone();
                     inner.ours = map(&inner.t, &inner.u);
                     inner.audience.dispatch(&inner.ours, s);
 
                     !inner.audience.is_empty() ||
-                        Arc::strong_count(&pseudo_weak) > inner.num_parents_owning.load(SeqCst) as usize
+                        Arc::strong_count(&pseudo_weak) > pseudo_weak.0.load(SeqCst) as usize
                 }, s);
 
                 JoinedSignal {
@@ -2721,16 +2695,16 @@ mod signal {
                   U: Send + Clone + 'static,
                   V: Send + 'static
         {
-            fn borrow<'a>(&'a self, _s: &'a Slock<impl ThreadMarker>) -> impl Deref<Target=V> {
+            fn borrow(&self, s: &'_ Slock<impl ThreadMarker>) -> impl Deref<Target=V> + '_ {
                 SignalRef {
-                    src: self.inner.0.borrow(),
+                    src: self.inner.1.borrow(s),
                     marker: Default::default(),
                 }
             }
 
             fn listen<F>(&self, listener: F, s: &Slock<impl ThreadMarker>)
                 where F: FnMut(&V, &Slock) -> bool + Send + 'static {
-                self.inner.0.borrow_mut().audience.listen(listener, s);
+                self.inner.1.borrow_mut(s).audience.listen(listener, s);
             }
 
             type MappedOutput<S: Send + 'static> = GeneralSignal<S>;
@@ -2739,32 +2713,14 @@ mod signal {
                       F: Send + 'static + Fn(&V) -> S
             {
                 GeneralSignal::from(self, map, |this, listener, s| {
-                    this.inner.0.borrow_mut().audience.listen_box(listener, s);
+                    this.inner.1.borrow_mut(s).audience.listen_box(listener, s);
                 }, s)
             }
         }
-
-        unsafe impl<T, U, V> Send for JoinedSignal<T, U, V>
-            where T: Send + Clone + 'static,
-                  U: Send + Clone + 'static,
-                  V: Send + 'static
-        {}
-        unsafe impl<T, U, V> Sync for JoinedSignal<T, U, V>
-            where T: Send + Clone + 'static,
-                  U: Send + Clone + 'static,
-                  V: Send + 'static
-        {}
-
-        unsafe impl<T, U, V> Sync for JoinedSyncCell<T, U, V>
-            where T: Send + Clone + 'static,
-                  U: Send + Clone + 'static,
-                  V: Send + 'static
-        {}
     }
     pub use joined_signal::*;
 
     mod timed_signal {
-        use std::cell::RefCell;
         use std::ops::{Deref, DerefMut};
         use std::sync::Arc;
         use std::sync::atomic::AtomicU8;
@@ -2776,6 +2732,7 @@ mod signal {
         use crate::state::capacitor::{Capacitor};
         use crate::state::signal::signal_audience::SignalAudience;
         use crate::state::signal::signal_ref::SignalRef;
+        use crate::state::slock_cell::SlockCell;
         use crate::util::markers::ThreadMarker;
         use crate::util::test_util::QuarveAllocTag;
 
@@ -2785,7 +2742,6 @@ mod signal {
             capacitor: C,
             time_active: Option<Duration>,
             audience: SignalAudience<C::Target>,
-            parent_retain_count: AtomicU8
         }
 
         impl<C> CapacitatedInnerSignal<C> where C: Capacitor {
@@ -2802,7 +2758,9 @@ mod signal {
         }
 
         pub struct CapacitatedSignal<C> where C: Capacitor {
-            inner: Arc<RefCell<CapacitatedInnerSignal<C>>>
+            // first field is parent retain count
+            // i.e. worker thread or source signal
+            inner: Arc<(AtomicU8, SlockCell<CapacitatedInnerSignal<C>>)>
         }
 
         impl<C> Clone for CapacitatedSignal<C> where C: Capacitor {
@@ -2813,7 +2771,7 @@ mod signal {
             }
         }
 
-        struct ParentOwner<C>(Arc<RefCell<CapacitatedInnerSignal<C>>>) where C: Capacitor;
+        struct ParentOwner<C>(Arc<(AtomicU8, SlockCell<CapacitatedInnerSignal<C>>)>) where C: Capacitor;
 
         // TODO, I think SeqCst is overkill in this scenario
         // and likewise for JoinedSignal
@@ -2822,23 +2780,24 @@ mod signal {
                 // it's important that this is subtracted at a time
                 // strictly before the ARC strong counter
                 // so that we do not falsely free early
-                self.0.borrow_mut().parent_retain_count.fetch_sub(1, SeqCst);
+                self.0.0.fetch_sub(1, SeqCst);
             }
         }
         impl<C> CapacitatedSignal<C> where C: Capacitor {
 
             #[inline]
-            fn update_active(this: &Arc<RefCell<CapacitatedInnerSignal<C>>>, mut_ref: &mut CapacitatedInnerSignal<C>, _s: &Slock) {
+            fn update_active(this: &Arc<(AtomicU8, SlockCell<CapacitatedInnerSignal<C>>)>, mut_ref: &mut CapacitatedInnerSignal<C>, _s: &Slock) {
                 if mut_ref.time_active.is_none() {
                     mut_ref.time_active = Some(Duration::from_secs(0));
 
-                    /* spawn worker */
-                    mut_ref.parent_retain_count.fetch_add(1, SeqCst);
+                    /* spawn worker, increment parent count */
+                    this.0.fetch_add(1, SeqCst);
+
                     let worker_arc = ParentOwner(this.clone());
                     timed_worker(move |duration, s| {
                         let ParentOwner(worker_arc) = &worker_arc;
 
-                        let mut borrow = worker_arc.borrow_mut();
+                        let mut borrow = worker_arc.1.borrow_mut(s);
                         let mut_ref = borrow.deref_mut();
 
                         let (sample, cont) = mut_ref.capacitor.sample(duration);
@@ -2853,7 +2812,7 @@ mod signal {
                             mut_ref.time_active = Some(duration);
 
                             !mut_ref.audience.is_empty() ||
-                                Arc::strong_count(&worker_arc) > mut_ref.parent_retain_count.load(SeqCst) as usize
+                                Arc::strong_count(&worker_arc) > worker_arc.0.load(SeqCst) as usize
                         }
                     })
                 }
@@ -2865,15 +2824,15 @@ mod signal {
                 capacitor.target_set(&*source.borrow(s), None);
                 let (curr, initial_thread) = capacitor.sample(Duration::from_secs(0));
 
-                let arc = Arc::new(RefCell::new(CapacitatedInnerSignal {
+                // initially, there is only one parent (the source signal)
+                // hence the first field
+                let arc = Arc::new((AtomicU8::new(1), SlockCell::new(CapacitatedInnerSignal {
                     _quarve_tag: QuarveAllocTag::new(),
                     curr,
                     capacitor,
                     time_active: None,
                     audience: SignalAudience::new(),
-                    // parent signal (timer thread incremented whenever)
-                    parent_retain_count: AtomicU8::new(1)
-                }));
+                })));
 
                 // so we can't do just a weak signal
                 // since then it may be dropped prematurely
@@ -2884,18 +2843,18 @@ mod signal {
                 source.listen(move |curr, s| {
                     let ParentOwner(parent_arc) = &parent_arc;
 
-                    let mut borrow = parent_arc.borrow_mut();
+                    let mut borrow = parent_arc.1.borrow_mut(s);
                     let mut_ref = borrow.deref_mut();
                     mut_ref.capacitor.target_set(curr, mut_ref.time_active);
                     CapacitatedSignal::update_active(&parent_arc, mut_ref, s);
 
                     !mut_ref.audience.is_empty() ||
-                        Arc::strong_count(&parent_arc) > mut_ref.parent_retain_count.load(SeqCst) as usize
+                        Arc::strong_count(&parent_arc) > parent_arc.0.load(SeqCst) as usize
                 }, s);
 
                 // start thread if necessary
                 if initial_thread {
-                    CapacitatedSignal::update_active(&arc, arc.borrow_mut().deref_mut(), s.as_ref());
+                    CapacitatedSignal::update_active(&arc, arc.1.borrow_mut(s).deref_mut(), s.as_ref());
                 }
 
                 CapacitatedSignal {
@@ -2905,16 +2864,16 @@ mod signal {
         }
 
         impl<C> Signal<C::Target> for CapacitatedSignal<C> where C: Capacitor {
-            fn borrow<'a>(&'a self, _s: &'a Slock<impl ThreadMarker>) -> impl Deref<Target=C::Target> {
+            fn borrow(&self, s: &'_ Slock<impl ThreadMarker>) -> impl Deref<Target=C::Target> + '_ {
                 SignalRef {
-                    src: self.inner.borrow(),
+                    src: self.inner.1.borrow(s),
                     marker: Default::default(),
                 }
             }
 
             fn listen<F>(&self, listener: F, s: &Slock<impl ThreadMarker>)
                 where F: FnMut(&C::Target, &Slock) -> bool + Send + 'static {
-                self.inner.borrow_mut().audience.listen(listener, s);
+                self.inner.1.borrow_mut(s).audience.listen(listener, s);
             }
 
             type MappedOutput<S: Send + 'static> = GeneralSignal<S>;
@@ -2923,14 +2882,10 @@ mod signal {
                       F: Send + 'static + Fn(&C::Target) -> S
             {
                 GeneralSignal::from(self, map, |this, listener, s| {
-                    this.inner.borrow_mut().audience.listen_box(listener, s);
+                    this.inner.1.borrow_mut(s).audience.listen_box(listener, s);
                 }, s)
             }
         }
-
-        unsafe impl<C> Send for ParentOwner<C> where C: Capacitor {}
-        unsafe impl<C> Send for CapacitatedSignal<C> where C: Capacitor {}
-        unsafe impl<C> Sync for CapacitatedSignal<C> where C: Capacitor {}
     }
     pub use timed_signal::*;
     use crate::state::capacitor::Capacitor;
@@ -3195,7 +3150,7 @@ mod test {
         let vec: Option<Box<dyn DirectlyInvertible>> = None;
         let vectors = Arc::new(Mutex::new(Some(vec)));
         let c = vectors.clone();
-        state.subtree_inverse_listener(move |inv, _s| {
+        state.subtree_inverse_listener(move |inv, s| {
             let mut l1 = c.lock().unwrap();
             let Some(l) = l1.as_mut() else {
                 return false;
@@ -3205,7 +3160,7 @@ mod test {
             }
             else {
                 unsafe {
-                    l.as_mut().unwrap().right_multiply(inv);
+                    l.as_mut().unwrap().right_multiply(inv, s);
                 }
             }
             true
@@ -3541,7 +3496,7 @@ mod test {
         let vec: Option<Box<dyn DirectlyInvertible>> = None;
         let vectors = Arc::new(Mutex::new(Some(vec)));
         let c = vectors.clone();
-        state.subtree_inverse_listener(move |inv, _s| {
+        state.subtree_inverse_listener(move |inv, s| {
             let mut l1 = c.lock().unwrap();
             let Some(l) = l1.as_mut() else {
                 return false;
@@ -3551,7 +3506,7 @@ mod test {
             }
             else {
                 unsafe {
-                    l.as_mut().unwrap().right_multiply(inv);
+                    l.as_mut().unwrap().right_multiply(inv, s);
                 }
             }
             true
@@ -3653,7 +3608,7 @@ mod test {
         let vec: Option<Box<dyn DirectlyInvertible>> = None;
         let vectors = Arc::new(Mutex::new(Some(vec)));
         let c = vectors.clone();
-        store.subtree_inverse_listener(move |inv, _s| {
+        store.subtree_inverse_listener(move |inv, s| {
             let mut l1 = c.lock().unwrap();
             let Some(l) = l1.as_mut() else {
                 return false;
@@ -3663,7 +3618,7 @@ mod test {
             }
             else {
                 unsafe {
-                    l.as_mut().unwrap().right_multiply(inv);
+                    l.as_mut().unwrap().right_multiply(inv, s);
                 }
             }
             true
@@ -3746,7 +3701,7 @@ mod test {
         // wait for another tick to make sure clock is
         // freed from timer thread
         drop(clock);
-        thread::sleep(Duration::from_millis(100));
+        sleep(Duration::from_millis(100));
     }
 
     #[test]
@@ -4018,7 +3973,7 @@ mod test {
         let vec: Option<Box<dyn DirectlyInvertible>> = None;
         let vectors = Arc::new(Mutex::new(Some(vec)));
         let c = vectors.clone();
-        state.subtree_inverse_listener(move |inv, _s| {
+        state.subtree_inverse_listener(move |inv, s| {
             let mut l1 = c.lock().unwrap();
             let Some(l) = l1.as_mut() else {
                 return false;
@@ -4028,7 +3983,7 @@ mod test {
             }
             else {
                 unsafe {
-                    l.as_mut().unwrap().right_multiply(inv);
+                    l.as_mut().unwrap().right_multiply(inv, s);
                 }
             }
             true
@@ -4073,7 +4028,7 @@ mod test {
         let vec: Option<Box<dyn DirectlyInvertible>> = None;
         let vectors = Arc::new(Mutex::new(Some(vec)));
         let c = vectors.clone();
-        state.subtree_inverse_listener(move |inv, _s| {
+        state.subtree_inverse_listener(move |inv, s| {
             let mut l1 = c.lock().unwrap();
             let Some(l) = l1.as_mut() else {
                 return false;
@@ -4083,7 +4038,7 @@ mod test {
             }
             else {
                 unsafe {
-                    l.as_mut().unwrap().right_multiply(inv);
+                    l.as_mut().unwrap().right_multiply(inv, s);
                 }
             }
             true
