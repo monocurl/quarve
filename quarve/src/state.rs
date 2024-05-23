@@ -36,7 +36,7 @@ pub mod slock_cell {
 }
 
 mod listener {
-     use crate::core::Slock;
+    use crate::core::Slock;
     use crate::state::Stateful;
 
     pub(super) mod sealed {
@@ -1125,6 +1125,10 @@ mod store {
             fn strong_count_decrement(_this: &Arc<SlockCell<Self>>) {
 
             }
+
+            fn strong_count_increment(_this: &Arc<SlockCell<Self>>) {
+
+            }
         }
 
         /* IMO this is a bad side effect of rust's insistence on
@@ -1137,7 +1141,9 @@ mod store {
 
             fn get_ref(&self) -> &Arc<SlockCell<Self::Inner>>;
 
-            // used only for creating the binding
+            // guaranteed to only be used for creating the binding
+            // This does not need to call strong_count_increment
+            // caller is expected to do so
             fn arc_clone(&self) -> Self;
         }
     }
@@ -1194,6 +1200,8 @@ mod store {
             type Binding = GeneralBinding<S, F, I>;
 
             fn binding(&self) -> Self::Binding {
+                I::Inner::strong_count_increment(self.get_ref());
+
                 GeneralBinding {
                     inner: self.arc_clone(),
                     phantom_state: PhantomData,
@@ -1338,7 +1346,7 @@ mod store {
 
             fn invoke_listener(&mut self, action: impl FnOnce() -> Box<dyn DirectlyInvertible>, s: &Slock) {
                 if let Some(ref mut func) = self.0 {
-                    if !(func)(action(), s) {
+                    if !func(action(), s) {
                         self.0 = None;
                     }
                 }
@@ -1557,7 +1565,7 @@ mod store {
                     debug_assert_eq!(s.debug_info.applying_transaction.borrow().len(), 0, "Fatal: store \
                     changed as a result of the change of another state variable. \
                     Stores, by default, are to be independent of other stores. If you would like one store to \
-                    be dependent on another, check out DerivedStore (or in some circumstances, maybe CoupledStore)");
+                    be dependent on another, check out DerivedStore or Buffer (or in some circumstances, maybe CoupledStore)");
                     s.debug_info.applying_transaction.borrow_mut().push(Arc::as_ptr(arc) as usize);
                 }
                 let mut borrow = arc.borrow_mut(s);
@@ -1687,7 +1695,7 @@ mod store {
                     debug_assert_eq!(s.debug_info.applying_transaction.borrow().len(), 0, "Fatal: token store \
                     changed as a result of the change of another state variable. \
                     Stores, by default, are to be independent of other stores. If you would like one store to \
-                    be dependent on another, check out DerivedStore (or in some circumstances, maybe CoupledStore)");
+                    be dependent on another, check out DerivedStore or Buffer (or in some circumstances, maybe CoupledStore)");
                     s.debug_info.applying_transaction.borrow_mut().push(Arc::as_ptr(arc) as usize);
                 }
                 let mut borrow = arc.borrow_mut(s);
@@ -1941,7 +1949,9 @@ mod store {
         use std::marker::PhantomData;
         use std::ops::{Deref, DerefMut};
         use std::sync::{Arc, Mutex};
-        use crate::state::{StateListener};
+        use std::sync::atomic::AtomicUsize;
+        use std::sync::atomic::Ordering::Release;
+        use crate::state::{StateListener, GeneralListener, InverseListener};
         use crate::state::store::state_ref::StateRef;
         use crate::{
             state::{
@@ -1951,12 +1961,10 @@ mod store {
         };
         use crate::state::{Binding};
         use crate::state::coupler::Coupler;
-        use crate::state::listener::{GeneralListener, InverseListener};
         use crate::state::slock_cell::SlockCell;
         use crate::state::store::inverse_listener_holder::NullInverseListenerHolder;
         use crate::state::store::macros::{impl_signal_inner, impl_store_container_inner};
         use crate::state::store::store_dispatcher::StoreDispatcher;
-        use crate::util::{UnsafeForceSend};
         use crate::util::markers::ThreadMarker;
         use super::sealed_base::{RawStoreBase, RawStoreSharedOwnerBase};
 
@@ -1978,6 +1986,7 @@ mod store {
             // set to None once we have a ref count of 1
             // therefore, we need a mutex since we may not have state lock
             intrinsic: Mutex<Option<IB>>,
+            strong_count: AtomicUsize,
             intrinsic_performing_transaction: bool,
             performing_transaction: bool
         }
@@ -2079,23 +2088,34 @@ mod store {
             }
 
             fn strong_count_decrement(this: &Arc<SlockCell<Self>>) {
-                // calling thread is owner and intrinsic is owner
-                // after this point, only intrinsic is owner
-                // and we must delete backref
-                // (possibly this can be invoked twice, that's not an issue)
-                if Arc::strong_count(this) == 2 {
-                    // in some testing code validating should_panic
-                    // we want to avoid non-unwinding panic
-                    // in production, this will not be an issue however
-                    unsafe {
-                        // safety: the only immutable part we are touching
-                        // is already covered by a mutex and hence will not
-                        // be an issue in terms of multiple access
-                        // this is true even if slockcell is being borrowed mutably
-                        if let Ok(mut res) = (*this.as_ptr()).intrinsic.lock() {
+                // safety: the only part we are touching
+                // are already covered by a mutex (or atomic) and hence will not
+                // be an issue in terms of multiple access
+                // this is true even if slockcell is being borrowed mutably
+                unsafe {
+                    let ptr = (*this).as_ptr();
+
+                    // calling thread is owner and intrinsic is owner
+                    // after this point, only intrinsic is owner
+                    // and we must delete backref
+                    // (possibly this can be invoked twice, that's not an issue)
+                    if (*ptr).strong_count.fetch_sub(1, Release) == 2 {
+                        // in some testing code validating should_panic
+                        // we want to avoid non-unwinding panic
+                        // in production, this will not be an issue however
+                        if let Ok(mut res) = (*ptr).intrinsic.lock() {
                             *res = None;
                         }
                     }
+                }
+            }
+
+            fn strong_count_increment(this: &Arc<SlockCell<Self>>) {
+                // safety
+                // same reasons as strong_count_decrement
+                unsafe {
+                    let ptr = (*this).as_ptr();
+                    (*ptr).strong_count.fetch_add(1, Release);
                 }
             }
         }
@@ -2117,6 +2137,8 @@ mod store {
                         coupler,
                         phantom_intrinsic: PhantomData,
                         intrinsic: Mutex::new(Some(intrinsic)),
+                        // trivial owner, and a clone is done shortly
+                        strong_count: AtomicUsize::new(2),
                         intrinsic_performing_transaction: false,
                         performing_transaction: false,
                     }))
@@ -2124,13 +2146,11 @@ mod store {
 
                 // intrinsic listener
                 // (our listener is handled manually in apply)
-                let strong = UnsafeForceSend(ret.inner.clone());
+                let strong = ret.inner.clone();
                 ret.inner.borrow(s)
                     .intrinsic.lock().unwrap()
                     .as_ref().unwrap()
                     .action_listener(move |intrinsic, a, s| {
-                        let UnsafeForceSend(strong) = &strong;
-
                         let this = strong.borrow(s);
                         // if we didn't originate, then mirror the action
                         if !this.performing_transaction {
@@ -2215,6 +2235,8 @@ mod store {
         impl<S, F, I> Clone for GeneralBinding<S, F, I>
             where S: Stateful, F: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, F> {
             fn clone(&self) -> Self {
+                I::Inner::strong_count_increment(self.inner.get_ref());
+
                 GeneralBinding {
                     inner: self.inner.arc_clone(),
                     phantom_state: PhantomData,
@@ -2516,6 +2538,8 @@ mod signal {
                     inner.val = map(val);
                     inner.audience.dispatch(&inner.val, s);
 
+                    // races don't matter too much since it'll just mean late drop
+                    // but nothing unsound
                     !inner.audience.is_empty() || Arc::strong_count(&pseudo_weak) > 1
                 }), s.as_ref());
 
@@ -2811,6 +2835,8 @@ mod signal {
                         else {
                             mut_ref.time_active = Some(duration);
 
+                            // races don't matter too much since it'll just mean late drop
+                            // but nothing unsound (since the parent_count will always be decremented first)
                             !mut_ref.audience.is_empty() ||
                                 Arc::strong_count(&worker_arc) > worker_arc.0.load(SeqCst) as usize
                         }
@@ -2848,6 +2874,8 @@ mod signal {
                     mut_ref.capacitor.target_set(curr, mut_ref.time_active);
                     CapacitatedSignal::update_active(&parent_arc, mut_ref, s);
 
+                    // races don't matter too much since it'll just mean late drop
+                    // but nothing unsounds
                     !mut_ref.audience.is_empty() ||
                         Arc::strong_count(&parent_arc) > parent_arc.0.load(SeqCst) as usize
                 }, s);
@@ -3439,7 +3467,11 @@ mod test {
             let store = Store::new(0.0);
             let coupled = CoupledStore::new(store.binding(), NegatedCoupler {}, &s);
             let s_bind = store.binding();
-            let _c_bind = coupled.binding();
+            let c_bind = coupled.binding();
+            let c_bind2 = coupled.binding();
+            let c_bind2_copy = c_bind2.clone();
+            let c_bind2_copy2 = c_bind2.clone();
+            let c_bind2_copy_copy = c_bind2_copy.clone();
             drop(store);
             drop(s_bind);
         }
@@ -3691,7 +3723,7 @@ mod test {
             s.clock_signal()
         };
 
-        thread::sleep(Duration::from_millis(800));
+        sleep(Duration::from_millis(800));
 
         {
             let s = slock();

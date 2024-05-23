@@ -60,9 +60,6 @@ pub(crate) mod test_util {
     }
 }
 
-pub(crate) struct UnsafeForceSend<T>(pub T);
-unsafe impl<T> Send for UnsafeForceSend<T> {}
-
 mod vector {
     use std::fmt::Debug;
     use std::ops::{Add, Mul, Sub};

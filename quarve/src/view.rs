@@ -1,18 +1,70 @@
-use crate::core::{Slock};
+use std::marker::PhantomData;
+use crate::core::{ChannelProvider, Slock};
 use crate::util::markers::MainThreadMarker;
 
-unsafe trait View: Sized + 'static {
-    fn read_intrinsic_size();
-    fn read_xsquished_size();
-    fn read_ysquished_size();
-    fn read_stretched_size();
+pub struct NativeHandle<B> {
+    backing: B
+}
+
+pub(crate) trait LayoutUpDown {
+    fn layout_up(&self) -> bool;
+    fn layout_down(&self);
+
+    fn parent(&self) -> Option<&dyn LayoutUpDown>;
+}
+
+// contains a backing and
+struct InnerView<P> where P: ViewProvider {
+    // parent
+    up: Option<&'static dyn LayoutUpDown>,
+    depth: u16,
+    provider: PhantomData<P>
+}
+
+pub struct Frame {
+    pub x: i32,
+    pub y: i32,
+    pub w: u32,
+    pub h: u32
+}
+
+pub enum FrameAlignment {
+    TopLeading,
+    Top,
+    TopTrailing,
+    Leading,
+    Center,
+    Trailing,
+    BotLeading,
+    Bot,
+    BotTrailing
+}
+
+pub struct View<P> where P: ViewProvider {
+    inner: Box<InnerView<P>>
+}
+
+//     pub fn from_provider(provider: impl ViewProvider) -> Self {
+//         View {
+//
+//         }
+//     }
+
+pub unsafe trait ViewProvider: Sized + 'static
+{
+    type ApplicationChannels: ChannelProvider;
+
+    fn intrinsic_size();
+    fn xsquished_size();
+    fn ysquished_size();
+    fn xstretched_size();
+    fn ystretched_size();
 
     type Backing;
     /// Populate a new backing
     /// The structure of the old backing is undefined
-    /// it could for example, be a textview that has garbage text in it
-    fn backing_exchange(&mut self, ex: Option<Self::Backing>, s: &Slock<MainThreadMarker>);
-    fn backing(&self) -> Self::Backing;
+    /// All we know is that it is of the same type as our backing
+    fn form_backing(view: &mut View<Self>, possible_supplier: Option<Self::Backing>, s: &Slock<MainThreadMarker>) -> Self::Backing;
 
     /// The children have properly calculated their
     /// minimum, intrinsic, and maximum sizes
@@ -22,17 +74,22 @@ unsafe trait View: Sized + 'static {
     /// the parent must recalculate as well
     /// This method is always called before layout down
     /// and is generally the place to relay state changes to backings
-    fn layout_up(&mut self, s: &Slock<MainThreadMarker>) -> bool;
+    fn layout_up(view: &mut View<Self>, channels: &Self::ApplicationChannels, s: &Slock<MainThreadMarker>) -> bool;
 
     /// The children have properly calculated their
     /// minimum, intrinsic, and maximum sizes
     /// (and so have we)
     /// Now, we must position them according to the given frame
-    fn layout_down(&mut self, with_frame: i32, s: &Slock<MainThreadMarker>);
+    fn layout_down(view: &mut View<Self>, in_frame: Frame, with_alignment: FrameAlignment, channels: &Self::ApplicationChannels, s: &Slock<MainThreadMarker>);
 }
 
-trait Layout {
-    fn monotonicty();
+pub trait LayoutProvider {
+    // fn monotonicity(&self, x: X<i32>);
+
+    fn layout(&self);
+
+    // ad-hoc method
+    // fn into_view(self) -> View<impl ViewProvider>;
 }
 
 // vstack, hstack, zstack, hflex, vflex
@@ -51,6 +108,7 @@ trait Layout {
 // opacity
 // background
 // border
+// corner radius
 // vmap, hmap, zmap
 // min_frame, frame, max_frame (and alignment)
 // flex_grow, flex_shrink, (and related)
