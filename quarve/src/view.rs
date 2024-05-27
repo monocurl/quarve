@@ -1,4 +1,5 @@
 use std::marker::PhantomData;
+use std::rc::{Rc};
 use crate::core::{ChannelProvider, Slock};
 use crate::util::markers::MainThreadMarker;
 
@@ -6,19 +7,23 @@ pub struct NativeHandle<B> {
     backing: B
 }
 
-pub(crate) trait LayoutUpDown {
+pub(crate) trait ViewBase {
     fn layout_up(&self) -> bool;
     fn layout_down(&self);
 
-    fn parent(&self) -> Option<&dyn LayoutUpDown>;
+    fn parent(&self) -> Option<&dyn ViewBase>;
 }
 
 // contains a backing and
 struct InnerView<P> where P: ViewProvider {
     // parent
-    up: Option<&'static dyn LayoutUpDown>,
+    // up: Weak<dyn LayoutUpDown>,
     depth: u16,
     provider: PhantomData<P>
+}
+
+pub struct View<P> where P: ViewProvider {
+    inner: Rc<InnerView<P>>
 }
 
 pub struct Frame {
@@ -40,15 +45,9 @@ pub enum FrameAlignment {
     BotTrailing
 }
 
-pub struct View<P> where P: ViewProvider {
-    inner: Box<InnerView<P>>
+pub trait IntoView<C: ChannelProvider> {
+   fn into_view(self, channels: C, slock: i32);
 }
-
-//     pub fn from_provider(provider: impl ViewProvider) -> Self {
-//         View {
-//
-//         }
-//     }
 
 pub unsafe trait ViewProvider: Sized + 'static
 {
@@ -113,3 +112,7 @@ pub trait LayoutProvider {
 // min_frame, frame, max_frame (and alignment)
 // flex_grow, flex_shrink, (and related)
 // all done in a monadic fashion?
+
+fn test() {
+    // polld
+}

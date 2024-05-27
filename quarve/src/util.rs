@@ -289,17 +289,19 @@ pub mod markers {
     use crate::util::markers::sealed_base::BoolMarkerBase;
 
     mod sealed_base {
-        pub trait BoolMarkerBase {
+        pub trait BoolMarkerBase: Copy {
 
         }
 
-        pub trait ThreadMarkerBase {
+        pub trait ThreadMarkerBase: Copy {
 
         }
     }
 
     pub trait BoolMarker: BoolMarkerBase { }
+    #[derive(Copy, Clone)]
     pub struct TrueMarker { }
+    #[derive(Copy, Clone)]
     pub struct FalseMarker { }
 
     impl BoolMarkerBase for TrueMarker { }
@@ -308,7 +310,9 @@ pub mod markers {
     impl BoolMarker for FalseMarker { }
 
     pub trait ThreadMarker: sealed_base::ThreadMarkerBase {}
+    #[derive(Copy, Clone)]
     pub struct AnyThreadMarker;
+    #[derive(Copy, Clone)]
     pub struct MainThreadMarker;
 
     impl sealed_base::ThreadMarkerBase for AnyThreadMarker {}

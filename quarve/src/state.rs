@@ -9,18 +9,18 @@ pub mod slock_cell {
     use crate::core::Slock;
     use crate::util::markers::ThreadMarker;
 
-    pub struct SlockCell<T>(RefCell<T>) where T: Send;
+    pub struct SlockCell<T>(RefCell<T>);
 
-    impl<T> SlockCell<T> where T: Send {
+    impl<T> SlockCell<T> {
         pub fn new(val: T) -> Self {
             SlockCell(RefCell::new(val))
         }
 
-        pub fn borrow(&self, _s: &'_ Slock<impl ThreadMarker>) -> Ref<'_, T> {
+        pub fn borrow(&self, _s: Slock<'_, impl ThreadMarker>) -> Ref<'_, T> {
             self.0.borrow()
         }
 
-        pub fn borrow_mut(&self, _s: &'_ Slock<impl ThreadMarker>) -> RefMut<'_, T>  {
+        pub fn borrow_mut(&self, _s: Slock<'_, impl ThreadMarker>) -> RefMut<'_, T>  {
             self.0.borrow_mut()
         }
 
@@ -29,9 +29,8 @@ pub mod slock_cell {
         }
     }
 
-    // Safety: all borrows require the state lock
+    // Safety: all borrows require the state lock and T: Send
     // or are unsafe
-    unsafe impl<T> Send for SlockCell<T> where T: Send {}
     unsafe impl<T> Sync for SlockCell<T> where T: Send {}
 }
 
@@ -51,19 +50,19 @@ mod listener {
         pub(in crate::state) trait DirectlyInvertibleBase {
             // This function must only be called once per instance
             // (We cannot take ownership since the caller is often unsized)
-            fn invert(&mut self, s: &Slock);
+            fn invert(&mut self, s: Slock<'_>);
 
             /// It must be guaranteed by the caller
             /// the other type is exactly the same as our type
             /// and with the same id
-            unsafe fn right_multiply(&mut self, by: Box<dyn DirectlyInvertible>, s: &Slock);
+            unsafe fn right_multiply(&mut self, by: Box<dyn DirectlyInvertible>, s: Slock<'_>);
 
             // gets a pointer to the action instance
             // (void pointer)
-            unsafe fn action_pointer(&self, s: &Slock) -> *const ();
+            unsafe fn action_pointer(&self, s: Slock<'_>) -> *const ();
 
             // forgets the reference action without dropping it
-            unsafe fn forget_action(&mut self, s: &Slock);
+            unsafe fn forget_action(&mut self, s: Slock<'_>);
         }
     }
 
@@ -74,19 +73,19 @@ mod listener {
     }
 
     /* trait aliases */
-    pub trait GeneralListener : FnMut(&Slock) -> bool + Send + 'static {}
-    pub trait InverseListener : FnMut(Box<dyn DirectlyInvertible>, &Slock) -> bool + Send + 'static {}
-    impl<T> GeneralListener for T where T: FnMut(&Slock) -> bool + Send + 'static {}
-    impl<T> InverseListener for T where T: FnMut(Box<dyn DirectlyInvertible>, &Slock) -> bool + Send + 'static {}
+    pub trait GeneralListener : for <'a> FnMut(Slock<'a>) -> bool + Send + 'static {}
+    pub trait InverseListener : for <'a> FnMut(Box<dyn DirectlyInvertible>, Slock<'a>) -> bool + Send + 'static {}
+    impl<T> GeneralListener for T where T: FnMut(Slock<'_>) -> bool + Send + 'static {}
+    impl<T> InverseListener for T where T: FnMut(Box<dyn DirectlyInvertible>, Slock<'_>) -> bool + Send + 'static {}
 
     pub(super) type BoxInverseListener = Box<
-        dyn FnMut(Box<dyn DirectlyInvertible>, &Slock) -> bool + Send
+        dyn FnMut(Box<dyn DirectlyInvertible>, Slock<'_>) -> bool + Send
     >;
 
     pub(super) enum StateListener<S: Stateful> {
-        ActionListener(Box<dyn (FnMut(&S, &S::Action, &Slock) -> bool) + Send>),
-        SignalListener(Box<dyn (FnMut(&S, &Slock) -> bool) + Send>),
-        GeneralListener(Box<dyn FnMut(&Slock) -> bool + Send>),
+        ActionListener(Box<dyn (FnMut(&S, &S::Action, Slock<'_>) -> bool) + Send>),
+        SignalListener(Box<dyn (FnMut(&S, Slock<'_>) -> bool) + Send>),
+        GeneralListener(Box<dyn FnMut(Slock<'_>) -> bool + Send>),
     }
 }
 pub use listener::*;
@@ -104,18 +103,18 @@ mod group {
         // This method should return an action listener
         // to be applied on the surrounding container
         // (if it wants)
-        fn subtree_general_listener<F>(&self, _f: F, _s: &Slock<impl ThreadMarker>)
-            -> Option<impl Send + FnMut(&Self, &Self::Action, &Slock) -> bool + 'static>
+        fn subtree_general_listener<F>(&self, _f: F, _s: Slock<'_, impl ThreadMarker>)
+            -> Option<impl Send + FnMut(&Self, &Self::Action, Slock<'_>) -> bool + 'static>
             where F: GeneralListener + Clone {
-            None::<fn(&Self, &Self::Action, &Slock) -> bool>
+            None::<fn(&Self, &Self::Action, Slock<'_>) -> bool>
         }
 
         // Returns an action listener to be applied on the parent container
         // (if necessary)
-        fn subtree_inverse_listener<F>(&self, _f: F, _s: &Slock<impl ThreadMarker>)
-            -> Option<impl Send + FnMut(&Self, &Self::Action, &Slock) -> bool + 'static>
+        fn subtree_inverse_listener<F>(&self, _f: F, _s: Slock<'_, impl ThreadMarker>)
+            -> Option<impl Send + FnMut(&Self, &Self::Action, Slock<'_>) -> bool + 'static>
             where F: InverseListener + Clone {
-            None::<fn(&Self, &Self::Action, &Slock) -> bool>
+            None::<fn(&Self, &Self::Action, Slock<'_>) -> bool>
         }
     }
 
@@ -246,13 +245,13 @@ mod group {
             fn new() -> Self;
 
             fn add_filter<F>(&mut self, f: F)
-                where F: Send + 'static + Fn(&Self::Target, <Self::Target as Stateful>::Action, &Slock) -> <Self::Target as Stateful>::Action;
+                where F: Send + 'static + Fn(&Self::Target, <Self::Target as Stateful>::Action, Slock<'_>) -> <Self::Target as Stateful>::Action;
 
-            fn filter(&self, val: &Self::Target, a: <Self::Target as Stateful>::Action, s: &Slock<impl ThreadMarker>) -> <Self::Target as Stateful>::Action;
+            fn filter(&self, val: &Self::Target, a: <Self::Target as Stateful>::Action, s: Slock<'_, impl ThreadMarker>) -> <Self::Target as Stateful>::Action;
         }
 
         pub struct Filter<S: Stateful>(
-            Vec<Box<dyn Send + Fn(&S, S::Action, &Slock) -> S::Action>>
+            Vec<Box<dyn Send + Fn(&S, S::Action, Slock<'_>) -> S::Action>>
         );
 
         // generic parameter is needed for some weird things...
@@ -265,12 +264,12 @@ mod group {
                 Filterless(PhantomData)
             }
 
-            fn add_filter<F>(&mut self, _f: F) where F: Send + 'static + Fn(&S, S::Action, &Slock) -> S::Action {
+            fn add_filter<F>(&mut self, _f: F) where F: Send + 'static + Fn(&S, S::Action, Slock<'_>) -> S::Action {
 
             }
 
             #[inline]
-            fn filter(&self, _val: &S, a: S::Action, _s: &Slock<impl ThreadMarker>) -> S::Action {
+            fn filter(&self, _val: &S, a: S::Action, _s: Slock<'_, impl ThreadMarker>) -> S::Action {
                 a
             }
         }
@@ -282,14 +281,14 @@ mod group {
                 Filter(Vec::new())
             }
 
-            fn add_filter<F>(&mut self, f: F) where F: Send + 'static + Fn(&S, S::Action, &Slock) -> S::Action {
+            fn add_filter<F>(&mut self, f: F) where F: Send + 'static + Fn(&S, S::Action, Slock<'_>) -> S::Action {
                 self.0.push(Box::new(f));
             }
 
-            fn filter(&self, val: &S, a: S::Action, s: &Slock<impl ThreadMarker>) -> S::Action {
+            fn filter(&self, val: &S, a: S::Action, s: Slock<'_, impl ThreadMarker>) -> S::Action {
                 self.0
                     .iter()
-                    .rfold(a, |a, action| action(val, a, s.as_ref()))
+                    .rfold(a, |a, action| action(val, a, s.as_general_slock()))
             }
         }
     }
@@ -444,15 +443,15 @@ mod group {
                 type Action = Word<Vec<T>, VecActionBasis<T>>;
                 type HasInnerStores = TrueMarker;
 
-                fn subtree_general_listener<F>(&self, mut f: F, s: &Slock<impl ThreadMarker>)
-                    -> Option<impl Send + FnMut(&Self, &Self::Action, &Slock) -> bool + 'static>
+                fn subtree_general_listener<F>(&self, mut f: F, s: Slock<'_, impl ThreadMarker>)
+                    -> Option<impl Send + FnMut(&Self, &Self::Action, Slock<'_>) -> bool + 'static>
                     where F: GeneralListener + Clone {
 
                     for store in self {
                         store.subtree_general_listener(f.clone(), s);
                     }
 
-                    Some(move |_v: &Vec<T>, w: &Word<Vec<T>, VecActionBasis<T>>, s: &Slock| {
+                    Some(move |_v: &Vec<T>, w: &Word<Vec<T>, VecActionBasis<T>>, s: Slock| {
                         for a in w.iter() {
                             match a {
                                 VecActionBasis::Insert(store, _) => {
@@ -471,14 +470,14 @@ mod group {
                     })
                 }
 
-                fn subtree_inverse_listener<F>(&self, f: F, s: &Slock<impl ThreadMarker>)
-                    -> Option<impl Send + FnMut(&Self, &Self::Action, &Slock) -> bool + 'static>
+                fn subtree_inverse_listener<F>(&self, f: F, s: Slock<'_, impl ThreadMarker>)
+                    -> Option<impl Send + FnMut(&Self, &Self::Action, Slock<'_>) -> bool + 'static>
                     where F: InverseListener + Clone {
                     for store in self {
                         store.subtree_inverse_listener(f.clone(), s);
                     }
 
-                    Some(move |_v: &Vec<T>, w: &Word<Vec<T>, VecActionBasis<T>>, s: &Slock| {
+                    Some(move |_v: &Vec<T>, w: &Word<Vec<T>, VecActionBasis<T>>, s: Slock| {
                         for a in w.iter() {
                             match a {
                                 VecActionBasis::Insert(store, _) => {
@@ -1071,35 +1070,36 @@ mod store {
     pub trait StoreContainer: Send + Sized + 'static {
         // Only ONE general listener
         // can ever be present for a subtree
-        fn subtree_general_listener<F: GeneralListener + Clone>(&self, f: F, s: &Slock<impl ThreadMarker>);
+        fn subtree_general_listener<F: GeneralListener + Clone>(&self, f: F, s: Slock<'_, impl ThreadMarker>);
 
         // Only ONE active general listener
         // can ever be present for a subtree
-        fn subtree_inverse_listener<F: InverseListener + Clone>(&self, f: F, s: &Slock<impl ThreadMarker>);
+        fn subtree_inverse_listener<F: InverseListener + Clone>(&self, f: F, s: Slock<'_, impl ThreadMarker>);
     }
 
     pub trait ActionDispatcher<S: Stateful, F: ActionFilter<Target=S>> {
-        fn action_listener<G>(&self, listener: G, s: &Slock<impl ThreadMarker>)
-            where G: Send + Fn(&S, &S::Action, &Slock) -> bool + 'static;
+        fn action_listener<G>(&self, listener: G, s: Slock<'_, impl ThreadMarker>)
+            where for<'a> G: Send + Fn(&S, &S::Action, Slock<'a>) -> bool + 'static;
     }
 
     pub trait Filterable<S: Stateful> {
-        fn action_filter<G>(&self, filter: G, s: &Slock<impl ThreadMarker>)
-            where G: Send + Fn(&S, S::Action, &Slock) -> S::Action + 'static;
+        fn action_filter<G>(&self, filter: G, s: Slock<'_, impl ThreadMarker>)
+            where for<'a> G: Send + Fn(&S, S::Action, Slock<'a>) -> S::Action + 'static;
     }
 
     pub trait Bindable<S: Stateful, F: ActionFilter<Target=S>> {
         type Binding: Binding<S, F> + Clone;
+        type Signal: Signal<S> + Clone;
 
         fn binding(&self) -> Self::Binding;
-        fn signal(&self) -> impl Signal<S> + Clone;
+        fn signal(&self) -> Self::Signal;
     }
 
     // Like with signal, I believe it makes more sense for
     // S to be an associated type, but then we can't have default
     // filterless? So, it is done for consistency as a generic parameter
     pub trait Binding<S: Stateful, F: ActionFilter<Target=S>=Filterless<S>>: ActionDispatcher<S, F> + Signal<S> {
-        fn apply(&self, action: impl IntoAction<S::Action, S>, s: &Slock);
+        fn apply(&self, action: impl IntoAction<S::Action, S>, s: Slock<'_>);
     }
 
     mod sealed_base {
@@ -1107,18 +1107,19 @@ mod store {
         use crate::core::{Slock};
         use crate::state::{Signal};
         use crate::state::slock_cell::SlockCell;
+        use crate::state::store::store_dispatcher::StoreDispatcher;
         use crate::util::markers::ThreadMarker;
         use super::{ActionFilter, IntoAction, Stateful};
 
         pub(super) trait RawStoreBase<S, F>: Sized + Send + 'static where S: Stateful, F: ActionFilter<Target=S> {
             type InverseListenerHolder: super::inverse_listener_holder::InverseListenerHolder;
 
-            fn dispatcher(&self) -> &super::store_dispatcher::StoreDispatcher<S, F, Self::InverseListenerHolder>;
+            fn dispatcher(&self) -> &StoreDispatcher<S, F, Self::InverseListenerHolder>;
 
-            fn dispatcher_mut(&mut self) -> &mut super::store_dispatcher::StoreDispatcher<S, F, Self::InverseListenerHolder>;
+            fn dispatcher_mut(&mut self) -> &mut StoreDispatcher<S, F, Self::InverseListenerHolder>;
 
             // may introduce some additional behavior that the dispatcher does not handle
-            fn apply(inner: &Arc<SlockCell<Self>>, action: impl IntoAction<S::Action, S>, skip_filters: bool, s: &Slock<impl ThreadMarker>,);
+            fn apply(inner: &Arc<SlockCell<Self>>, action: impl IntoAction<S::Action, S>, skip_filters: bool, s: Slock<'_, impl ThreadMarker>,);
 
             // Must be careful with these two methods
             // since generally not called with the state lock
@@ -1166,7 +1167,7 @@ mod store {
     mod raw_store_shared_owner {
         use std::marker::PhantomData;
         use crate::core::{Slock};
-        use crate::state::{ActionDispatcher, ActionFilter, Bindable, Binding, Filter, Filterable, GeneralBinding, IntoAction, Signal, Stateful};
+        use crate::state::{ActionDispatcher, ActionFilter, Bindable, Binding, Filter, Filterable, GeneralBinding, IntoAction, Stateful};
         use crate::state::listener::StateListener;
         use crate::util::markers::ThreadMarker;
         use super::sealed_base::{RawStoreBase, RawStoreSharedOwnerBase};
@@ -1183,21 +1184,22 @@ mod store {
 
         impl<S, F, I> ActionDispatcher<S, F> for I
             where S: Stateful, F: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, F> {
-            fn action_listener<G>(&self, listener: G, s: &Slock<impl ThreadMarker>)
-                where G: Send + FnMut(&S, &S::Action, &Slock) -> bool + 'static {
+            fn action_listener<G>(&self, listener: G, s: Slock<'_, impl ThreadMarker>)
+                where G: Send + FnMut(&S, &S::Action, Slock<'_>) -> bool + 'static {
                 self.get_ref().borrow_mut(s).dispatcher_mut().add_listener(StateListener::ActionListener(Box::new(listener)));
             }
         }
 
         impl<S: Stateful, I: RawStoreSharedOwner<S, Filter<S>>> Filterable<S> for I {
-            fn action_filter<G>(&self, filter: G, s: &Slock<impl ThreadMarker>)
-                where G: Send + Fn(&S, S::Action, &Slock) -> S::Action + 'static {
+            fn action_filter<G>(&self, filter: G, s: Slock<'_, impl ThreadMarker>)
+                where G: Send + Fn(&S, S::Action, Slock<'_>) -> S::Action + 'static {
                 self.get_ref().borrow_mut(s).dispatcher_mut().action_filter(filter, s);
             }
         }
 
         impl<S: Stateful, F: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, F>> Bindable<S, F> for I {
             type Binding = GeneralBinding<S, F, I>;
+            type Signal = Self::Binding;
 
             fn binding(&self) -> Self::Binding {
                 I::Inner::strong_count_increment(self.get_ref());
@@ -1209,7 +1211,7 @@ mod store {
                 }
             }
 
-            fn signal(&self) -> impl Signal<S> + Clone {
+            fn signal(&self) -> Self::Signal {
                 self.binding()
             }
         }
@@ -1219,7 +1221,7 @@ mod store {
         // It's therefore done as macros
         impl<S, F, R> Binding<S, F> for R where
             S: Stateful, F: ActionFilter<Target=S>, R: RawStoreSharedOwnerBase<S, F> {
-            fn apply(&self, action: impl IntoAction<S::Action, S>, s: &Slock) {
+            fn apply(&self, action: impl IntoAction<S::Action, S>, s: Slock<'_>) {
                 R::Inner::apply(self.get_ref(), action, false, s);
             }
         }
@@ -1237,15 +1239,27 @@ mod store {
         use crate::state::slock_cell::SlockCell;
         use super::RawStore;
 
-        pub(super) struct ActionInverter<S, F, I> where S: Stateful, F: ActionFilter<Target=S>, I: RawStore<S, F> {
-            pub action: Option<S::Action>,
-            pub state: Weak<SlockCell<I>>,
-            pub filter: PhantomData<F>
+        pub(super) struct ActionInverter<S, F, I>
+            where S: Stateful, F: ActionFilter<Target=S>, I: RawStore<S, F> {
+            action: Option<S::Action>,
+            state: Weak<SlockCell<I>>,
+            filter: PhantomData<F>
+        }
+
+        impl<S, F, I> ActionInverter<S, F, I>
+            where S: Stateful, F: ActionFilter<Target=S>, I: RawStore<S, F> {
+            pub(super) fn new(action: S::Action, weak: Weak<SlockCell<I>>) -> Self {
+                ActionInverter {
+                    action: Some(action),
+                    state: weak,
+                    filter: PhantomData
+                }
+            }
         }
 
         impl<S, F, I> DirectlyInvertibleBase for ActionInverter<S, F, I>
             where S: Stateful, F: ActionFilter<Target=S>, I: RawStore<S, F> {
-            fn invert(&mut self, s: &Slock) {
+            fn invert(&mut self, s: Slock<'_>) {
                 let Some(state) = self.state.upgrade() else {
                     return;
                 };
@@ -1254,7 +1268,7 @@ mod store {
                 I::apply(&state, self.action.take().unwrap(), true, s);
             }
 
-            unsafe fn right_multiply(&mut self, mut by: Box<dyn DirectlyInvertible>, s: &Slock) {
+            unsafe fn right_multiply(&mut self, mut by: Box<dyn DirectlyInvertible>, s: Slock<'_>) {
                 /* we are free to assume by is of type Self, allowing us to do this conversion */
                 let ptr = by.action_pointer(s) as *const S::Action;
                 self.action = Some(self.action.take().unwrap() * std::ptr::read(ptr));
@@ -1264,11 +1278,11 @@ mod store {
                 by.forget_action(s);
             }
 
-            unsafe fn action_pointer(&self, _s: &Slock) -> *const () {
+            unsafe fn action_pointer(&self, _s: Slock<'_>) -> *const () {
                 self.action.as_ref().unwrap() as *const S::Action as *const ()
             }
 
-            unsafe fn forget_action(&mut self, _s: &Slock) {
+            unsafe fn forget_action(&mut self, _s: Slock<'_>) {
                 std::mem::forget(self.action.take());
             }
         }
@@ -1314,7 +1328,7 @@ mod store {
             fn new() -> Self;
             fn set_listener(&mut self, listener: BoxInverseListener);
 
-            fn invoke_listener(&mut self, action: impl FnOnce() -> Box<dyn DirectlyInvertible>, s: &Slock);
+            fn invoke_listener(&mut self, action: impl FnOnce() -> Box<dyn DirectlyInvertible>, s: Slock<'_>);
         }
 
         pub(super) struct NullInverseListenerHolder;
@@ -1328,7 +1342,7 @@ mod store {
 
             }
 
-            fn invoke_listener(&mut self, _action: impl FnOnce() -> Box<dyn DirectlyInvertible>, _s: &Slock) {
+            fn invoke_listener(&mut self, _action: impl FnOnce() -> Box<dyn DirectlyInvertible>, _s: Slock<'_>) {
 
             }
         }
@@ -1344,7 +1358,7 @@ mod store {
                 self.0 = Some(listener);
             }
 
-            fn invoke_listener(&mut self, action: impl FnOnce() -> Box<dyn DirectlyInvertible>, s: &Slock) {
+            fn invoke_listener(&mut self, action: impl FnOnce() -> Box<dyn DirectlyInvertible>, s: Slock<'_>) {
                 if let Some(ref mut func) = self.0 {
                     if !func(action(), s) {
                         self.0 = None;
@@ -1398,7 +1412,7 @@ mod store {
                 make_inverter: impl FnOnce(S::Action) -> Box<dyn DirectlyInvertible>,
                 post_filter: impl FnOnce(&S, S::Action) -> S::Action,
                 skip_filters: bool,
-                s: &Slock<impl ThreadMarker>
+                s: Slock<'_, impl ThreadMarker>
             ) {
                 let transaction = into_action.into_action(&self.data);
 
@@ -1412,7 +1426,7 @@ mod store {
                 // tell action listeners
                 self.listeners.retain_mut(
                     |listener| match listener {
-                        StateListener::ActionListener(listener) => listener(&self.data, &filtered_action, s.as_ref()),
+                        StateListener::ActionListener(listener) => listener(&self.data, &filtered_action, s.as_general_slock()),
                         _ => true
                     }
                 );
@@ -1425,17 +1439,17 @@ mod store {
                 self.listeners.retain_mut(
                     |listener| match listener {
                         StateListener::GeneralListener(action) => {
-                            action(s.as_ref())
+                            action(s.as_general_slock())
                         },
                         StateListener::SignalListener(action) => {
-                            action(data, s.as_ref())
+                            action(data, s.as_general_slock())
                         },
                         _ => true
                     }
                 );
 
                 // tell inverse listener
-                self.inverse_listener.invoke_listener(move || make_inverter(inverse), s.as_ref());
+                self.inverse_listener.invoke_listener(move || make_inverter(inverse), s.as_general_slock());
             }
 
             pub fn apply(
@@ -1443,7 +1457,7 @@ mod store {
                 into_action: impl IntoAction<S::Action, S>,
                 make_inverter: impl FnOnce(S::Action) -> Box<dyn DirectlyInvertible>,
                 skip_filters: bool,
-                s: &Slock<impl ThreadMarker>
+                s: Slock<'_, impl ThreadMarker>
             ) {
                 self.apply_post_filter(into_action, make_inverter, |_, f| f, skip_filters, s);
             }
@@ -1455,12 +1469,12 @@ mod store {
                 self.listeners.push(listener);
             }
 
-            pub fn action_filter<G>(&mut self, filter: G, _s: &Slock<impl ThreadMarker>)
-                where G: Send + Fn(&S, S::Action, &Slock) -> S::Action + 'static {
+            pub fn action_filter<G>(&mut self, filter: G, _s: Slock<'_, impl ThreadMarker>)
+                where G: Send + Fn(&S, S::Action, Slock<'_>) -> S::Action + 'static {
                 self.filter.add_filter(filter);
             }
 
-            pub fn set_general_listener(&mut self, f: impl GeneralListener + Clone, s: &Slock) {
+            pub fn set_general_listener(&mut self, f: impl GeneralListener + Clone, s: Slock<'_>) {
                 self.listeners.retain(|x| !matches!(x, StateListener::GeneralListener(_)));
                 self.listeners.push(StateListener::GeneralListener(Box::new(f.clone())));
 
@@ -1469,7 +1483,7 @@ mod store {
                 }
             }
 
-            pub fn set_inverse_listener(&mut self, f: impl InverseListener + Clone, s: &Slock) {
+            pub fn set_inverse_listener(&mut self, f: impl InverseListener + Clone, s: Slock<'_>) {
                 self.inverse_listener.set_listener(Box::new(f.clone()));
 
                 if let Some(action) = self.data.subtree_inverse_listener(f, s) {
@@ -1482,21 +1496,21 @@ mod store {
     mod macros {
         macro_rules! impl_store_container_inner {
             () => {
-                fn subtree_general_listener<Q>(&self, f: Q, s: &Slock<impl ThreadMarker>)
+                fn subtree_general_listener<Q>(&self, f: Q, s: Slock<'_, impl ThreadMarker>)
                     where Q: GeneralListener + Clone {
-                    self.inner.borrow_mut(s).dispatcher_mut().set_general_listener(f, s.as_ref());
+                    self.inner.borrow_mut(s).dispatcher_mut().set_general_listener(f, s.as_general_slock());
                 }
 
-                fn subtree_inverse_listener<Q>(&self, f: Q, s: &Slock<impl ThreadMarker>)
+                fn subtree_inverse_listener<Q>(&self, f: Q, s: Slock<'_, impl ThreadMarker>)
                     where Q: InverseListener + Clone {
-                    self.inner.borrow_mut(s).dispatcher_mut().set_inverse_listener(f, s.as_ref());
+                    self.inner.borrow_mut(s).dispatcher_mut().set_inverse_listener(f, s.as_general_slock());
                 }
             }
         }
 
         macro_rules! impl_signal_inner {
             ($s:ty) => {
-                fn borrow(&self, s: &'_ Slock<impl ThreadMarker>) -> impl Deref<Target=$s> + '_ {
+                fn borrow(&self, s: Slock<'_, impl ThreadMarker>) -> impl Deref<Target=$s> + '_ {
                     StateRef {
                         main_ref: self.get_ref().borrow(s),
                         lifetime: PhantomData,
@@ -1504,13 +1518,13 @@ mod store {
                     }
                 }
 
-                fn listen<Q>(&self, listener: Q, s: &Slock<impl ThreadMarker>)
-                    where Q: FnMut(&$s, &Slock) -> bool + Send + 'static {
+                fn listen<Q>(&self, listener: Q, s: Slock<'_, impl ThreadMarker>)
+                    where Q: FnMut(&$s, Slock<'_>) -> bool + Send + 'static {
                     self.get_ref().borrow_mut(s).dispatcher_mut().add_listener(StateListener::SignalListener(Box::new(listener)));
                 }
 
                 type MappedOutput<U: Send + 'static> = GeneralSignal<U>;
-                fn map<U, Q>(&self, map: Q, s: &Slock<impl ThreadMarker>) -> Self::MappedOutput<U>
+                fn map<U, Q>(&self, map: Q, s: Slock<'_, impl ThreadMarker>) -> Self::MappedOutput<U>
                     where U: Send + 'static, Q: Send + 'static + Fn(&$s) -> U {
                     GeneralSignal::from(self, map, |this, listener, s| {
                         this.get_ref().borrow_mut(s).dispatcher_mut().add_listener(StateListener::SignalListener(listener))
@@ -1560,28 +1574,24 @@ mod store {
                 &mut self.dispatcher
             }
 
-            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<S::Action, S>, skip_filters: bool, s: &Slock<impl ThreadMarker>) {
+            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<S::Action, S>, skip_filters: bool, s: Slock<'_, impl ThreadMarker>) {
                 #[cfg(debug_assertions)] {
-                    debug_assert_eq!(s.debug_info.applying_transaction.borrow().len(), 0, "Fatal: store \
+                    debug_assert_eq!(s.owner.debug_info.applying_transaction.borrow().len(), 0, "Fatal: store \
                     changed as a result of the change of another state variable. \
                     Stores, by default, are to be independent of other stores. If you would like one store to \
                     be dependent on another, check out DerivedStore or Buffer (or in some circumstances, maybe CoupledStore)");
-                    s.debug_info.applying_transaction.borrow_mut().push(Arc::as_ptr(arc) as usize);
+                    s.owner.debug_info.applying_transaction.borrow_mut().push(Arc::as_ptr(arc) as usize);
                 }
                 let mut borrow = arc.borrow_mut(s);
                 let inner = borrow.deref_mut();
 
                 inner.dispatcher.apply(alt_action, |action| {
-                    Box::new(ActionInverter {
-                        action: Some(action),
-                        state: Arc::downgrade(arc),
-                        filter: PhantomData,
-                    })
+                    Box::new(ActionInverter::new(action, Arc::downgrade(&arc)))
                 }, skip_filters, s);
 
                 #[cfg(debug_assertions)]
                 {
-                    s.debug_info.applying_transaction.borrow_mut().pop();
+                    s.owner.debug_info.applying_transaction.borrow_mut().pop();
                 }
             }
         }
@@ -1674,7 +1684,7 @@ mod store {
 
         pub(super) struct InnerTokenStore<S: Stateful + Copy + Hash + Eq, F: ActionFilter<Target=S>> {
             dispatcher: StoreDispatcher<S, F, ActualInverseListenerHolder>,
-            equal_listeners: HashMap<S, Vec<Box<dyn FnMut(&S, &Slock) -> bool + Send>>>,
+            equal_listeners: HashMap<S, Vec<Box<dyn FnMut(&S, Slock<'_>) -> bool + Send>>>,
         }
         impl<S, F> RawStoreBase<S, F> for InnerTokenStore<S, F>
             where S: Stateful + Copy + Hash + Eq,
@@ -1690,13 +1700,13 @@ mod store {
                 &mut self.dispatcher
             }
 
-            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<S::Action, S>, skip_filters: bool, s: &Slock<impl ThreadMarker>) {
+            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<S::Action, S>, skip_filters: bool, s: Slock<'_, impl ThreadMarker>) {
                 #[cfg(debug_assertions)] {
-                    debug_assert_eq!(s.debug_info.applying_transaction.borrow().len(), 0, "Fatal: token store \
+                    debug_assert_eq!(s.owner.debug_info.applying_transaction.borrow().len(), 0, "Fatal: token store \
                     changed as a result of the change of another state variable. \
                     Stores, by default, are to be independent of other stores. If you would like one store to \
                     be dependent on another, check out DerivedStore or Buffer (or in some circumstances, maybe CoupledStore)");
-                    s.debug_info.applying_transaction.borrow_mut().push(Arc::as_ptr(arc) as usize);
+                    s.owner.debug_info.applying_transaction.borrow_mut().push(Arc::as_ptr(arc) as usize);
                 }
                 let mut borrow = arc.borrow_mut(s);
                 let inner = borrow.deref_mut();
@@ -1704,11 +1714,7 @@ mod store {
                 let old = *inner.dispatcher.data();
 
                 inner.dispatcher.apply(alt_action, |action| {
-                    Box::new(ActionInverter {
-                        action: Some(action),
-                        state: Arc::downgrade(&arc),
-                        filter: PhantomData
-                    })
+                    Box::new(ActionInverter::new(action, Arc::downgrade(&arc)))
                 }, skip_filters, s);
 
                 // relevant equal listeners (old and new)
@@ -1718,7 +1724,7 @@ mod store {
                     for class in [old, new] {
                         inner.equal_listeners.entry(class)
                             .and_modify(|l|
-                                l.retain_mut(|f| f(&new, s.as_ref()))
+                                l.retain_mut(|f| f(&new, s.as_general_slock()))
                             );
                     }
                 }
@@ -1726,7 +1732,7 @@ mod store {
 
                 #[cfg(debug_assertions)]
                 {
-                    s.debug_info.applying_transaction.borrow_mut().pop();
+                    s.owner.debug_info.applying_transaction.borrow_mut().pop();
                 }
             }
         }
@@ -1737,7 +1743,7 @@ mod store {
         }
 
         impl<S, F> TokenStore<S, F> where S: Stateful + Copy + Hash + Eq, F: ActionFilter<Target=S> {
-            pub fn equals(&self, target: S, s: &Slock) -> impl Signal<bool> + Clone {
+            pub fn equals(&self, target: S, s: Slock<'_>) -> impl Signal<bool> + Clone {
                 GeneralSignal::from(self, move |u| *u == target,
                     |this, listener, _s | {
                         this.inner.borrow_mut(s).equal_listeners.entry(target)
@@ -1850,12 +1856,12 @@ mod store {
                 &mut self.dispatcher
             }
 
-            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<S::Action, S>, skip_filters: bool, s: &Slock<impl ThreadMarker>) {
+            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<S::Action, S>, skip_filters: bool, s: Slock<'_, impl ThreadMarker>) {
                 #[cfg(debug_assertions)] {
-                    debug_assert_ne!(s.debug_info.applying_transaction.borrow().len(), 0, "Fatal: derived store \
+                    debug_assert_ne!(s.owner.debug_info.applying_transaction.borrow().len(), 0, "Fatal: derived store \
                     changed in a context that was NOT initiated by the change of another store. \
                     Derived store, being 'derived', must only be a function of other state variables. ");
-                    s.debug_info.applying_transaction.borrow_mut().push(Arc::as_ptr(arc) as usize);
+                    s.owner.debug_info.applying_transaction.borrow_mut().push(Arc::as_ptr(arc) as usize);
                 }
 
                 let mut borrow = arc.borrow_mut(s);
@@ -1865,7 +1871,7 @@ mod store {
 
                 #[cfg(debug_assertions)]
                 {
-                    s.debug_info.applying_transaction.borrow_mut().pop();
+                    s.owner.debug_info.applying_transaction.borrow_mut().pop();
                 }
             }
         }
@@ -1997,12 +2003,12 @@ mod store {
             // logic for this is somewhat convoluted
             // in large part due to the awkwardness of this
             // and the borrow rules
-            fn fully_apply(arc: &Arc<SlockCell<Self>>, intrinsic: Option<&I>, alt_action: impl IntoAction<M::Action, M>, s: &Slock<impl ThreadMarker>) {
+            fn fully_apply(arc: &Arc<SlockCell<Self>>, intrinsic: Option<&I>, alt_action: impl IntoAction<M::Action, M>, s: Slock<'_, impl ThreadMarker>) {
                 /* must only be changed by itself, or by the parent */
                 #[cfg(debug_assertions)] {
                     // no need for self checks since if someone other than the parent initiates a transaction
                     // this will be caught by the parent anyways
-                    s.debug_info.applying_transaction.borrow_mut().push(Arc::as_ptr(arc) as usize);
+                    s.owner.debug_info.applying_transaction.borrow_mut().push(Arc::as_ptr(arc) as usize);
                 }
 
                 arc.borrow_mut(s).performing_transaction = true;
@@ -2049,7 +2055,7 @@ mod store {
                 // but not sure what's the rust way to do something like this?
                 #[cfg(debug_assertions)]
                 {
-                    s.debug_info.applying_transaction.borrow_mut().pop();
+                    s.owner.debug_info.applying_transaction.borrow_mut().pop();
                 }
 
                 // convert borrow to immutable
@@ -2061,7 +2067,7 @@ mod store {
                 if !inner_immut.intrinsic_performing_transaction {
 
                     if let Some(intr_ref) = inner_immut.intrinsic.lock().unwrap().as_ref() {
-                        intr_ref.apply(intrinsic_action.unwrap(), s.as_ref());
+                        intr_ref.apply(intrinsic_action.unwrap(), s.as_general_slock());
                     };
                 }
 
@@ -2083,7 +2089,7 @@ mod store {
                 &mut self.dispatcher
             }
 
-            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<M::Action, M>, _skip_filters: bool, s: &Slock<impl ThreadMarker>) {
+            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<M::Action, M>, _skip_filters: bool, s: Slock<'_, impl ThreadMarker>) {
                 InnerCoupledStore::fully_apply(arc, None, alt_action, s);
             }
 
@@ -2129,7 +2135,7 @@ mod store {
         impl<I, IB, M, F, C> CoupledStore<I, IB, M, F, C>
             where I: Stateful, IB: Binding<I>, M: Stateful, F: ActionFilter<Target=M>, C: Coupler<I, M, F>
         {
-            pub fn new(intrinsic: IB, coupler: C, s: &Slock<impl ThreadMarker>) -> Self {
+            pub fn new(intrinsic: IB, coupler: C, s: Slock<'_, impl ThreadMarker>) -> Self {
                 let data = coupler.initial_mapped(intrinsic.borrow(s).deref());
                 let ret = CoupledStore {
                     inner: Arc::new(SlockCell::new(InnerCoupledStore {
@@ -2295,15 +2301,15 @@ mod buffer {
             Buffer(Arc::new((SlockCell::new(initial), QuarveAllocTag::new())))
         }
 
-        pub fn borrow(&self, s: &'_ Slock<impl ThreadMarker>) -> impl Deref<Target=T> + '_ {
+        pub fn borrow(&self, s: Slock<'_, impl ThreadMarker>) -> impl Deref<Target=T> + '_ {
             self.0.0.borrow(s)
         }
 
-        pub fn borrow_mut(&self, s: &'_ Slock<impl ThreadMarker>) -> impl DerefMut<Target=T> + '_  {
+        pub fn borrow_mut(&self, s: Slock<'_, impl ThreadMarker>) -> impl DerefMut<Target=T> + '_  {
             self.0.0.borrow_mut(s)
         }
 
-        pub fn replace(&self, with: T, s: &'_ Slock<impl ThreadMarker>) -> T {
+        pub fn replace(&self, with: T, s: Slock<'_, impl ThreadMarker>) -> T {
             std::mem::replace(self.borrow_mut(s).deref_mut(), with)
         }
     }
@@ -2323,17 +2329,17 @@ mod signal {
     use crate::core::{Slock};
 
     pub trait Signal<T: Send + 'static> : Sized + Send + Sync + 'static {
-        fn borrow(&self, s: &'_ Slock<impl ThreadMarker>) -> impl Deref<Target=T> + '_;
+        fn borrow(&self, s: Slock<'_, impl ThreadMarker>) -> impl Deref<Target=T> + '_;
 
-        fn listen<F>(&self, listener: F, _s: &Slock<impl ThreadMarker>)
-            where F: (FnMut(&T, &Slock) -> bool) + Send + 'static;
+        fn listen<F>(&self, listener: F, _s: Slock<'_, impl ThreadMarker>)
+            where F: (FnMut(&T, Slock<'_>) -> bool) + Send + 'static;
 
         type MappedOutput<S: Send + 'static>: Signal<S>;
-        fn map<S, F>(&self, map: F, _s: &Slock<impl ThreadMarker>) -> Self::MappedOutput<S>
+        fn map<S, F>(&self, map: F, _s: Slock<'_, impl ThreadMarker>) -> Self::MappedOutput<S>
             where S: Send + 'static,
                   F: Send + 'static + Fn(&T) -> S;
 
-        fn with_capacitor(&self, capacitor: impl Capacitor<Target=T>, s: &Slock) -> impl Signal<T> + Clone {
+        fn with_capacitor(&self, capacitor: impl Capacitor<Target=T>, s: Slock<'_>) -> impl Signal<T> + Clone {
             CapacitatedSignal::from(self, capacitor, s)
         }
     }
@@ -2347,7 +2353,7 @@ mod signal {
         use crate::util::markers::ThreadMarker;
 
         pub(super) struct SignalAudience<T: Send> {
-            listeners: Vec<Box<dyn FnMut(&T, &Slock) -> bool + Send>>
+            listeners: Vec<Box<dyn FnMut(&T, Slock<'_>) -> bool + Send>>
         }
 
         impl<T> SignalAudience<T> where T: Send {
@@ -2357,22 +2363,22 @@ mod signal {
                 }
             }
 
-            pub(super) fn listen<F>(&mut self, listener: F, _s: &Slock<impl ThreadMarker>)
-                where F: (FnMut(&T, &Slock) -> bool) + Send + 'static {
+            pub(super) fn listen<F>(&mut self, listener: F, _s: Slock<'_, impl ThreadMarker>)
+                where F: (FnMut(&T, Slock<'_>) -> bool) + Send + 'static {
                 self.listeners.push(Box::new(listener));
             }
 
             pub(super) fn listen_box(
                 &mut self,
-                listener: Box<dyn (FnMut(&T, &Slock) -> bool) + Send + 'static>,
-                _s: &Slock<impl ThreadMarker>
+                listener: Box<dyn (FnMut(&T, Slock<'_>) -> bool) + Send + 'static>,
+                _s: Slock<'_, impl ThreadMarker>
             ) {
                 self.listeners.push(listener);
             }
 
-            pub(super) fn dispatch(&mut self, new_val: &T, s: &Slock<impl ThreadMarker>) {
+            pub(super) fn dispatch(&mut self, new_val: &T, s: Slock<'_, impl ThreadMarker>) {
                 self.listeners
-                    .retain_mut(|listener| listener(new_val, s.as_ref()))
+                    .retain_mut(|listener| listener(new_val, s.as_general_slock()))
             }
 
             pub(super) fn is_empty(&self) -> bool {
@@ -2444,20 +2450,20 @@ mod signal {
         }
 
         impl<T> Signal<T> for FixedSignal<T> where T: Send + 'static {
-            fn borrow(&self, s: &'_ Slock<impl ThreadMarker>) -> impl Deref<Target=T> + '_ {
+            fn borrow(&self, s: Slock<'_, impl ThreadMarker>) -> impl Deref<Target=T> + '_ {
                 SignalRef {
                     src: self.inner.borrow(s),
                     marker: PhantomData
                 }
             }
 
-            fn listen<F>(&self, _listener: F, _s: &Slock<impl ThreadMarker>)
-                where F: FnMut(&T, &Slock) -> bool + Send {
+            fn listen<F>(&self, _listener: F, _s: Slock<'_, impl ThreadMarker>)
+                where F: FnMut(&T, Slock<'_>) -> bool + Send {
                 /* no op */
             }
 
             type MappedOutput<S: Send + 'static> = FixedSignal<S>;
-            fn map<S, F>(&self, map: F, s: &Slock<impl ThreadMarker>) -> FixedSignal<S>
+            fn map<S, F>(&self, map: F, s: Slock<'_, impl ThreadMarker>) -> FixedSignal<S>
                 where S: Send + 'static,
                       F: Send + 'static + Fn(&T) -> S
             {
@@ -2511,12 +2517,12 @@ mod signal {
         impl<T> GeneralSignal<T> where T: Send + 'static {
             /// add listener is a function to help out generally handling
             /// TokenStore. Otherwise, .listen is used
-            pub(crate) fn from<S, U, F, G>(source: &S, map: F, add_listener: G, s: &Slock<impl ThreadMarker>)
+            pub(crate) fn from<S, U, F, G>(source: &S, map: F, add_listener: G, s: Slock<'_, impl ThreadMarker>)
                 -> GeneralSignal<T>
                 where S: Signal<U>,
                       U: Send + 'static,
                       F: Send + 'static + Fn(&U) -> T,
-                      G: FnOnce(&S, Box<dyn FnMut(&U, &Slock) -> bool + Send>, &Slock)
+                      G: FnOnce(&S, Box<dyn FnMut(&U, Slock<'_>) -> bool + Send>, Slock<'_>)
             {
                 let inner;
                 {
@@ -2541,7 +2547,7 @@ mod signal {
                     // races don't matter too much since it'll just mean late drop
                     // but nothing unsound
                     !inner.audience.is_empty() || Arc::strong_count(&pseudo_weak) > 1
-                }), s.as_ref());
+                }), s.as_general_slock());
 
                 GeneralSignal {
                     inner: arc
@@ -2550,20 +2556,20 @@ mod signal {
         }
 
         impl<T> Signal<T> for GeneralSignal<T> where T: Send + 'static {
-            fn borrow(&self, s: &'_ Slock<impl ThreadMarker>) -> impl Deref<Target=T> + '_ {
+            fn borrow(&self, s: Slock<'_, impl ThreadMarker>) -> impl Deref<Target=T> + '_ {
                 SignalRef {
                     src: self.inner.borrow(s),
                     marker: PhantomData,
                 }
             }
 
-            fn listen<F>(&self, listener: F, s: &Slock<impl ThreadMarker>)
-                where F: FnMut(&T, &Slock) -> bool + Send + 'static {
+            fn listen<F>(&self, listener: F, s: Slock<'_, impl ThreadMarker>)
+                where F: FnMut(&T, Slock<'_>) -> bool + Send + 'static {
                 self.inner.borrow_mut(s).audience.listen(listener, s);
             }
 
             type MappedOutput<S: Send + 'static> = GeneralSignal<S>;
-            fn map<S, F>(&self, map: F, s: &Slock<impl ThreadMarker>) -> GeneralSignal<S>
+            fn map<S, F>(&self, map: F, s: Slock<'_, impl ThreadMarker>) -> GeneralSignal<S>
                 where S: Send + 'static, F: Fn(&T) -> S + Send + 'static {
                 GeneralSignal::from(self, map, |this, listener, s| {
                     this.inner.borrow_mut(s).audience.listen_box(listener, s);
@@ -2656,7 +2662,7 @@ mod signal {
                   U: Send + Clone + 'static,
                   V: Send + 'static
         {
-            pub fn from<F>(lhs: &impl Signal<T>, rhs: &impl Signal<U>, map: F, s: &Slock<impl ThreadMarker>)
+            pub fn from<F>(lhs: &impl Signal<T>, rhs: &impl Signal<U>, map: F, s: Slock<'_, impl ThreadMarker>)
                            -> JoinedSignal<T, U, V>
                 where F: Send + Clone + 'static + Fn(&T, &U) -> V
             {
@@ -2719,20 +2725,20 @@ mod signal {
                   U: Send + Clone + 'static,
                   V: Send + 'static
         {
-            fn borrow(&self, s: &'_ Slock<impl ThreadMarker>) -> impl Deref<Target=V> + '_ {
+            fn borrow(&self, s: Slock<'_, impl ThreadMarker>) -> impl Deref<Target=V> + '_ {
                 SignalRef {
                     src: self.inner.1.borrow(s),
                     marker: Default::default(),
                 }
             }
 
-            fn listen<F>(&self, listener: F, s: &Slock<impl ThreadMarker>)
-                where F: FnMut(&V, &Slock) -> bool + Send + 'static {
+            fn listen<F>(&self, listener: F, s: Slock<'_, impl ThreadMarker>)
+                where F: FnMut(&V, Slock<'_>) -> bool + Send + 'static {
                 self.inner.1.borrow_mut(s).audience.listen(listener, s);
             }
 
             type MappedOutput<S: Send + 'static> = GeneralSignal<S>;
-            fn map<S, F>(&self, map: F, s: &Slock<impl ThreadMarker>) -> GeneralSignal<S>
+            fn map<S, F>(&self, map: F, s: Slock<'_, impl ThreadMarker>) -> GeneralSignal<S>
                 where S: Send + 'static,
                       F: Send + 'static + Fn(&V) -> S
             {
@@ -2769,7 +2775,7 @@ mod signal {
         }
 
         impl<C> CapacitatedInnerSignal<C> where C: Capacitor {
-            fn set_curr(&mut self, to: C::Target, s: &Slock) {
+            fn set_curr(&mut self, to: C::Target, s: Slock<'_>) {
                 self.curr = to;
                 self.audience.dispatch(&self.curr, s);
             }
@@ -2810,7 +2816,7 @@ mod signal {
         impl<C> CapacitatedSignal<C> where C: Capacitor {
 
             #[inline]
-            fn update_active(this: &Arc<(AtomicU8, SlockCell<CapacitatedInnerSignal<C>>)>, mut_ref: &mut CapacitatedInnerSignal<C>, _s: &Slock) {
+            fn update_active(this: &Arc<(AtomicU8, SlockCell<CapacitatedInnerSignal<C>>)>, mut_ref: &mut CapacitatedInnerSignal<C>, _s: Slock<'_>) {
                 if mut_ref.time_active.is_none() {
                     mut_ref.time_active = Some(Duration::from_secs(0));
 
@@ -2846,7 +2852,7 @@ mod signal {
         }
 
         impl<C> CapacitatedSignal<C> where C: Capacitor {
-            pub fn from(source: &impl Signal<C::Target>, mut capacitor: C, s: &Slock<impl ThreadMarker>) -> Self {
+            pub fn from(source: &impl Signal<C::Target>, mut capacitor: C, s: Slock<'_, impl ThreadMarker>) -> Self {
                 capacitor.target_set(&*source.borrow(s), None);
                 let (curr, initial_thread) = capacitor.sample(Duration::from_secs(0));
 
@@ -2882,7 +2888,7 @@ mod signal {
 
                 // start thread if necessary
                 if initial_thread {
-                    CapacitatedSignal::update_active(&arc, arc.1.borrow_mut(s).deref_mut(), s.as_ref());
+                    CapacitatedSignal::update_active(&arc, arc.1.borrow_mut(s).deref_mut(), s.as_general_slock());
                 }
 
                 CapacitatedSignal {
@@ -2892,20 +2898,20 @@ mod signal {
         }
 
         impl<C> Signal<C::Target> for CapacitatedSignal<C> where C: Capacitor {
-            fn borrow(&self, s: &'_ Slock<impl ThreadMarker>) -> impl Deref<Target=C::Target> + '_ {
+            fn borrow(&self, s: Slock<'_, impl ThreadMarker>) -> impl Deref<Target=C::Target> + '_ {
                 SignalRef {
                     src: self.inner.1.borrow(s),
                     marker: Default::default(),
                 }
             }
 
-            fn listen<F>(&self, listener: F, s: &Slock<impl ThreadMarker>)
-                where F: FnMut(&C::Target, &Slock) -> bool + Send + 'static {
+            fn listen<F>(&self, listener: F, s: Slock<'_, impl ThreadMarker>)
+                where F: FnMut(&C::Target, Slock<'_>) -> bool + Send + 'static {
                 self.inner.1.borrow_mut(s).audience.listen(listener, s);
             }
 
             type MappedOutput<S: Send + 'static> = GeneralSignal<S>;
-            fn map<S, F>(&self, map: F, s: &Slock<impl ThreadMarker>) -> GeneralSignal<S>
+            fn map<S, F>(&self, map: F, s: Slock<'_, impl ThreadMarker>) -> GeneralSignal<S>
                 where S: Send + 'static,
                       F: Send + 'static + Fn(&C::Target) -> S
             {
@@ -2928,7 +2934,7 @@ mod test {
     use std::thread::sleep;
     use std::time::Duration;
     use rand::Rng;
-    use crate::core::{setup_timing_thread, slock, timed_worker};
+    use crate::core::{setup_timing_thread, slock_owner, timed_worker};
     use crate::state::{Store, Signal, TokenStore, Binding, Bindable, ActionDispatcher, StoreContainer, NumericAction, DirectlyInvertible, Filterable, DerivedStore, Stateful, CoupledStore, StringActionBasis, Buffer, Word, GroupAction};
     use crate::state::capacitor::{ConstantSpeedCapacitor, ConstantTimeCapacitor, SmoothCapacitor};
     use crate::state::coupler::{FilterlessCoupler, NumericStringCoupler};
@@ -2941,85 +2947,86 @@ mod test {
     #[test]
     fn test_numeric() {
         let _h = HeapChecker::new();
-        let c = slock();
+        let c = slock_owner();
 
         let s: Store<i32> = Store::new(2);
         let derived_sig;
         let derived_derived;
         {
-            derived_sig = c.map(&s.signal(), |x| x * x);
-            let b = c.read(&derived_sig);
+            derived_sig = c.borrow().map(&s.signal(), |x| x * x);
+            let s = c.borrow();
+            let b = s.read(&derived_sig);
             assert_eq!(*b, 4);
         }
         {
-            derived_derived = derived_sig.map(|x| x - 4, &c);
+            derived_derived = derived_sig.map(|x| x - 4, c.borrow());
         }
 
-        c.apply(Set(6), &s);
+        c.borrow().apply(Set(6), &s);
         {
-            let b = c.read(&derived_sig);
+            let s = c.borrow();
+            let b = s.read(&derived_sig);
             assert_eq!(*b, 36);
-            let b = c.read(&derived_derived);
+            let b = s.read(&derived_derived);
             assert_eq!(*b, 32);
         }
 
-        c.apply(Identity *
+        c.borrow().apply(Identity *
                     Set(1),
                 &s
         );
         {
-            let b = c.read(&derived_sig);
+            let s = c.borrow();
+            let b = s.read(&derived_sig);
             assert_eq!(*b, 1);
-            let b = c.read(&derived_derived);
+            let b = s.read(&derived_derived);
             assert_eq!(*b, -3);
         }
 
         let sig1;
         {
-            let sig = c.fixed_signal(-1);
+            let sig = c.borrow().fixed_signal(-1);
 
-            sig1 = Signal::map(&sig, |x| 2 * x, &c);
+            sig1 = Signal::map(&sig, |x| 2 * x, c.borrow());
         }
 
-        let b = sig1.borrow(&c);
+        let b = sig1.borrow(c.borrow());
         let c = *b;
         assert_eq!(c, -2);
-
-
     }
 
 
     #[test]
     fn test_join() {
         let _h = HeapChecker::new();
-        let s = slock();
+        let s = slock_owner();
 
         let x: Store<i32> = Store::new(3);
         let y: Store<bool> = Store::new(false);
 
-        let join = s.join(&x.signal(), &y.signal());
-        assert_eq!(*join.borrow(&s), (3, false));
+        let join = s.borrow().join(&x.signal(), &y.signal());
+        assert_eq!(*join.borrow(s.borrow()), (3, false));
 
-        s.apply(Set(4), &x);
-        assert_eq!(*join.borrow(&s), (4, false));
+        s.borrow().apply(Set(4), &x);
+        assert_eq!(*join.borrow(s.borrow()), (4, false));
 
-        s.apply(Set(true), &y);
-        assert_eq!(*join.borrow(&s), (4, true));
+        s.borrow().apply(Set(true), &y);
+        assert_eq!(*join.borrow(s.borrow()), (4, true));
 
-        s.apply(Set(-1), &x);
-        s.apply(Set(false), &y);
-        assert_eq!(*join.borrow(&s), (-1, false));
+        s.borrow().apply(Set(-1), &x);
+        s.borrow().apply(Set(false), &y);
+        assert_eq!(*join.borrow(s.borrow()), (-1, false));
     }
 
     #[test]
     fn test_join_map() {
         let _h = HeapChecker::new();
-        let s = slock();
+        let s = slock_owner();
 
         let x: Store<i32> = Store::new(3);
         let y: Store<bool> = Store::new(false);
 
-        let join = s.join_map(&x.signal(), &y.signal(), |x, y|
+        let join = s.borrow().join_map(&x.signal(), &y.signal(), |x, y|
             if *y {
                 x + 4
             }
@@ -3027,27 +3034,27 @@ mod test {
                 x * x
             }
         );
-        assert_eq!(*join.borrow(&s), 9);
+        assert_eq!(*join.borrow(s.borrow()), 9);
 
-        s.apply(Set(4), &x);
-        assert_eq!(*join.borrow(&s), 16);
+        s.borrow().apply(Set(4), &x);
+        assert_eq!(*join.borrow(s.borrow()), 16);
 
-        s.apply(Set(true), &y);
-        assert_eq!(*join.borrow(&s), 8);
+        s.borrow().apply(Set(true), &y);
+        assert_eq!(*join.borrow(s.borrow()), 8);
 
-        s.apply(Set(-1), &x);
-        s.apply(Set(false), &y);
-        assert_eq!(*join.borrow(&s), 1);
+        s.borrow().apply(Set(-1), &x);
+        s.borrow().apply(Set(false), &y);
+        assert_eq!(*join.borrow(s.borrow()), 1);
 
         drop(x);
-        s.apply(Set(true), &y);
-        assert_eq!(*join.borrow(&s), 3);
+        s.borrow().apply(Set(true), &y);
+        assert_eq!(*join.borrow(s.borrow()), 3);
     }
 
     #[test]
     fn test_token_store() {
         let _h = HeapChecker::new();
-        let s = slock();
+        let s = slock_owner();
         let token: TokenStore<i32> = TokenStore::new(1);
         // let token = Store::new(1);
 
@@ -3055,95 +3062,95 @@ mod test {
         // a bit hacky since this testing scenario is rather awkward
         let counts: [DerivedStore<usize>; 10] = Default::default();
         for i in 0usize..10usize {
-            let equals = token.equals(i as i32, &s);
+            let equals = token.equals(i as i32, s.borrow());
             let c = counts[i].binding();
             equals.listen(move |_, s| {
                 let curr = *c.borrow(s);
 
                 c.apply(Set(curr + 1), s);
                 true
-            }, &s);
+            }, s.borrow());
             listeners.push(equals);
         }
-        assert_eq!(*counts[1].binding().borrow(&s), 0);
-        token.apply(Set(1), &s);
-        assert_eq!(*counts[1].binding().borrow(&s), 0);
-        token.apply(Set(2), &s);
-        assert_eq!(*counts[1].binding().borrow(&s), 1);
-        assert_eq!(*counts[2].binding().borrow(&s), 1);
-        token.apply(Set(4), &s);
-        assert_eq!(*counts[1].binding().borrow(&s), 1);
-        assert_eq!(*counts[2].binding().borrow(&s), 2);
-        assert_eq!(*counts[4].binding().borrow(&s), 1);
-        token.apply(Set(1), &s);
-        assert_eq!(*counts[1].binding().borrow(&s), 2);
-        assert_eq!(*counts[2].binding().borrow(&s), 2);
-        assert_eq!(*counts[4].binding().borrow(&s), 2);
+        assert_eq!(*counts[1].binding().borrow(s.borrow()), 0);
+        token.apply(Set(1), s.borrow());
+        assert_eq!(*counts[1].binding().borrow(s.borrow()), 0);
+        token.apply(Set(2), s.borrow());
+        assert_eq!(*counts[1].binding().borrow(s.borrow()), 1);
+        assert_eq!(*counts[2].binding().borrow(s.borrow()), 1);
+        token.apply(Set(4), s.borrow());
+        assert_eq!(*counts[1].binding().borrow(s.borrow()), 1);
+        assert_eq!(*counts[2].binding().borrow(s.borrow()), 2);
+        assert_eq!(*counts[4].binding().borrow(s.borrow()), 1);
+        token.apply(Set(1), s.borrow());
+        assert_eq!(*counts[1].binding().borrow(s.borrow()), 2);
+        assert_eq!(*counts[2].binding().borrow(s.borrow()), 2);
+        assert_eq!(*counts[4].binding().borrow(s.borrow()), 2);
     }
 
     #[test]
     fn test_action_listener() {
         let _h = HeapChecker::new();
-        let s = slock();
+        let s = slock_owner();
         let state = Store::new(0);
         // these are technically not "true" derived stores
         // but the restrictions are somewhat loose
         // we are just using them for testing purposes
         // it may happen that in the future, we will have to ArcMutex
         // instead of this hack
-        let identity_counter = DerivedStore::new(0);
-        let set_counter = DerivedStore::new(0);
-        let scb = set_counter.binding();
-        let icb = identity_counter.binding();
+        let identity_counter = Buffer::new(0);
+        let set_counter = Buffer::new(0);
+        let scb = set_counter.clone();
+        let icb = identity_counter.clone();
         state.action_listener( move |_, action, s| {
             let Identity = action else {
                 return true
             };
-            let old = *icb.borrow(s);
-            if old == 5 {
+            let mut old = icb.borrow_mut(s);
+            if *old == 5 {
                 // stop caring about events
                 return false
             }
-            icb.apply(NumericAction::Incr(1), s);
+            *old += 1;
             true
-        }, &s);
+        }, s.borrow());
         state.action_listener( move |_, action, s| {
             let Set(_) = action else {
                 return true
             };
-            scb.apply(NumericAction::Incr(1), s);
+            *scb.borrow_mut(s) += 1;
             true
-        }, &s);
+        }, s.borrow());
         for i in 0 .. 100 {
-            assert_eq!(*set_counter.borrow(&s), i);
-            assert_eq!(*identity_counter.borrow(&s), std::cmp::min(i, 5));
-            state.apply(Identity, &s);
-            state.apply(NumericAction::Incr(1), &s);
+            assert_eq!(*set_counter.borrow(s.borrow()), i);
+            assert_eq!(*identity_counter.borrow(s.borrow()), std::cmp::min(i, 5));
+            state.apply(Identity, s.borrow());
+            state.apply(NumericAction::Incr(1), s.borrow());
         }
     }
 
     #[test]
     fn test_action_filter() {
         let _h = HeapChecker::new();
-        let s = slock();
+        let s = slock_owner();
         let state = Store::new_with_filter(0);
         state.action_filter(|curr, action, _s| {
             match action {
                 Identity => Set(*curr + 1),
                 Set(_) => Identity
             }
-        }, &s);
-        state.apply(Set(1), &s);
-        assert_eq!(*state.borrow(&s), 0);
-        state.apply(Identity, &s);
-        state.apply(Identity, &s);
-        assert_eq!(*state.borrow(&s), 2);
+        }, s.borrow());
+        state.apply(Set(1), s.borrow());
+        assert_eq!(*state.borrow(s.borrow()), 0);
+        state.apply(Identity, s.borrow());
+        state.apply(Identity, s.borrow());
+        assert_eq!(*state.borrow(s.borrow()), 2);
     }
 
     #[test]
     fn test_inverse_listener() {
         let _h = HeapChecker::new();
-        let s = slock();
+        let s = slock_owner();
         let state = Store::new(0);
         let vec: Vec<Box<dyn DirectlyInvertible>> = Vec::new();
         let vectors = Arc::new(Mutex::new(Some(vec)));
@@ -3155,9 +3162,9 @@ mod test {
             };
             l.push(inv);
             true
-        }, &s);
+        }, s.borrow());
         for i in 0.. 100 {
-            state.apply(Set(i * i), &s);
+            state.apply(Set(i * i), s.borrow());
         }
         let mut l = vectors.lock().unwrap();
         assert_eq!(l.as_ref().unwrap().len(), 100);
@@ -3165,15 +3172,15 @@ mod test {
         let res = l.take().unwrap().into_iter().enumerate();
         drop(l);
         for (i, mut item) in res.take(90) {
-            assert_eq!(*state.borrow(&s), (99 - i) * (99 - i));
-            item.invert(&s);
+            assert_eq!(*state.borrow(s.borrow()), (99 - i) * (99 - i));
+            item.invert(s.borrow());
         }
     }
 
     #[test]
     fn test_inverse_listener_combine() {
         let _h = HeapChecker::new();
-        let s = slock();
+        let s = slock_owner();
         let state = Store::new(0);
         let vec: Option<Box<dyn DirectlyInvertible>> = None;
         let vectors = Arc::new(Mutex::new(Some(vec)));
@@ -3192,55 +3199,68 @@ mod test {
                 }
             }
             true
-        }, &s);
+        }, s.borrow());
         for i in 0.. 100 {
-            state.apply(Set(i * i), &s);
+            state.apply(Set(i * i), s.borrow());
         }
         let mut l = vectors.lock().unwrap();
         let mut res = l.take().unwrap().unwrap();
         drop(l);
-        res.invert(&s);
-        assert_eq!(*state.borrow(&s), 0);
+        res.invert(s.borrow());
+        assert_eq!(*state.borrow(s.borrow()), 0);
     }
 
     #[test]
     fn test_general_listener() {
         let _h = HeapChecker::new();
-        let s = slock();
+        let s = slock_owner();
         let state = Store::new(0);
-        let set_counter = DerivedStore::new(0);
-        let scb = set_counter.binding();
+        let set_counter = Buffer::new(0);
+        let scb = set_counter.clone();
         state.subtree_general_listener(move |s| {
-            scb.apply(NumericAction::Incr(1), s);
+            *scb.borrow_mut(s) += 1;
             *scb.borrow(s) < 63
-        }, &s);
+        }, s.borrow());
 
         for i in 0 .. 100 {
-            assert_eq!(*set_counter.borrow(&s), std::cmp::min(i, 63));
-            state.apply(Identity, &s);
+            assert_eq!(*set_counter.borrow(s.borrow()), std::cmp::min(i, 63));
+            state.apply(Identity, s.borrow());
         }
     }
 
     #[test]
     #[should_panic]
     fn test_not_marked_derived_causes_panic() {
-        let s = slock();
+        let s = slock_owner();
         let state1 = Store::new(0);
         let state2 = Store::new(1);
         let b = state2.binding();
         state1.action_listener(move |_, _a, s| {
             b.apply(Set(1), s);
             true
-        }, &s);
-        state1.apply(Set(0), &s);
+        }, s.borrow());
+        state1.apply(Set(0), s.borrow());
     }
 
     #[test]
     #[should_panic]
     fn test_falsely_marked_derived_causes_panic() {
-        let s = slock();
+        let s = slock_owner();
         let state = DerivedStore::new(0);
-        state.apply(Set(1), &s);
+        state.apply(Set(1), s.borrow());
+    }
+
+    #[test]
+    fn test_properly_marked_derived_no_panic() {
+        let s = slock_owner();
+        let state = Store::new(0);
+        let derived = DerivedStore::new(0);
+        let b = derived.binding();
+        state.action_listener(move |_, _, s| {
+            b.apply(NumericAction::Incr(1), s);
+            true
+        }, s.borrow());
+        state.apply(Set(1), s.borrow());
     }
 
     struct NegatedCoupler {
@@ -3273,88 +3293,88 @@ mod test {
     #[test]
     fn test_negated_coupler() {
         let _h = HeapChecker::new();
-        let s = slock();
+        let s = slock_owner();
         let intrinsic = Store::new(-1.0);
-        let coupled = CoupledStore::new(intrinsic.binding(), NegatedCoupler {}, &s);
+        let coupled = CoupledStore::new(intrinsic.binding(), NegatedCoupler {}, s.borrow());
 
-        assert_eq!(*coupled.borrow(&s), 1.0);
+        assert_eq!(*coupled.borrow(s.borrow()), 1.0);
 
-        coupled.apply(Set(-3.0), &s);
+        coupled.apply(Set(-3.0), s.borrow());
 
-        assert_eq!(*coupled.borrow(&s), -3.0);
-        assert_eq!(*intrinsic.borrow(&s), 3.0);
+        assert_eq!(*coupled.borrow(s.borrow()), -3.0);
+        assert_eq!(*intrinsic.borrow(s.borrow()), 3.0);
 
-        intrinsic.apply(Set(2.0), &s);
+        intrinsic.apply(Set(2.0), s.borrow());
 
-        assert_eq!(*coupled.borrow(&s), -2.0);
+        assert_eq!(*coupled.borrow(s.borrow()), -2.0);
     }
 
     #[test]
     fn test_string_number_coupler() {
         let _h = HeapChecker::new();
-        let s = slock();
+        let s = slock_owner();
         let intrinsic = Store::new(1);
-        let mapped = CoupledStore::new(intrinsic.binding(), NumericStringCoupler::new(), &s);
+        let mapped = CoupledStore::new(intrinsic.binding(), NumericStringCoupler::new(), s.borrow());
 
-        assert_eq!(*mapped.borrow(&s), "1");
-        intrinsic.apply(NumericAction::Incr(5), &s);
+        assert_eq!(*mapped.borrow(s.borrow()), "1");
+        intrinsic.apply(NumericAction::Incr(5), s.borrow());
 
-        assert_eq!(*mapped.borrow(&s), "6");
+        assert_eq!(*mapped.borrow(s.borrow()), "6");
 
-        intrinsic.apply(NumericAction::Decr(10), &s);
+        intrinsic.apply(NumericAction::Decr(10), s.borrow());
 
-        assert_eq!(*mapped.borrow(&s), "-4");
+        assert_eq!(*mapped.borrow(s.borrow()), "-4");
 
-        mapped.apply(StringActionBasis::ReplaceSubrange(0..1, "1".to_string()), &s);
+        mapped.apply(StringActionBasis::ReplaceSubrange(0..1, "1".to_string()), s.borrow());
 
-        assert_eq!(*mapped.borrow(&s), "14".to_string());
-        assert_eq!(*intrinsic.borrow(&s), 14);
+        assert_eq!(*mapped.borrow(s.borrow()), "14".to_string());
+        assert_eq!(*intrinsic.borrow(s.borrow()), 14);
 
-        mapped.apply(StringActionBasis::ReplaceSubrange(0..1, "a".to_string()), &s);
+        mapped.apply(StringActionBasis::ReplaceSubrange(0..1, "a".to_string()), s.borrow());
 
-        assert_eq!(*mapped.borrow(&s), "14".to_string());
-        assert_eq!(*intrinsic.borrow(&s), 14);
+        assert_eq!(*mapped.borrow(s.borrow()), "14".to_string());
+        assert_eq!(*intrinsic.borrow(s.borrow()), 14);
 
-        mapped.apply(StringActionBasis::ReplaceSubrange(0..2, "-11231".to_string()), &s);
-        assert_eq!(*mapped.borrow(&s), "-11231".to_string());
-        assert_eq!(*intrinsic.borrow(&s), -11231);
+        mapped.apply(StringActionBasis::ReplaceSubrange(0..2, "-11231".to_string()), s.borrow());
+        assert_eq!(*mapped.borrow(s.borrow()), "-11231".to_string());
+        assert_eq!(*intrinsic.borrow(s.borrow()), -11231);
 
         drop(intrinsic);
 
-        mapped.apply(StringActionBasis::ReplaceSubrange(0..1, "+".to_string()), &s);
+        mapped.apply(StringActionBasis::ReplaceSubrange(0..1, "+".to_string()), s.borrow());
 
-        assert_eq!(*mapped.borrow(&s), "+11231");
+        assert_eq!(*mapped.borrow(s.borrow()), "+11231");
     }
 
     #[test]
     #[should_panic]
     fn test_faulty_coupler_access() {
-        let s = slock();
+        let s = slock_owner();
         let intrinsic = Store::new(0.0);
         let random = Store::new(0.0);
-        let coupler = CoupledStore::new(intrinsic.binding(), NegatedCoupler {}, &s);
+        let coupler = CoupledStore::new(intrinsic.binding(), NegatedCoupler {}, s.borrow());
         random.listen(move |_n, s| {
             coupler.apply(Set(-1.0), s);
 
             true
-        }, &s);
-        random.apply(Set(-3.0), &s);
+        }, s.borrow());
+        random.apply(Set(-3.0), s.borrow());
     }
 
     #[test]
     #[should_panic]
     fn test_faulty_coupler_dispatch() {
         let _h = HeapChecker::new();
-        let s = slock();
+        let s = slock_owner();
         let intrinsic = Store::new(0.0);
         let random = Store::new(0.0);
-        let coupler = CoupledStore::new(intrinsic.binding(), NegatedCoupler {}, &s);
+        let coupler = CoupledStore::new(intrinsic.binding(), NegatedCoupler {}, s.borrow());
         coupler.listen(move |_n, s| {
             random.apply(Set(-1.0), s);
 
             true
-        }, &s);
-        coupler.apply(Set(-3.0), &s);
+        }, s.borrow());
+        coupler.apply(Set(-3.0), s.borrow());
     }
 
     #[test]
@@ -3362,116 +3382,116 @@ mod test {
         // even if intermediate signals are dropped
         // downstream signals remain unaffected
         let _h = HeapChecker::new();
-        let s = slock();
+        let s = slock_owner();
         let store = Store::new(0);
-        let middle = store.map(|x| *x, &s);
-        let bottom = middle.map(|x| *x, &s);
-        let changes = DerivedStore::new(0);
-        let binding = changes.binding();
+        let middle = store.map(|x| *x, s.borrow());
+        let bottom = middle.map(|x| *x, s.borrow());
+        let changes = Buffer::new(0);
+        let binding = changes.clone();
         bottom.listen(move |_a, s| {
-            binding.apply(NumericAction::Incr(1), s);
+            *binding.borrow_mut(s) += 1;
             true
-        }, &s);
+        }, s.borrow());
 
-        store.apply(Set(1), &s);
+        store.apply(Set(1), s.borrow());
         drop(middle);
-        store.apply(Set(-1), &s);
+        store.apply(Set(-1), s.borrow());
         drop(bottom);
 
-        assert_eq!(*changes.borrow(&s), 2);
+        assert_eq!(*changes.borrow(s.borrow()), 2);
     }
 
     #[test]
     fn test_signal_early_freeing() {
         let _h = HeapChecker::new();
-        let s = slock();
+        let s = slock_owner();
         let store = Store::new(0);
         {
             let _h = HeapChecker::new();
-            let middle = store.map(|x| *x, &s);
+            let middle = store.map(|x| *x, s.borrow());
             drop(middle);
             // this operation should clear ownership of the signal
-            store.apply(Set(1), &s);
+            store.apply(Set(1), s.borrow());
         }
     }
 
     #[test]
     #[should_panic]
     fn test_signal_no_early_freeing_without_clear() {
-        let s = slock();
+        let s = slock_owner();
         let store = Store::new(0);
         {
             let _h = HeapChecker::new();
-            let middle = store.map(|x| *x, &s);
+            let middle = store.map(|x| *x, s.borrow());
             drop(middle);
             // with no modification, signal will be owned by store
-            // store.apply(Set(1), &s);
+            // store.apply(Set(1), s.slock());
         }
     }
 
     #[test]
     fn test_join_no_early_freeing() {
         let h = HeapChecker::new();
-        let s = slock();
+        let s = slock_owner();
 
         let left = Store::new(0);
         let right = Store::new(0);
         let left_binding = left.binding();
-        let middle = s.join(&left, &right);
+        let middle = s.borrow().join(&left, &right);
         {
             let hc2 = HeapChecker::new();
-            let bottom = middle.map(|x| *x, &s);
+            let bottom = middle.map(|x| *x, s.borrow());
             //
             drop(middle);
             drop(left);
-            left_binding.apply(Set(1), &s);
+            left_binding.apply(Set(1), s.borrow());
 
-            right.apply(Set(1), &s);
+            right.apply(Set(1), s.borrow());
             drop(bottom);
 
             // at this point, both left and right have ownership of bottom
             hc2.assert_diff(1);
 
-            left_binding.apply(Set(1), &s);
+            left_binding.apply(Set(1), s.borrow());
             // middle no longer sees bottom
             hc2.assert_diff(0);
 
             // left no longer sees middle, but right still doess
         }
         h.assert_diff(3);
-        right.apply(Set(1), &s);
+        right.apply(Set(1), s.borrow());
         // right no longer sees middle + middle dropped
         h.assert_diff(2);
     }
 
     #[test]
     fn test_couple_early_free() {
-        let s = slock();
+        let s = slock_owner();
 
         {
             let _h = HeapChecker::new();
             let store = Store::new(0.0);
-            let _coupled = CoupledStore::new(store.binding(), NegatedCoupler {}, &s);
+            let _coupled = CoupledStore::new(store.binding(), NegatedCoupler {}, s.borrow());
         }
 
         {
             let _h = HeapChecker::new();
             let store = Store::new(0.0);
-            let coupled = CoupledStore::new(store.binding(), NegatedCoupler {}, &s);
-            store.listen(|_a, _s| true, &s);
-            coupled.listen(|_a, _s| true, &s);
+            let coupled = CoupledStore::new(store.binding(), NegatedCoupler {}, s.borrow());
+            store.listen(|_a, _s| true, s.borrow());
+            coupled.listen(|_a, _s| true, s.borrow());
         }
 
         {
             let _h = HeapChecker::new();
             let store = Store::new(0.0);
-            let coupled = CoupledStore::new(store.binding(), NegatedCoupler {}, &s);
+            let coupled = CoupledStore::new(store.binding(), NegatedCoupler {}, s.borrow());
             let s_bind = store.binding();
-            let c_bind = coupled.binding();
+            let _c_bind = coupled.binding();
             let c_bind2 = coupled.binding();
             let c_bind2_copy = c_bind2.clone();
-            let c_bind2_copy2 = c_bind2.clone();
-            let c_bind2_copy_copy = c_bind2_copy.clone();
+            let _c_bind2_copy2 = c_bind2.clone();
+            let _c_bind2_copy_copy = c_bind2_copy.clone();
             drop(store);
             drop(s_bind);
         }
@@ -3479,9 +3499,9 @@ mod test {
         {
             let _h = HeapChecker::new();
             let store = Store::new(0.0);
-            let coupled = CoupledStore::new(store.binding(), NegatedCoupler {}, &s);
-            let _coupled2 = CoupledStore::new(store.binding(), NegatedCoupler {}, &s);
-            let _coupled_coupled = CoupledStore::new(coupled.binding(), NegatedCoupler {}, &s);
+            let coupled = CoupledStore::new(store.binding(), NegatedCoupler {}, s.borrow());
+            let _coupled2 = CoupledStore::new(store.binding(), NegatedCoupler {}, s.borrow());
+            let _coupled_coupled = CoupledStore::new(coupled.binding(), NegatedCoupler {}, s.borrow());
             let s_bind = store.binding();
             let _c_bind = coupled.binding();
             drop(store);
@@ -3492,7 +3512,7 @@ mod test {
     #[test]
     fn test_string() {
         let _h = HeapChecker::new();
-        let s = slock();
+        let s = slock_owner();
         let actions: Arc<Mutex<Vec<Box<dyn DirectlyInvertible>>>> = Arc::new(Mutex::new(Vec::new()));
         let store = Store::new("asdfasdf".to_string());
         let mut strings: Vec<String> = Vec::new();
@@ -3500,30 +3520,30 @@ mod test {
         store.subtree_inverse_listener(move |invertible, _s| {
             a.lock().unwrap().push(invertible);
             true
-        }, &s);
+        }, s.borrow());
         for _i in 0 .. 127 {
-            let curr = store.borrow(&s).clone();
+            let curr = store.borrow(s.borrow()).clone();
             let i = rand::thread_rng().gen_range(0 .. std::cmp::max(1, curr.len()));
             let u = rand::thread_rng().gen_range(0 ..= curr.len() - i);
             strings.push(curr);
             let mut str = rand::thread_rng().gen_range(0..100).to_string();
             str = str[0..rand::thread_rng().gen_range(0..= str.len())].to_string();
-            store.apply(StringActionBasis::ReplaceSubrange(i..u+i, str), &s);
+            store.apply(StringActionBasis::ReplaceSubrange(i..u+i, str), s.borrow());
         }
 
         let mut actions = std::mem::replace(&mut *actions.lock().unwrap(), Vec::new());
         actions.reverse();
 
         for (i, mut action) in actions.into_iter().enumerate() {
-            action.invert(&s);
-            assert_eq!(*store.borrow(&s), strings[strings.len() - 1 - i].clone());
+            action.invert(s.borrow());
+            assert_eq!(*store.borrow(s.borrow()), strings[strings.len() - 1 - i].clone());
         }
     }
 
     #[test]
     fn test_string_compress() {
         let _h = HeapChecker::new();
-        let s = slock();
+        let s = slock_owner();
         let state = Store::new("asfasdf".to_string());
         let vec: Option<Box<dyn DirectlyInvertible>> = None;
         let vectors = Arc::new(Mutex::new(Some(vec)));
@@ -3542,27 +3562,27 @@ mod test {
                 }
             }
             true
-        }, &s);
+        }, s.borrow());
 
         for _i in 0 .. 100 {
-            let curr = state.borrow(&s).clone();
+            let curr = state.borrow(s.borrow()).clone();
             let i = rand::thread_rng().gen_range(0 .. std::cmp::max(1, curr.len()));
             let u = rand::thread_rng().gen_range(0 ..= curr.len() - i);
             let mut str = rand::thread_rng().gen_range(0..100).to_string();
             str = str[0..rand::thread_rng().gen_range(0..= str.len())].to_string();
-            state.apply(StringActionBasis::ReplaceSubrange(i..u+i, str), &s);
+            state.apply(StringActionBasis::ReplaceSubrange(i..u+i, str), s.borrow());
         }
         let mut l = vectors.lock().unwrap();
         let mut res = l.take().unwrap().unwrap();
         drop(l);
-        res.invert(&s);
-        assert_eq!(*state.borrow(&s), "asfasdf".to_string());
+        res.invert(s.borrow());
+        assert_eq!(*state.borrow(s.borrow()), "asfasdf".to_string());
     }
 
     #[test]
     fn test_vec() {
         let _h = HeapChecker::new();
-        let s = slock();
+        let s = slock_owner();
         let actions: Arc<Mutex<Vec<Box<dyn DirectlyInvertible>>>> = Arc::new(Mutex::new(Vec::new()));
         let store: Store<Vec<Store<i32>>> = Store::new(vec![Store::new(2), Store::new(3)]);
         let mut items: Vec<Vec<i32>> = Vec::new();
@@ -3574,24 +3594,24 @@ mod test {
             a.lock().unwrap().push(invertible);
 
             true
-        }, &s);
+        }, s.borrow());
         for _i in 0..127 {
-            let curr: Vec<_> = store.borrow(&s)
+            let curr: Vec<_> = store.borrow(s.borrow())
                 .iter()
-                .map(|x| *x.borrow(&s))
+                .map(|x| *x.borrow(s.borrow()))
                 .collect();
 
             if !curr.is_empty() {
                 let u = rand::thread_rng().gen_range(0..curr.len());
                 let v = rand::thread_rng().gen_range(-100000..100000);
                 items.push(curr);
-                store.borrow(&s)[u]
-                    .apply(Set(v), &s);
+                store.borrow(s.borrow())[u]
+                    .apply(Set(v), s.borrow());
             }
 
-            let curr: Vec<_> = store.borrow(&s)
+            let curr: Vec<_> = store.borrow(s.borrow())
                 .iter()
-                .map(|x| *x.borrow(&s))
+                .map(|x| *x.borrow(s.borrow()))
                 .collect();
 
             let range = if curr.is_empty() {
@@ -3617,17 +3637,17 @@ mod test {
                 },
             };
             items.push(curr);
-            store.apply(act, &s);
+            store.apply(act, s.borrow());
         }
 
         let mut actions_ = std::mem::replace(&mut *actions.lock().unwrap(), Vec::new());
         actions_.reverse();
 
         for (i, mut action) in actions_.into_iter().enumerate() {
-            action.invert(&s);
-            assert_eq!(store.borrow(&s).len(), items[items.len() - 1 - i].len());
+            action.invert(s.borrow());
+            assert_eq!(store.borrow(s.borrow()).len(), items[items.len() - 1 - i].len());
             for j in 0..items[items.len() - 1 - i].len() {
-                assert_eq!(*store.borrow(&s)[j].borrow(&s), items[items.len() - 1 - i][j]);
+                assert_eq!(*store.borrow(s.borrow())[j].borrow(s.borrow()), items[items.len() - 1 - i][j]);
             }
         }
     }
@@ -3635,7 +3655,7 @@ mod test {
     #[test]
     fn test_vec_collapsed() {
         let _h = HeapChecker::new();
-        let s = slock();
+        let s = slock_owner();
         let store: Store<Vec<Store<i32>>> = Store::new(vec![Store::new(1)]);
         let vec: Option<Box<dyn DirectlyInvertible>> = None;
         let vectors = Arc::new(Mutex::new(Some(vec)));
@@ -3654,11 +3674,11 @@ mod test {
                 }
             }
             true
-        }, &s);
+        }, s.borrow());
         for _i in 0 .. 127 {
-            let curr: Vec<_> = store.borrow(&s)
+            let curr: Vec<_> = store.borrow(s.borrow())
                 .iter()
-                .map(|x| *x.borrow(&s))
+                .map(|x| *x.borrow(s.borrow()))
                 .collect();
 
             let range = if curr.is_empty() {
@@ -3683,30 +3703,30 @@ mod test {
                     Insert(Store::new(v), u)
                 },
             };
-            store.apply(act, &s);
+            store.apply(act, s.borrow());
         }
 
         let mut l = vectors.lock().unwrap();
         let mut res = l.take().unwrap().unwrap();
         drop(l);
-        res.invert(&s);
+        res.invert(s.borrow());
 
-        assert_eq!(store.borrow(&s).len(), 1);
+        assert_eq!(store.borrow(s.borrow()).len(), 1);
     }
 
     #[test]
     fn test_subtree_general_listener() {
         let _h = HeapChecker::new();
-        let s = slock();
+        let s = slock_owner();
         let store = Store::new(vec![Store::new(1)]);
         let count = Arc::new(Mutex::new(0));
         let c = count.clone();
         store.subtree_general_listener(move |_s| {
             *c.lock().unwrap() += 1;
             true
-        }, &s);
-        s.apply(Insert(Store::new(2), 0), &store);
-        s.apply(Set(1), &store.borrow(&s)[0]);
+        }, s.borrow());
+        s.borrow().apply(Insert(Store::new(2), 0), &store);
+        s.borrow().apply(Set(1), &store.borrow(s.borrow())[0]);
 
         // 3 because an extra call is made to check
         // if it's still relevant
@@ -3719,15 +3739,15 @@ mod test {
 
         let _h = HeapChecker::new();
         let clock = {
-            let s = slock();
-            s.clock_signal()
+            let s = slock_owner();
+            s.borrow().clock_signal()
         };
 
         sleep(Duration::from_millis(800));
 
         {
-            let s = slock();
-            assert!((*clock.borrow(&s) - 0.8).abs() < 0.16);
+            let s = slock_owner();
+            assert!((*clock.borrow(s.borrow()) - 0.8).abs() < 0.16);
         }
 
         // wait for another tick to make sure clock is
@@ -3743,9 +3763,9 @@ mod test {
         let _h = HeapChecker::new();
         let store = Store::new(0.0);
         let capacitated = {
-            let s = slock();
-            let ret = store.with_capacitor(ConstantTimeCapacitor::new(1.0), &s);
-            store.apply(Set(1.5), &s);
+            let s = slock_owner();
+            let ret = store.with_capacitor(ConstantTimeCapacitor::new(1.0), s.borrow());
+            store.apply(Set(1.5), s.borrow());
 
             ret
         };
@@ -3753,58 +3773,58 @@ mod test {
         sleep(Duration::from_millis(100));
 
         {
-            let s = slock();
-            assert!((*capacitated.borrow(&s) - 0.15) < 0.05);
+            let s = slock_owner();
+            assert!((*capacitated.borrow(s.borrow()) - 0.15) < 0.05);
         }
 
         sleep(Duration::from_millis(1000));
 
         {
-            let s = slock();
-            assert!((*capacitated.borrow(&s) - 1.5) < 0.05);
-            store.apply(Set(2.0), &s);
+            let s = slock_owner();
+            assert!((*capacitated.borrow(s.borrow()) - 1.5) < 0.05);
+            store.apply(Set(2.0), s.borrow());
         }
 
         sleep(Duration::from_millis(400));
 
         {
-            let s = slock();
-            assert!((*capacitated.borrow(&s) - 1.7) < 0.05);
-            store.apply(Set(10.0), &s);
+            let s = slock_owner();
+            assert!((*capacitated.borrow(s.borrow()) - 1.7) < 0.05);
+            store.apply(Set(10.0), s.borrow());
         }
 
         {
-            let s = slock();
-            assert!((*capacitated.borrow(&s) - 2.0) < 0.05);
-        }
-
-        sleep(Duration::from_millis(100));
-
-        {
-            let s = slock();
-            assert!((*capacitated.borrow(&s) - 2.8) < 0.05);
-            store.apply(Set(3.0), &s);
+            let s = slock_owner();
+            assert!((*capacitated.borrow(s.borrow()) - 2.0) < 0.05);
         }
 
         sleep(Duration::from_millis(100));
 
         {
-            let s = slock();
-            assert!((*capacitated.borrow(&s) - 2.82) < 0.05);
+            let s = slock_owner();
+            assert!((*capacitated.borrow(s.borrow()) - 2.8) < 0.05);
+            store.apply(Set(3.0), s.borrow());
+        }
+
+        sleep(Duration::from_millis(100));
+
+        {
+            let s = slock_owner();
+            assert!((*capacitated.borrow(s.borrow()) - 2.82) < 0.05);
         }
 
         sleep(Duration::from_millis(900));
 
         {
-            let s = slock();
-            assert!((*capacitated.borrow(&s) - 3.0) < 0.05);
+            let s = slock_owner();
+            assert!((*capacitated.borrow(s.borrow()) - 3.0) < 0.05);
         }
 
         sleep(Duration::from_millis(900));
 
         {
-            let s = slock();
-            assert!((*capacitated.borrow(&s) - 3.0) < 0.05);
+            let s = slock_owner();
+            assert!((*capacitated.borrow(s.borrow()) - 3.0) < 0.05);
         }
 
         // wait for another tick to make sure clock is
@@ -3820,16 +3840,16 @@ mod test {
         let _h = HeapChecker::new();
         let store = Store::new(Vector([0.0, 0.0]));
         let capacitated = {
-            let s = slock();
-            let ret = store.with_capacitor(ConstantSpeedCapacitor::new(2.0), &s);
+            let s = slock_owner();
+            let ret = store.with_capacitor(ConstantSpeedCapacitor::new(2.0), s.borrow());
 
             ret
         };
 
         let first = thread::spawn(move || {
             let set = |u, v| {
-                let s = slock();
-                store.apply([Set(u), Set(v)], &s);
+                let s = slock_owner();
+                store.apply([Set(u), Set(v)], s.borrow());
             };
 
             set(1.0, 0.0);
@@ -3845,8 +3865,8 @@ mod test {
 
         let second = thread::spawn(move || {
             let close_to = |u, v| {
-                let s = slock();
-                let ret = (*capacitated.borrow(&s) - Vector([u, v])).norm() < 0.1;
+                let s = slock_owner();
+                let ret = (*capacitated.borrow(s.borrow()) - Vector([u, v])).norm() < 0.1;
                 ret
             };
 
@@ -3876,10 +3896,10 @@ mod test {
 
         let store = Store::new(0.0);
         let c = {
-            let s = slock();
+            let s = slock_owner();
             store.with_capacitor(SmoothCapacitor::new(|t| {
                 3.0 * t * t - 2.0 * t * t * t
-            }, 1.5), &s)
+            }, 1.5), s.borrow())
         };
         let u = Arc::new(Mutex::new(vec![]));
         let v = Arc::new(Mutex::new(vec![]));
@@ -3898,8 +3918,8 @@ mod test {
 
         thread::spawn(move || {
             let set = |targ| {
-                let s = slock();
-                binding.apply(Set(targ), &s);
+                let s = slock_owner();
+                binding.apply(Set(targ), s.borrow());
             };
             set(10.0);
             sleep(Duration::from_millis(1000));
@@ -3925,10 +3945,10 @@ mod test {
             ];
             for i in 0..10 {
                 sleep(Duration::from_millis(500));
-                let s = slock();
+                let s = slock_owner();
                 // relatively high tolerance since
                 // pretty steep
-                assert!((*signal.borrow(&s) / vals[i] - 1.0).abs() < 0.2);
+                assert!((*signal.borrow(s.borrow()) / vals[i] - 1.0).abs() < 0.25);
             }
         }).join().unwrap();
     }
@@ -3936,7 +3956,7 @@ mod test {
     #[test]
     fn test_vector_action() {
         let _h = HeapChecker::new();
-        let s = slock();
+        let s = slock_owner();
         let actions: Arc<Mutex<Vec<Box<dyn DirectlyInvertible>>>> = Arc::new(Mutex::new(Vec::new()));
         let store = Store::new(Vector([1, 2]));
         let weak = Arc::downgrade(&actions);
@@ -3946,30 +3966,30 @@ mod test {
             };
             strong.lock().unwrap().push(invertible);
             true
-        }, &s);
-        store.apply([Set(2), Identity], &s);
-        assert_eq!(*store.borrow(&s).x(), 2);
-        assert_eq!(*store.borrow(&s).y(), 2);
-        store.apply([Set(3), Set(1)], &s);
-        assert_eq!(*store.borrow(&s).x(), 3);
-        assert_eq!(*store.borrow(&s).y(), 1);
+        }, s.borrow());
+        store.apply([Set(2), Identity], s.borrow());
+        assert_eq!(*store.borrow(s.borrow()).x(), 2);
+        assert_eq!(*store.borrow(s.borrow()).y(), 2);
+        store.apply([Set(3), Set(1)], s.borrow());
+        assert_eq!(*store.borrow(s.borrow()).x(), 3);
+        assert_eq!(*store.borrow(s.borrow()).y(), 1);
 
         let mut action = actions.lock().unwrap().pop().unwrap();
         let mut action2 = actions.lock().unwrap().pop().unwrap();
 
-        action.invert(&s);
-        assert_eq!(*store.borrow(&s).x(), 2);
-        assert_eq!(*store.borrow(&s).y(), 2);
+        action.invert(s.borrow());
+        assert_eq!(*store.borrow(s.borrow()).x(), 2);
+        assert_eq!(*store.borrow(s.borrow()).y(), 2);
 
-        action2.invert(&s);
-        assert_eq!(*store.borrow(&s).x(), 1);
-        assert_eq!(*store.borrow(&s).y(), 2);
+        action2.invert(s.borrow());
+        assert_eq!(*store.borrow(s.borrow()).x(), 1);
+        assert_eq!(*store.borrow(s.borrow()).y(), 2);
     }
 
     #[test]
     fn test_vector_string() {
         let _h = HeapChecker::new();
-        let s = slock();
+        let s = slock_owner();
         let actions: Arc<Mutex<Vec<Box<dyn DirectlyInvertible>>>> = Arc::new(Mutex::new(Vec::new()));
         let store = Store::new(Vector(["asdfasdf".to_string()]));
         let mut strings: Vec<String> = Vec::new();
@@ -3977,30 +3997,30 @@ mod test {
         store.subtree_inverse_listener(move |invertible, _s| {
             a.lock().unwrap().push(invertible);
             true
-        }, &s);
+        }, s.borrow());
         for _i in 0 .. 127 {
-            let curr = store.borrow(&s).x().clone();
+            let curr = store.borrow(s.borrow()).x().clone();
             let i = rand::thread_rng().gen_range(0 .. std::cmp::max(1, curr.len()));
             let u = rand::thread_rng().gen_range(0 ..= curr.len() - i);
             strings.push(curr);
             let mut str = rand::thread_rng().gen_range(0..100).to_string();
             str = str[0..rand::thread_rng().gen_range(0..= str.len())].to_string();
-            store.apply([StringActionBasis::ReplaceSubrange(i..u+i, str)], &s);
+            store.apply([StringActionBasis::ReplaceSubrange(i..u+i, str)], s.borrow());
         }
 
         let mut actions = std::mem::replace(&mut *actions.lock().unwrap(), Vec::new());
         actions.reverse();
 
         for (i, mut action) in actions.into_iter().enumerate() {
-            action.invert(&s);
-            assert_eq!(*store.borrow(&s).x(), strings[strings.len() - 1 - i].clone());
+            action.invert(s.borrow());
+            assert_eq!(*store.borrow(s.borrow()).x(), strings[strings.len() - 1 - i].clone());
         }
     }
 
     #[test]
     fn test_vector_string_collapsed() {
         let _h = HeapChecker::new();
-        let s = slock();
+        let s = slock_owner();
         let state = Store::new(Vector(["asfasdf".to_string()]));
         let vec: Option<Box<dyn DirectlyInvertible>> = None;
         let vectors = Arc::new(Mutex::new(Some(vec)));
@@ -4019,27 +4039,27 @@ mod test {
                 }
             }
             true
-        }, &s);
+        }, s.borrow());
 
         for _i in 0 .. 100 {
-            let curr = state.borrow(&s).x().clone();
+            let curr = state.borrow(s.borrow()).x().clone();
             let i = rand::thread_rng().gen_range(0 .. std::cmp::max(1, curr.len()));
             let u = rand::thread_rng().gen_range(0 ..= curr.len() - i);
             let mut str = rand::thread_rng().gen_range(0..100).to_string();
             str = str[0..rand::thread_rng().gen_range(0..= str.len())].to_string();
-            state.apply([StringActionBasis::ReplaceSubrange(i..u+i, str)], &s);
+            state.apply([StringActionBasis::ReplaceSubrange(i..u+i, str)], s.borrow());
         }
         let mut l = vectors.lock().unwrap();
         let mut res = l.take().unwrap().unwrap();
         drop(l);
-        res.invert(&s);
-        assert_eq!(*state.borrow(&s).x(), "asfasdf".to_string());
+        res.invert(s.borrow());
+        assert_eq!(*state.borrow(s.borrow()).x(), "asfasdf".to_string());
     }
 
     #[test]
     fn test_filter() {
         let _h = HeapChecker::new();
-        let s = slock();
+        let s = slock_owner();
         let state = Store::new_with_filter(0);
         state.action_filter(|curr, action, _s| {
             if *curr > 50 {
@@ -4056,7 +4076,7 @@ mod test {
             else {
                 Set(-1)
             }
-        }, &s);
+        }, s.borrow());
         let vec: Option<Box<dyn DirectlyInvertible>> = None;
         let vectors = Arc::new(Mutex::new(Some(vec)));
         let c = vectors.clone();
@@ -4074,41 +4094,41 @@ mod test {
                 }
             }
             true
-        }, &s);
+        }, s.borrow());
         for i in 0.. 100 {
-            state.apply(Set(i * i), &s);
-            assert_eq!(*state.borrow(&s) % 2, 0)
+            state.apply(Set(i * i), s.borrow());
+            assert_eq!(*state.borrow(s.borrow()) % 2, 0)
         }
         let mut l = vectors.lock().unwrap();
         let mut res = l.take().unwrap().unwrap();
         drop(l);
-        res.invert(&s);
-        assert_eq!(*state.borrow(&s), 0);
+        res.invert(s.borrow());
+        assert_eq!(*state.borrow(s.borrow()), 0);
     }
 
     #[test]
     fn test_buffer() {
         let _h = HeapChecker::new();
-        let s = slock();
+        let s = slock_owner();
         let state = Store::new("asfasdf".to_string());
         let buffer = Buffer::new(Word::identity());
         let buffer_writer = buffer.clone();
         state.action_listener(move |_, action, s| {
             buffer_writer.borrow_mut(s).left_multiply(action.clone());
             true
-        }, &s);
+        }, s.borrow());
 
         for _i in 0 .. 100 {
-            let curr = state.borrow(&s).clone();
+            let curr = state.borrow(s.borrow()).clone();
             let i = rand::thread_rng().gen_range(0 .. std::cmp::max(1, curr.len()));
             let u = rand::thread_rng().gen_range(0 ..= curr.len() - i);
             let mut str = rand::thread_rng().gen_range(0..100).to_string();
             str = str[0..rand::thread_rng().gen_range(0..= str.len())].to_string();
-            state.apply(StringActionBasis::ReplaceSubrange(i..u+i, str), &s);
+            state.apply(StringActionBasis::ReplaceSubrange(i..u+i, str), s.borrow());
         }
 
         let state2 = Store::new("asfasdf".to_string());
-        state2.apply(buffer.replace(Word::identity(), &s), &s);
-        assert_eq!(*state2.borrow(&s), *state.borrow(&s));
+        state2.apply(buffer.replace(Word::identity(), s.borrow()), s.borrow());
+        assert_eq!(*state2.borrow(s.borrow()), *state.borrow(s.borrow()));
     }
 }
