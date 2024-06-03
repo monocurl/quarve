@@ -1,3 +1,20 @@
+pub(crate) mod rust_util {
+    use std::marker::PhantomData;
+
+    #[allow(unused)]
+    pub trait EnsureSend: Send {
+
+    }
+
+    #[allow(unused)]
+    pub trait EnsureSync: Sync {
+
+    }
+
+    pub type PhantomUnsendUnsync = PhantomData<*const ()>;
+}
+
+
 #[cfg(debug_assertions)]
 pub(crate) mod test_util {
     use std::marker::PhantomData;
@@ -63,7 +80,7 @@ pub(crate) mod test_util {
 mod vector {
     use std::fmt::Debug;
     use std::ops::{Add, Mul, Sub};
-    use crate::state::{Stateful};
+    use crate::state::Stateful;
     use crate::util::numeric::{Lerp, Norm};
 
     // G^N
@@ -319,4 +336,66 @@ pub mod markers {
     impl ThreadMarker for AnyThreadMarker {}
     impl sealed_base::ThreadMarkerBase for MainThreadMarker {}
     impl ThreadMarker for MainThreadMarker {}
+}
+
+pub mod geo {
+    pub type ScreenUnit = f32;
+
+    #[derive(Copy, Clone, Default)]
+    pub struct Rect {
+        pub x: ScreenUnit,
+        pub y: ScreenUnit,
+        pub w: ScreenUnit,
+        pub h: ScreenUnit,
+    }
+
+
+    #[derive(Copy, Clone, Default)]
+    pub struct Point {
+        pub x: ScreenUnit,
+        pub y: ScreenUnit,
+    }
+
+    #[derive(Copy, Clone, Default)]
+    pub struct Size {
+        pub w: ScreenUnit,
+        pub h: ScreenUnit,
+    }
+
+    #[derive(Copy, Clone, PartialEq, Eq)]
+    pub enum Alignment {
+        TopLeading,
+        Top,
+        TopTrailing,
+        Leading,
+        Center,
+        Trailing,
+        BotLeading,
+        Bot,
+        BotTrailing,
+    }
+
+    impl Default for Alignment {
+        fn default() -> Self {
+            Self::Center
+        }
+    }
+
+    #[derive(Copy, Clone, Default, PartialEq)]
+    pub struct AlignedFrame {
+        pub w: ScreenUnit,
+        pub h: ScreenUnit,
+        pub align: Alignment
+    }
+
+    impl AlignedFrame {
+        pub fn full_rect(self) -> Rect {
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: self.w,
+                h: self.h,
+            }
+        }
+    }
 }

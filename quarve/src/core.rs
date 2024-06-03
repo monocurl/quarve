@@ -2,12 +2,11 @@ use std::cell::OnceCell;
 use std::sync::{OnceLock};
 use std::sync::mpsc::SyncSender;
 use std::time::{Duration, Instant};
-use crate::core::application::ApplicationBase;
 
 static TIMER_WORKER: OnceLock<SyncSender<(Box<dyn for<'a> FnMut(Duration, Slock<'a>) -> bool + Send>, Instant)>> = OnceLock::new();
 
 thread_local! {
-    pub(crate) static APP: OnceCell<Box<dyn ApplicationBase>> = OnceCell::new();
+    pub(crate) static APP: OnceCell<Application> = OnceCell::new();
 }
 
 mod debug_stats {
@@ -39,9 +38,11 @@ mod debug_stats {
     impl Drop for DebugInfo {
         fn drop(&mut self) {
             let hang =  Instant::now().duration_since(self.start_time);
-            if hang > Duration::from_millis(200) {
+            if hang > Duration::from_millis(500) {
                 println!("quarve: state locked attained for {} milliseconds. \
-            This may cause visible stalls; please try to release the state lock as soon as the transaction is complete.", hang.as_millis());
+                    This may cause visible stalls; \
+                    please try to release the state lock as soon as the transaction is complete.",
+                         hang.as_millis());
             }
         }
     }
@@ -76,7 +77,7 @@ mod life_cycle {
 
             if !subscribers.is_empty() {
                 let s = slock_owner();
-                subscribers.retain_mut(|(f, start) | f(start_time.duration_since(*start), s.borrow()));
+                subscribers.retain_mut(|(f, start) | f(start_time.duration_since(*start), s.marker()));
             }
 
             if subscribers.is_empty() {
@@ -115,105 +116,79 @@ pub(crate) use life_cycle::*;
 
 mod application {
     use std::cell::RefCell;
-    use crate::core::{MSlock, Slock, slock_main_owner};
+    use std::sync::Arc;
+    use crate::core::{MSlock, slock_main_owner};
     use crate::core::life_cycle::setup_timing_thread;
     use crate::core::window::{Window, WindowBase, WindowProvider};
     use crate::native;
-    use crate::util::markers::MainThreadMarker;
+    use crate::state::slock_cell::SlockCell;
 
-    pub trait ChannelProvider: 'static { }
-
-    pub trait ApplicationProvider: Sized + 'static {
-        type ApplicationChannels: ChannelProvider;
-
-        /// Guaranteed to only be called on the main thread
-        fn channels(&self) -> Self::ApplicationChannels;
-
-        fn will_spawn(&self, app: AppHandle<Self>, s: MSlock<'_>);
+    pub trait EnvironmentProvider: 'static {
+        fn root_environment() -> Self;
     }
 
-    pub(crate) trait ApplicationBase {
-        /* delegate methods (main thread only!) */
-        fn run(&self);
-
-        fn will_spawn(&self);
+    pub trait ApplicationProvider: 'static {
+        fn will_spawn(&self, app: &Application, s: MSlock<'_>);
     }
 
-    pub(super) struct Application<P: ApplicationProvider> {
-        provider: P,
-        channels: P::ApplicationChannels,
-        pub(super) windows: RefCell<Vec<Box<dyn WindowBase>>>
+    pub struct Application {
+        provider: Box<dyn ApplicationProvider>,
+        pub(super) windows: RefCell<Vec<Arc<SlockCell<dyn WindowBase>>>>
     }
 
-    pub struct AppHandle<P: ApplicationProvider> {
-        handle: &'static Application<P>
-    }
-
-    impl<A: ApplicationProvider> ApplicationBase for Application<A> {
-        fn run(&self) {
-            setup_timing_thread();
-
-            /* run app */
-            native::main_loop();
-        }
-
-        fn will_spawn(&self) {
-            let slock = slock_main_owner();
-
-            self.provider.will_spawn(self.handle(), slock.borrow());
-        }
-    }
-
-    impl<P: ApplicationProvider> Application<P> {
-        pub(crate) fn new(provider: P) -> Self {
-            let channels = provider.channels();
+    impl Application {
+        pub(crate) fn new(provider: impl ApplicationProvider) -> Self {
             Application {
-                provider,
-                channels,
+                provider: Box::new(provider),
                 windows: RefCell::new(Vec::new())
             }
         }
 
-        #[inline]
-        fn handle(&self) -> AppHandle<P> {
-            // safety: the one and only application reference
-            // is static
-            AppHandle {
-                handle: unsafe {
-                    std::mem::transmute(self)
-                }
-            }
-        }
-    }
+        pub(crate) fn run(&self) {
+            setup_timing_thread();
 
-    impl<P: ApplicationProvider> AppHandle<P> {
-        pub fn spawn_window<W: WindowProvider>(&self, provider: W, _s: &Slock<MainThreadMarker>) {
-            let window = Window::new(self.handle, provider);
-            self.handle.windows.borrow_mut().push(window);
+            /* run app */
+            native::global::main_loop();
         }
 
-        pub fn exit(&self, _s: &Slock<MainThreadMarker>) {
-            native::exit();
+        pub(crate) fn will_spawn(&self) {
+            let slock = slock_main_owner();
+
+            self.provider.will_spawn(self, slock.marker());
+        }
+
+        pub fn spawn_window<W>(&self, provider: W, s: MSlock<'_>) where W: WindowProvider {
+            self.windows.borrow_mut().push(Window::new(provider, s));
+        }
+
+        #[cold]
+        pub fn exit(&self, _s: MSlock<'_>) {
+            native::global::exit();
         }
     }
 }
 pub use application::*;
 
 mod window {
-    use std::marker::PhantomData;
-    use crate::core::{MSlock, Slock};
-    use crate::core::application::{Application, ApplicationProvider};
-    use crate::native::{exit_window, register_window, WindowHandle};
-    use crate::util::markers::MainThreadMarker;
+    use std::cell::RefMut;
+    use std::ops::{Deref};
+    use std::sync::{Arc, Weak};
+    use crate::core::{APP, EnvironmentProvider, MSlock, run_main_async, run_main_maybe_sync, Slock};
+    use crate::native;
+    use crate::native::{WindowHandle};
+    use crate::state::{Signal};
+    use crate::state::slock_cell::SlockCell;
+    use crate::view::{InnerViewBase, View, ViewProvider};
 
     pub trait WindowProvider: 'static {
-        fn title(&self, s: MSlock<'_>);
+        type Environment: EnvironmentProvider;
+
+        fn title(&self, s: MSlock<'_>) -> impl Signal<String>;
 
         fn style(&self, s: MSlock<'_>);
 
-        fn menu_bar(&self, s: MSlock<'_>);
-
-        fn tree(&self, s: MSlock<'_>);
+        fn tree(&self, s: MSlock<'_>)
+            -> View<Self::Environment, impl ViewProvider<Self::Environment, LayoutContext=()>>;
 
         fn can_close(&self, _s: MSlock<'_>) -> bool {
             true
@@ -224,58 +199,209 @@ mod window {
         /* delegate methods */
         fn can_close(&self, s: MSlock<'_>) -> bool;
 
-        fn set_handle(&mut self, handle: WindowHandle);
-
         fn get_handle(&self) -> WindowHandle;
+
+        fn layout(&self, s: MSlock);
     }
 
-    pub struct Window<A: ApplicationProvider, P: WindowProvider> {
-        app: &'static Application<A>,
-        marker: PhantomData<A>,
+    pub(crate) trait WindowEnvironmentBase<E>: WindowBase where E: EnvironmentProvider {
+        // this method is guaranteed to only touch
+        // Send parts of self
+        fn invalidate_view(&mut self, view: Weak<SlockCell<dyn InnerViewBase<E>>>, s: Slock);
+
+        // must be paired with unset environment
+        // also note that stack has children at beginning
+        // and root at the end
+        fn set_environment(&mut self, stack: &[Arc<SlockCell<dyn InnerViewBase<E>>>], s: MSlock) -> &mut E;
+        fn unset_environment(&mut self, stack: &[Arc<SlockCell<dyn InnerViewBase<E>>>], s: MSlock);
+    }
+
+    pub struct Window<P> where P: WindowProvider {
         provider: P,
-        handle: WindowHandle
+
+        // to prevent reentry
+        // it is common to take out the environment
+        // and put it back in
+        environment: Option<P::Environment>,
+        invalidated_views: Vec<Weak<SlockCell<dyn InnerViewBase<P::Environment>>>>,
+
+        /* native */
+        handle: WindowHandle,
+        content_view: Arc<SlockCell<dyn InnerViewBase<P::Environment>>>
     }
 
-    impl<A: ApplicationProvider, P: WindowProvider> Window<A, P> {
-        pub(super) fn new(app: &'static Application<A>, provider: P) -> Box<dyn WindowBase> {
+    impl<P> Window<P> where P: WindowProvider {
+        // order things are done is a bit awkward
+        // but need to coordinate between many things
+        pub(super) fn new(provider: P, s: MSlock<'_>) -> Arc<SlockCell<dyn WindowBase>> {
+            let handle = native::window::window_init(s);
+            let content_view = provider.tree(s).0;
+
             let window = Window {
-                app,
-                marker: PhantomData,
                 provider,
-                handle: 0
+                environment: Some(P::Environment::root_environment()),
+                invalidated_views: Vec::new(),
+                handle,
+                content_view
             };
 
-            let mut b: Box<dyn WindowBase> = Box::new(window);
-            /* show window */
-            b.set_handle(register_window::<A, P>(&b));
+            let b = Arc::new(SlockCell::new_main(window, s));
+            // create initial tree
+            Window::init(&b, s);
+
+            // set handle of backing
+            {
+                let borrow = b.borrow_main(s);
+                native::window::window_set_handle(handle, borrow.deref() as &dyn WindowBase, s);
+            }
 
             b
         }
+
+        fn init(this: &Arc<SlockCell<Self>>, s: MSlock) {
+            let mut borrow_mut = this.borrow_mut_main(s);
+
+            /* apply style */
+            Self::apply_window_style(s, &mut borrow_mut);
+
+            /* apply window title  */
+            Self::title_listener(&this, &mut borrow_mut, s);
+
+            /* mount content view */
+            Self::mount_content_view(&this, s, borrow_mut);
+        }
+
+        // logic is a bit tricky for initial mounting
+        // due to reentry
+        fn mount_content_view(this: &Arc<SlockCell<Window<P>>>, s: MSlock, mut borrow_mut: RefMut<Window<P>>) {
+            let handle = borrow_mut.handle;
+            let weak_content = Arc::downgrade(&borrow_mut.content_view);
+            let weak_window = Arc::downgrade(this)
+                as Weak<SlockCell<dyn WindowEnvironmentBase<P::Environment>>>;
+
+            let mut stolen_env = borrow_mut.environment.take().unwrap();
+            let content_copy = borrow_mut.content_view.clone();
+            // avoid reentry with invalidation
+            drop(borrow_mut);
+
+            let mut content_borrow = content_copy.borrow_mut_main(s);
+            content_borrow.show(weak_content, &weak_window, &mut stolen_env, 0u32, s);
+
+            // give back env
+            this.borrow_mut_main(s).environment = Some(stolen_env);
+
+            debug_assert!(content_borrow.backing() as usize != 0);
+
+            native::window::window_set_root(handle, content_borrow.backing(), s);
+        }
+
+        fn apply_window_style(s: MSlock, borrow_mut: &mut RefMut<Window<P>>) {
+            let _style = borrow_mut.provider.style(s);
+        }
+
+        fn title_listener(this: &Arc<SlockCell<Window<P>>>, borrow_mut: &mut RefMut<Window<P>>, s: MSlock) {
+            let title = borrow_mut.provider.title(s);
+            let weak = Arc::downgrade(&this);
+            title.listen(move |val, _s| {
+                let Some(this) = weak.upgrade() else {
+                    return false;
+                };
+
+                let title_copy = val.to_owned();
+                run_main_async(move |s| {
+                    let borrow = this.borrow_main(s);
+                    native::window::window_set_title(borrow.handle, &title_copy, s);
+                });
+
+                true
+            }, s);
+
+            let current = title.borrow(s).to_owned();
+            native::window::window_set_title(borrow_mut.handle, &current, s);
+        }
+
+        #[cold]
+        pub fn exit(&self, s: MSlock<'_>) {
+            /* remove from application window list */
+            APP.with(|app| {
+                app.get().unwrap()
+                    .windows
+                    .borrow_mut()
+                    .retain(|window| window.borrow_main(s).get_handle() != self.handle);
+            });
+
+            native::window::window_exit(self.handle, s);
+        }
     }
 
-    impl<A: ApplicationProvider, P: WindowProvider> WindowBase for Window<A, P> {
+    impl<P> WindowBase for Window<P> where P: WindowProvider {
+        #[inline]
         fn can_close(&self, s: MSlock<'_>) -> bool {
-            self.provider.can_close(s)
+            let can_close = self.provider.can_close(s);
+
+            if can_close {
+                APP.with(|app| {
+                    app.get().unwrap()
+                        .windows
+                        .borrow_mut()
+                        .retain(|window| window.borrow_main(s).get_handle() != self.handle);
+                });
+            }
+
+            can_close
         }
 
-        fn set_handle(&mut self, handle: WindowHandle) {
-            self.handle = handle
-        }
-
+        #[inline]
         fn get_handle(&self) -> WindowHandle {
             self.handle
         }
+
+        fn layout(&self, _s: MSlock) {
+            // todo
+            // todo!()
+            println!("Layout Called");
+
+        }
     }
 
-    impl<A: ApplicationProvider, P: WindowProvider> Window<A, P> {
-        pub fn exit(&self, _s: &Slock<MainThreadMarker>) {
-            /* remove from application window list */
-            self.app.windows
-                .borrow_mut()
-                .retain(|window| window.get_handle() == self.handle);
+    impl<P> WindowEnvironmentBase<P::Environment> for Window<P> where P: WindowProvider {
+        fn invalidate_view(&mut self, view: Weak<SlockCell<dyn InnerViewBase<P::Environment>>>, s: Slock) {
+            // note that we're only touching send parts of self
+            if self.invalidated_views.is_empty() {
+                // schedule a layout
+                let handle = self.handle;
+                run_main_maybe_sync(move |m| {
+                    native::window::window_set_needs_layout(handle, m);
+                }, s);
+            }
 
-            // main thread guaranteed
-            exit_window(self.handle)
+            self.invalidated_views.push(view)
+        }
+
+        fn set_environment(&mut self, stack: &[Arc<SlockCell<dyn InnerViewBase<P::Environment>>>], s: MSlock) -> &mut P::Environment {
+            let env = self.environment.as_mut().unwrap();
+
+            // push environment
+            for modifier in stack {
+                modifier.borrow_main(s)
+                    .push_environment(env, s);
+            }
+
+            env
+        }
+
+        fn unset_environment(&mut self, stack: &[Arc<SlockCell<dyn InnerViewBase<P::Environment>>>], s: MSlock) {
+            let env = self.environment.as_mut().unwrap();
+            for modifier in stack.iter().rev() {
+                modifier.borrow_main(s)
+                    .pop_environment(env, s);
+            }
+        }
+    }
+
+    impl<P> Drop for Window<P> where P: WindowProvider {
+        fn drop(&mut self) {
+            native::window::window_free(self.handle);
         }
     }
 }
@@ -293,13 +419,14 @@ mod slock {
     use crate::state::{ActionFilter, Binding, CapacitatedSignal, FixedSignal, IntoAction, JoinedSignal, Signal, Stateful};
     use crate::state::capacitor::IncreasingCapacitor;
     use crate::util::markers::{AnyThreadMarker, MainThreadMarker, ThreadMarker};
+    use crate::util::rust_util::PhantomUnsendUnsync;
 
     static GLOBAL_STATE_LOCK: Mutex<()> = Mutex::new(());
 
     pub struct SlockOwner<M=AnyThreadMarker> where M: ThreadMarker {
         _guard: MutexGuard<'static, ()>,
         pub(crate) debug_info: DebugInfo,
-        unsync_unsend: PhantomData<*const ()>,
+        unsend_unsync: PhantomUnsendUnsync,
         thread_marker: PhantomData<M>,
     }
 
@@ -307,20 +434,20 @@ mod slock {
     #[derive(Copy, Clone)]
     pub struct Slock<'a, M=AnyThreadMarker> where M: ThreadMarker {
         pub(crate) owner: &'a SlockOwner<M>,
-        // unnecessary? but too emphasize
-        unsync_unsend: PhantomData<*const ()>,
+        // unnecessary? but to emphasize
+        unsend_unsync: PhantomUnsendUnsync,
     }
 
     #[cfg(not(debug_assertions))]
     #[derive(Copy, Clone)]
     pub struct Slock<'a, M=AnyThreadMarker> where M: ThreadMarker {
         owner: PhantomData<&'a SlockOwner<M>>,
-        unsync_unsend: PhantomData<*const ()>,
+        unsend_unsync: PhantomUnsendUnsync,
     }
 
     pub type MSlock<'a> = Slock<'a, MainThreadMarker>;
 
-
+    #[inline]
     fn global_guard() -> MutexGuard<'static, ()> {
         static LOCKED_THREAD: Mutex<Option<thread::ThreadId>> = Mutex::new(None);
 
@@ -332,7 +459,7 @@ mod slock {
             } else {
                 if *LOCKED_THREAD.lock().unwrap() == Some(thread::current().id()) {
                     panic!("Attempted to acquire state lock when the current thread already has the state lock. \
-                        Instead of acquiring the slock multiple times, either call find_slock() or pass around the Slock by reference.                        \
+                        Instead of acquiring the slock multiple times, pass around the Slock marker. \
                         In production, instead of a panic, this will result in a deadlock! \
                        "
                     )
@@ -352,7 +479,7 @@ mod slock {
     }
 
     /// The State Lock (often abbreviated 'slock') is a simple
-    /// but important concept in quarve. It essentially acts as a global
+    /// but important concept in quarve. It acts as a global
     /// mutex and whichever thread owns the slock is the only thread
     /// that is able to perform many operations on the state graph, views,
     /// and other core constructs.
@@ -367,37 +494,41 @@ mod slock {
     /// as soon as you are done with the current transaction.
     /// However, do not feel the need to drop it and reacquire after every micro-operation;
     /// this may cause the user to view the result of a partially applied transaction.
+    #[inline]
     pub fn slock_owner() -> SlockOwner {
         SlockOwner {
             _guard: global_guard(),
             debug_info: DebugInfo::new(),
-            unsync_unsend: PhantomData,
+            unsend_unsync: PhantomData,
             thread_marker: PhantomData
         }
     }
 
+    #[inline]
     pub fn slock_main_owner() -> SlockOwner<MainThreadMarker> {
-        if !native::is_main() {
+        if !native::global::is_main() {
             panic!("Cannot call slock_main")
         }
 
         SlockOwner {
             _guard: global_guard(),
             debug_info: DebugInfo::new(),
-            unsync_unsend: PhantomData,
+            unsend_unsync: PhantomData,
             thread_marker: PhantomData,
         }
     }
 
     impl<M: ThreadMarker> SlockOwner<M> {
         // note that the global state lock is kept for entire
-        // lifetime of slockowner; borrowing does not acquire the state lock
-        pub fn borrow(&self) -> Slock<'_, M> {
+        // lifetime of slockowner; calling marker does not acquire the state lock
+        // and dropping the marker does not relenquish it
+        #[inline]
+        pub fn marker(&self) -> Slock<'_, M> {
             #[cfg(debug_assertions)]
             {
                 Slock {
                     owner: &self,
-                    unsync_unsend: PhantomData
+                    unsend_unsync: PhantomData,
                 }
             }
 
@@ -405,7 +536,7 @@ mod slock {
             {
                 Slock {
                     owner: PhantomData,
-                    unsync_unsend: PhantomData
+                    unsend_unsync: PhantomData,
                 }
             }
         }
@@ -466,7 +597,7 @@ mod slock {
         }
 
         pub fn try_as_main_slock(self) -> Option<MSlock<'a>> {
-            if !native::is_main() {
+            if !native::global::is_main() {
                 None
             }
             else {
@@ -516,18 +647,38 @@ mod global {
 
 
     /// Must be called from the main thread in the main function
+    #[cold]
     pub fn launch(provider: impl ApplicationProvider) {
-        if let Err(_) = APP.with(|m| m.set(Box::new(Application::new(provider)))) {
+        if let Err(_) = APP.with(|m| m.set(Application::new(provider))) {
             panic!("Cannot launch an app multiple times");
         }
 
         APP.with(|m| m.get().unwrap().run());
     }
 
+    /// If the current thread is main, it executes
+    /// the function directly. Otherwise,
+    /// the behavior is identical to run_main_async
+    pub fn run_main_maybe_sync<F>(f: F, s: Slock) where F: for<'a> FnOnce(MSlock<'a>) + Send + 'static {
+        if let Some(main) = s.try_as_main_slock() {
+            f(main);
+        }
+        else {
+            native::global::run_main(f)
+        }
+    }
+
     /// Asynchronously runs a task on the main thread
     /// This method can be called from any thread (including) the main one
-    pub fn run_main<F>(f: F) where F: for<'a> FnOnce(MSlock<'a>) + Send + 'static {
-        native::run_main(f)
+    pub fn run_main_async<F>(f: F) where F: for<'a> FnOnce(MSlock<'a>) + Send + 'static {
+        native::global::run_main(f)
+    }
+
+    /// Must be called only after initial application launch was called
+    pub fn with_app(f: impl FnOnce(&Application), _s: MSlock<'_>) {
+        APP.with(|app| {
+            f(app.get().expect("With app should only be called after the application has fully launched"))
+        })
     }
 }
 pub use global::*;

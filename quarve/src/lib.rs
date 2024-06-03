@@ -4,6 +4,8 @@ pub mod channel;
 pub mod view;
 pub mod util;
 pub mod core;
+
+/* private */
 mod native;
 
 // pub mod prelude {

@@ -1,65 +1,39 @@
-use quarve;
-use quarve::prelude::*;
+use quarve::core::{Application, EnvironmentProvider, launch, MSlock};
+use quarve::state::Signal;
+use quarve::view::{Empty, View, ViewProvider};
 
-struct Channels {
+struct Env;
 
-}
+struct ApplicationProvider;
 
-impl ChannelProvider for Channels {
+struct WindowProvider;
 
-}
-
-struct ApplicationProvider {
-
-}
-
-struct WindowProvider {
-
-}
-
-impl quarve::prelude::ApplicationProvider for ApplicationProvider {
-    type ApplicationChannels = Channels;
-
-    fn channels(&self) -> Self::ApplicationChannels {
-        Channels {
-
-
-    }
-
-    fn will_spawn(&self, app: AppHandle<Self>, s: &Slock<MainThreadMarker>) {
-        app.spawn_window(WindowProvider {
-
-        }, s);
+impl EnvironmentProvider for Env {
+    fn root_environment() -> Self {
+        Env
     }
 }
 
-impl quarve::prelude::WindowProvider for WindowProvider {
-    type WindowChannels = Channels;
+impl quarve::core::ApplicationProvider for ApplicationProvider {
+    fn will_spawn(&self, app: &Application, s: MSlock<'_>) {
+        app.spawn_window(WindowProvider, s);
+    }
+}
 
-    fn channels(&self) -> Self::WindowChannels {
-        Channels {
+impl quarve::core::WindowProvider for WindowProvider {
+    type Environment = Env;
 
-        }
+    fn title(&self, s: MSlock<'_>) -> impl Signal<String> {
+        s.clock_signal()
+            .map(|time| format!("Time {}", time), s)
     }
 
-    fn title(&self, s: &Slock<MainThreadMarker>) {
-        todo!()
+    fn style(&self, _s: MSlock<'_>) {
+
     }
 
-    fn style(&self, s: &Slock<MainThreadMarker>) {
-        todo!()
-    }
-
-    fn menu_bar(&self, s: &Slock<MainThreadMarker>) {
-        todo!()
-    }
-
-    fn tree(&self, s: &Slock<MainThreadMarker>) {
-        todo!()
-    }
-
-    fn can_close(&self, s: &Slock<MainThreadMarker>) -> bool {
-        true
+    fn tree(&self, s: MSlock<'_>) -> View<Env, impl ViewProvider<Env, LayoutContext=()>> {
+        ViewProvider::make_view(Empty, s)
     }
 }
 
