@@ -102,13 +102,14 @@ unsafe impl<E: Environment, S: Signal<f32>> ViewProvider<E> for Layout<E, S> {
             y: 0.0
         }, env, s);
 
+        println!("Pos {:?}", *pos);
         self.1.layout_down(AlignedFrame {
             w: 100.0,
             h: 100.0,
             align: Default::default(),
         }, Point {
             x: 20.0 * *pos,
-            y: 0.0
+            y: 100.0
         }, env, s);
 
         frame.full_rect()

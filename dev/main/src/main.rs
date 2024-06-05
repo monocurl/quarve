@@ -1,6 +1,7 @@
 use quarve::core::{Application, Environment, launch, MSlock, timed_worker};
 use quarve::state::{Bindable, Binding, FixedSignal, NumericAction, Signal, Store, WithCapacitor};
 use quarve::state::capacitor::{ConstantSpeedCapacitor, SmoothCapacitor};
+use quarve::state::SetAction::Set;
 use quarve::view::{View, ViewProvider};
 use quarve::view::layout::{DebugView, Layout};
 
@@ -47,14 +48,14 @@ impl quarve::core::WindowProvider for WindowProvider {
             }, s);
 
         let store = Store::new(0.0);
-        let signal = store.signal();
-        let capacitated = store.with_capacitor(ConstantSpeedCapacitor::new(1.0), s);
+        let capacitated =
+            store.with_capacitor(SmoothCapacitor::ease_in_out(1.5), s);
 
         let mut counter = 0;
         timed_worker(move |d, s| {
             if (d.as_secs_f64() > counter as f64) {
                 counter += 1;
-                store.apply(NumericAction::Incr(1.0), s);
+                store.apply(Set(counter as f32 % 2.0), s);
             }
             true
         });

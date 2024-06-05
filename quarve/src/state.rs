@@ -845,7 +845,6 @@ pub mod coupler {
 
 pub mod capacitor {
     use std::collections::VecDeque;
-    use std::fmt::Debug;
     use std::ops::{Add, Sub};
     use std::time::Duration;
     use crate::state::Stateful;
@@ -1049,6 +1048,7 @@ pub mod capacitor {
 
     }
     // otherwise it's ambiguous implementation
+    // so just need to fix the F to something
     impl<T> SmoothCapacitor<T, fn(f64) -> f64>
         where T: Stateful + Lerp + Copy + Add<Output=T> + Sub<Output=T>,
     {
@@ -1066,7 +1066,7 @@ pub mod capacitor {
     }
 
     impl<T, F> Capacitor for SmoothCapacitor<T, F>
-        where T: Debug + Stateful + Lerp + Copy + Add<Output=T> + Sub<Output=T>,
+        where T: Stateful + Lerp + Copy + Add<Output=T> + Sub<Output=T>,
               F: Fn(f64) -> f64 + Send + 'static
     {
         type Target = T;
@@ -1088,7 +1088,6 @@ pub mod capacitor {
                 self.points.pop_front();
             }
 
-            let cont = self.points.back().unwrap().0 + self.trans_time >= time;
             let mut val = self.points[0].1;
             for i in 0 .. self.points.len() - 1 {
                 let diff = self.points[i + 1].1 - self.points[i].1;
@@ -1097,6 +1096,13 @@ pub mod capacitor {
                 val = T::lerp(val, alpha, val + diff)
             }
 
+            let cont = self.points.back().unwrap().0 + self.trans_time >= time;
+            if !cont {
+                // clear all of previous span
+                while self.points.len() > 1 {
+                    self.points.pop_front();
+                }
+            }
             (val, cont)
         }
     }
