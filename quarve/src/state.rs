@@ -53,11 +53,11 @@ pub mod slock_cell {
             self.0.borrow_mut()
         }
 
-        pub unsafe fn as_ptr(&self) -> *const T {
+        pub fn as_ptr(&self) -> *const T {
             self.0.as_ptr()
         }
 
-        pub unsafe fn as_mut_ptr(&self) -> *mut T {
+        pub fn as_mut_ptr(&self) -> *mut T {
             self.0.as_ptr()
         }
     }
@@ -2698,9 +2698,6 @@ mod signal {
                 // it's important that this is subtracted at a time
                 // strictly before the ARC strong counter
                 // so that we do not falsely free early
-
-                // safety: performed on atomic value
-                // todo this is unsafe!
                 self.0.0.fetch_sub(1, SeqCst);
             }
         }

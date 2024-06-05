@@ -179,12 +179,20 @@ pub mod view {
     use crate::util::geo::Rect;
 
     extern "C" {
+        fn debug_back_view_init() -> *mut c_void;
+
         fn back_view_layout_init() -> *mut c_void;
         fn back_view_clear_children(view: *mut c_void);
         fn back_view_remove_child(view: *mut c_void, index: std::ffi::c_ulonglong);
         fn back_view_insert_child(view: *mut c_void, subview: *mut c_void, index: std::ffi::c_ulonglong);
         fn back_view_set_frame(view: *mut c_void, left: f64, top: f64, width: f64, height: f64);
         fn back_free_view(view: *mut c_void);
+    }
+
+    pub fn debug_view_init(_s: MSlock) -> *mut c_void {
+        unsafe {
+            debug_back_view_init()
+        }
     }
 
     pub fn init_layout_view(_s: MSlock) -> *mut c_void {

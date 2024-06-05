@@ -65,7 +65,6 @@ extern void front_execute_box(fat_pointer box);
 @end
 
 /* global methods */
-
 void
 back_main_loop() {
     @autoreleasepool {
@@ -145,6 +144,12 @@ back_window_free(void *_window) {
 }
 
 /* view methods */
+void *
+debug_back_view_init() {
+    NSText* t = [[NSText alloc] initWithFrame:NSMakeRect(0,0,100,100)];
+    [t setString:@"test"];
+    return t;
+}
 
 void *
 back_view_layout_init() {

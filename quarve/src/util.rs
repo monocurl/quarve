@@ -341,7 +341,7 @@ pub mod markers {
 pub mod geo {
     pub type ScreenUnit = f32;
 
-    #[derive(Copy, Clone, Default)]
+    #[derive(Copy, Clone, Default, Debug)]
     pub struct Rect {
         pub x: ScreenUnit,
         pub y: ScreenUnit,
@@ -349,20 +349,30 @@ pub mod geo {
         pub h: ScreenUnit,
     }
 
+    impl Rect {
+        pub fn translate(self, by: Point) -> Rect {
+            Rect {
+                x: self.x + by.x,
+                y: self.y + by.y,
+                w: self.w,
+                h: self.h,
+            }
+        }
+    }
 
-    #[derive(Copy, Clone, Default)]
+    #[derive(Copy, Clone, Default, Debug)]
     pub struct Point {
         pub x: ScreenUnit,
         pub y: ScreenUnit,
     }
 
-    #[derive(Copy, Clone, Default)]
+    #[derive(Copy, Clone, Default, Debug)]
     pub struct Size {
         pub w: ScreenUnit,
         pub h: ScreenUnit,
     }
 
-    #[derive(Copy, Clone, PartialEq, Eq)]
+    #[derive(Copy, Clone, PartialEq, Eq, Debug)]
     pub enum Alignment {
         TopLeading,
         Top,
@@ -381,7 +391,7 @@ pub mod geo {
         }
     }
 
-    #[derive(Copy, Clone, Default, PartialEq)]
+    #[derive(Copy, Clone, Default, PartialEq, Debug)]
     pub struct AlignedFrame {
         pub w: ScreenUnit,
         pub h: ScreenUnit,

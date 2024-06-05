@@ -123,7 +123,7 @@ mod application {
     use crate::native;
     use crate::state::slock_cell::SlockCell;
 
-    pub trait EnvironmentProvider: 'static {
+    pub trait Environment: 'static {
         fn root_environment() -> Self;
     }
 
@@ -170,10 +170,12 @@ mod application {
 pub use application::*;
 
 mod window {
-    use std::cell::RefMut;
-    use std::ops::{Deref};
+    use std::cell::{Cell, RefCell};
+    use std::cmp::Ordering;
+    use std::collections::BinaryHeap;
+    use std::ops::{Deref, DerefMut};
     use std::sync::{Arc, Weak};
-    use crate::core::{APP, EnvironmentProvider, MSlock, run_main_async, run_main_maybe_sync, Slock};
+    use crate::core::{APP, Environment, MSlock, run_main_async, run_main_maybe_sync, Slock};
     use crate::native;
     use crate::native::{WindowHandle};
     use crate::state::{Signal};
@@ -181,14 +183,14 @@ mod window {
     use crate::view::{InnerViewBase, View, ViewProvider};
 
     pub trait WindowProvider: 'static {
-        type Environment: EnvironmentProvider;
+        type Env: Environment;
 
         fn title(&self, s: MSlock<'_>) -> impl Signal<String>;
 
         fn style(&self, s: MSlock<'_>);
 
         fn tree(&self, s: MSlock<'_>)
-            -> View<Self::Environment, impl ViewProvider<Self::Environment, LayoutContext=()>>;
+            -> View<Self::Env, impl ViewProvider<Self::Env, LayoutContext=()>>;
 
         fn can_close(&self, _s: MSlock<'_>) -> bool {
             true
@@ -204,16 +206,42 @@ mod window {
         fn layout(&self, s: MSlock);
     }
 
-    pub(crate) trait WindowEnvironmentBase<E>: WindowBase where E: EnvironmentProvider {
+    pub(crate) trait WindowEnvironmentBase<E>: WindowBase where E: Environment {
         // this method is guaranteed to only touch
         // Send parts of self
-        fn invalidate_view(&mut self, view: Weak<SlockCell<dyn InnerViewBase<E>>>, s: Slock);
+        // handle is because of some async operations
+        fn invalidate_view(&self, handle: Weak<SlockCell<dyn WindowEnvironmentBase<E>>>, view: Weak<SlockCell<dyn InnerViewBase<E>>>, depth: u32, s: Slock);
+    }
 
-        // must be paired with unset environment
-        // also note that stack has children at beginning
-        // and root at the end
-        fn set_environment(&mut self, stack: &[Arc<SlockCell<dyn InnerViewBase<E>>>], s: MSlock) -> &mut E;
-        fn unset_environment(&mut self, stack: &[Arc<SlockCell<dyn InnerViewBase<E>>>], s: MSlock);
+    struct InvalidatedEntry<E> where E: Environment {
+        view: Weak<SlockCell<dyn InnerViewBase<E>>>,
+        // use negative depth to flip ordering
+        depth: i32
+    }
+
+    impl<E> PartialEq<Self> for InvalidatedEntry<E> where E: Environment {
+        fn eq(&self, other: &Self) -> bool {
+            self.depth == other.depth && std::ptr::addr_eq(self.view.as_ptr(), other.view.as_ptr())
+        }
+    }
+
+    impl<E> Eq for InvalidatedEntry<E> where E: Environment { }
+
+    impl<E> PartialOrd for InvalidatedEntry<E> where E: Environment {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+
+    impl<E> Ord for InvalidatedEntry<E> where E: Environment {
+        fn cmp(&self, other: &Self) -> Ordering {
+            if self.depth != other.depth {
+                self.depth.cmp(&other.depth)
+            }
+            else {
+                self.view.as_ptr().cmp(&other.view.as_ptr())
+            }
+        }
     }
 
     pub struct Window<P> where P: WindowProvider {
@@ -222,12 +250,14 @@ mod window {
         // to prevent reentry
         // it is common to take out the environment
         // and put it back in
-        environment: Option<P::Environment>,
-        invalidated_views: Vec<Weak<SlockCell<dyn InnerViewBase<P::Environment>>>>,
+        environment: Cell<Option<Box<P::Env>>>,
+        // avoid having to borrow window mutably
+        // when invalidating
+        invalidated_views: RefCell<BinaryHeap<InvalidatedEntry<P::Env>>>,
 
         /* native */
         handle: WindowHandle,
-        content_view: Arc<SlockCell<dyn InnerViewBase<P::Environment>>>
+        content_view: Arc<SlockCell<dyn InnerViewBase<P::Env>>>
     }
 
     impl<P> Window<P> where P: WindowProvider {
@@ -239,8 +269,8 @@ mod window {
 
             let window = Window {
                 provider,
-                environment: Some(P::Environment::root_environment()),
-                invalidated_views: Vec::new(),
+                environment: Cell::new(Some(Box::new(P::Env::root_environment()))),
+                invalidated_views: RefCell::new(BinaryHeap::new()),
                 handle,
                 content_view
             };
@@ -259,48 +289,46 @@ mod window {
         }
 
         fn init(this: &Arc<SlockCell<Self>>, s: MSlock) {
-            let mut borrow_mut = this.borrow_mut_main(s);
+            let borrow = this.borrow_main(s);
 
             /* apply style */
-            Self::apply_window_style(s, &mut borrow_mut);
+            Self::apply_window_style(s, borrow.deref());
 
             /* apply window title  */
-            Self::title_listener(&this, &mut borrow_mut, s);
+            Self::title_listener(&this, borrow.deref(), s);
 
             /* mount content view */
-            Self::mount_content_view(&this, s, borrow_mut);
+            Self::mount_content_view(&this, s, borrow.deref());
         }
 
         // logic is a bit tricky for initial mounting
         // due to reentry
-        fn mount_content_view(this: &Arc<SlockCell<Window<P>>>, s: MSlock, mut borrow_mut: RefMut<Window<P>>) {
-            let handle = borrow_mut.handle;
-            let weak_content = Arc::downgrade(&borrow_mut.content_view);
+        fn mount_content_view(this: &Arc<SlockCell<Window<P>>>, s: MSlock, borrow: &Window<P>) {
+            let handle = borrow.handle;
+            let weak_content = Arc::downgrade(&borrow.content_view);
             let weak_window = Arc::downgrade(this)
-                as Weak<SlockCell<dyn WindowEnvironmentBase<P::Environment>>>;
+                as Weak<SlockCell<dyn WindowEnvironmentBase<P::Env>>>;
 
-            let mut stolen_env = borrow_mut.environment.take().unwrap();
-            let content_copy = borrow_mut.content_view.clone();
-            // avoid reentry with invalidation
-            drop(borrow_mut);
+            let mut stolen_env = borrow.environment.take().unwrap();
+            let content_copy = borrow.content_view.clone();
 
             let mut content_borrow = content_copy.borrow_mut_main(s);
-            content_borrow.show(weak_content, &weak_window, &mut stolen_env, 0u32, s);
+            content_borrow.show(weak_content, &weak_window, stolen_env.deref_mut(), 0u32, s);
 
             // give back env
-            this.borrow_mut_main(s).environment = Some(stolen_env);
+            borrow.environment.set(Some(stolen_env));
 
-            debug_assert!(content_borrow.backing() as usize != 0);
+            debug_assert!(!content_borrow.backing().is_null());
 
             native::window::window_set_root(handle, content_borrow.backing(), s);
         }
 
-        fn apply_window_style(s: MSlock, borrow_mut: &mut RefMut<Window<P>>) {
-            let _style = borrow_mut.provider.style(s);
+        fn apply_window_style(s: MSlock, borrow: &Window<P>) {
+            let _style = borrow.provider.style(s);
         }
 
-        fn title_listener(this: &Arc<SlockCell<Window<P>>>, borrow_mut: &mut RefMut<Window<P>>, s: MSlock) {
-            let title = borrow_mut.provider.title(s);
+        fn title_listener(this: &Arc<SlockCell<Window<P>>>, borrow: &Window<P>, s: MSlock) {
+            let title = borrow.provider.title(s);
             let weak = Arc::downgrade(&this);
             title.listen(move |val, _s| {
                 let Some(this) = weak.upgrade() else {
@@ -317,7 +345,11 @@ mod window {
             }, s);
 
             let current = title.borrow(s).to_owned();
-            native::window::window_set_title(borrow_mut.handle, &current, s);
+            native::window::window_set_title(borrow.handle, &current, s);
+        }
+
+        fn walk_env(env: &mut P::Env, from: &Arc<SlockCell<dyn InnerViewBase<P::Env>>>, to: &Arc<SlockCell<dyn InnerViewBase<P::Env>>>) {
+
         }
 
         #[cold]
@@ -335,7 +367,6 @@ mod window {
     }
 
     impl<P> WindowBase for Window<P> where P: WindowProvider {
-        #[inline]
         fn can_close(&self, s: MSlock<'_>) -> bool {
             let can_close = self.provider.can_close(s);
 
@@ -351,51 +382,138 @@ mod window {
             can_close
         }
 
-        #[inline]
         fn get_handle(&self) -> WindowHandle {
             self.handle
         }
 
-        fn layout(&self, _s: MSlock) {
+        fn layout(&self, s: MSlock) {
             // todo
-            // todo!()
-            println!("Layout Called");
+            enum LayoutState {
+                Down,
+                Up,
+                Done
+            }
 
+            // layout down queue
+            // layout up queue is stored in self
+            // and may change by invalidations
+            let mut layout_down: BinaryHeap<InvalidatedEntry<P::Env>> = BinaryHeap::new();
+            let mut env = self.environment.take().unwrap();
+            // the environment is right above this node
+            let mut env_spot = self.content_view.clone();
+
+            loop {
+                /* decide what to do next */
+                let has_up = if !self.invalidated_views.borrow().is_empty() {
+                    true
+                }
+                else if !layout_down.is_empty() {
+                    false
+                }
+                else {
+                    break;
+                };
+
+                if has_up {
+                    let curr = self.invalidated_views
+                        .borrow_mut().pop().unwrap();
+
+                    let Some(view) = curr.view.upgrade() else {
+                        continue;
+                    };
+
+                    let mut borrow = view.borrow_mut_main(s);
+
+                    /* make sure it doesn't have a newer entry */
+                    if borrow.depth() as i32 != curr.depth || !borrow.needs_layout_up() {
+                        continue;
+                    }
+
+                    // move environment to target
+                    Self::walk_env(env.deref_mut(), &env_spot, &view);
+
+                    let superview = borrow.superview();
+                    if borrow.layout_up(env.deref_mut(), s) && superview.is_some() {
+                        // we have to schedule parent
+                        self.invalidated_views.borrow_mut()
+                            .push(InvalidatedEntry {
+                                view: Arc::downgrade(&superview.unwrap()),
+                                depth: curr.depth - 1
+                            });
+                    }
+                    else {
+                        // schedule down layout of self
+                        layout_down.push(InvalidatedEntry {
+                            view: Arc::downgrade(&view),
+                            // invert ordering
+                            depth: -curr.depth
+                        });
+                    }
+                }
+                else {
+                    let curr = layout_down.pop().unwrap();
+
+                    /* ensure that view is still valid */
+                    let Some(view) = curr.view.upgrade() else {
+                        continue;
+                    };
+
+                    let mut borrow = view.borrow_mut_main(s);
+                    /* make sure it doesn't have a newer entry */
+                    if borrow.depth() as i32 != -curr.depth || !borrow.needs_layout_down() {
+                        continue;
+                    }
+
+                    // move environment to (right above) target
+                    Self::walk_env(env.deref_mut(), &env_spot, &view);
+
+                    // try to layout down
+                    // if fail must mean we need to schedule a new layout of the parent
+                    // as this node requires context
+                    if let Err(_) = borrow.try_layout_down(env.deref_mut(), s) {
+                        // superview must exist since otherwise layout
+                        // wouldn't have failed
+                        let superview = borrow.superview().unwrap();
+                        superview.borrow_mut_main(s).set_needs_layout_down();
+
+                        layout_down.push(InvalidatedEntry {
+                            view: Arc::downgrade(&superview),
+                            // note the negative ops for reverse ordering of depth
+                            depth: curr.depth + 1
+                        });
+                    }
+
+                    drop(borrow);
+                    // move the env pointer to the current view
+                    env_spot = view;
+                }
+            }
+
+            // put back env
+            Self::walk_env(env.deref_mut(), &env_spot, &self.content_view);
+            self.environment.set(Some(env));
         }
     }
 
-    impl<P> WindowEnvironmentBase<P::Environment> for Window<P> where P: WindowProvider {
-        fn invalidate_view(&mut self, view: Weak<SlockCell<dyn InnerViewBase<P::Environment>>>, s: Slock) {
+    impl<P> WindowEnvironmentBase<P::Env> for Window<P> where P: WindowProvider {
+        fn invalidate_view(&self, handle: Weak<SlockCell<dyn WindowEnvironmentBase<P::Env>>>, view: Weak<SlockCell<dyn InnerViewBase<P::Env>>>, depth: u32, s: Slock) {
             // note that we're only touching send parts of self
-            if self.invalidated_views.is_empty() {
+            let mut borrow = self.invalidated_views.borrow_mut();
+            if borrow.is_empty() {
                 // schedule a layout
-                let handle = self.handle;
+                let native_handle = self.handle;
                 run_main_maybe_sync(move |m| {
-                    native::window::window_set_needs_layout(handle, m);
+                    // avoid using handle after free
+                    if handle.upgrade().is_some() {
+                        native::window::window_set_needs_layout(native_handle, m);
+                    }
                 }, s);
             }
 
-            self.invalidated_views.push(view)
-        }
-
-        fn set_environment(&mut self, stack: &[Arc<SlockCell<dyn InnerViewBase<P::Environment>>>], s: MSlock) -> &mut P::Environment {
-            let env = self.environment.as_mut().unwrap();
-
-            // push environment
-            for modifier in stack {
-                modifier.borrow_main(s)
-                    .push_environment(env, s);
-            }
-
-            env
-        }
-
-        fn unset_environment(&mut self, stack: &[Arc<SlockCell<dyn InnerViewBase<P::Environment>>>], s: MSlock) {
-            let env = self.environment.as_mut().unwrap();
-            for modifier in stack.iter().rev() {
-                modifier.borrow_main(s)
-                    .pop_environment(env, s);
-            }
+            borrow.push(InvalidatedEntry {
+                view,
+                depth: depth as i32
+            });
         }
     }
 
@@ -422,6 +540,8 @@ mod slock {
     use crate::util::rust_util::PhantomUnsendUnsync;
 
     static GLOBAL_STATE_LOCK: Mutex<()> = Mutex::new(());
+    #[cfg(debug_assertions)]
+    static LOCKED_THREAD: Mutex<Option<thread::ThreadId>> = Mutex::new(None);
 
     pub struct SlockOwner<M=AnyThreadMarker> where M: ThreadMarker {
         _guard: MutexGuard<'static, ()>,
@@ -449,7 +569,6 @@ mod slock {
 
     #[inline]
     fn global_guard() -> MutexGuard<'static, ()> {
-        static LOCKED_THREAD: Mutex<Option<thread::ThreadId>> = Mutex::new(None);
 
         #[cfg(debug_assertions)]
         {
@@ -539,6 +658,13 @@ mod slock {
                     unsend_unsync: PhantomData,
                 }
             }
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    impl<M: ThreadMarker> Drop for SlockOwner<M> {
+        fn drop(&mut self) {
+            *LOCKED_THREAD.lock().unwrap() = None;
         }
     }
 

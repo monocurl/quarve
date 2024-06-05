@@ -1,6 +1,6 @@
-use quarve::core::{Application, EnvironmentProvider, launch, MSlock};
-use quarve::state::Signal;
-use quarve::view::{Empty, View, ViewProvider};
+use quarve::core::{Application, Environment, launch, MSlock};
+use quarve::state::{FixedSignal, Signal};
+use quarve::view::{Empty, Layout, View, ViewProvider};
 
 struct Env;
 
@@ -8,7 +8,7 @@ struct ApplicationProvider;
 
 struct WindowProvider;
 
-impl EnvironmentProvider for Env {
+impl Environment for Env {
     fn root_environment() -> Self {
         Env
     }
@@ -21,11 +21,12 @@ impl quarve::core::ApplicationProvider for ApplicationProvider {
 }
 
 impl quarve::core::WindowProvider for WindowProvider {
-    type Environment = Env;
+    type Env = Env;
 
     fn title(&self, s: MSlock<'_>) -> impl Signal<String> {
-        s.clock_signal()
-            .map(|time| format!("Time {}", time), s)
+        // s.clock_signal()
+        //     .map(|time| format!("Time {}", time), s)
+        FixedSignal::new("Hello".to_owned())
     }
 
     fn style(&self, _s: MSlock<'_>) {
@@ -33,7 +34,12 @@ impl quarve::core::WindowProvider for WindowProvider {
     }
 
     fn tree(&self, s: MSlock<'_>) -> View<Env, impl ViewProvider<Env, LayoutContext=()>> {
-        ViewProvider::make_view(Empty, s)
+        let l0 = ViewProvider::make_view(Empty, s);
+        let l1 = ViewProvider::make_view(Empty, s);
+        let pos = s.clock_signal()
+            .map(|s| (*s * 20.0 % 100.0) as f32, s);
+
+        ViewProvider::make_view(Layout(l0, l1, pos), s)
     }
 }
 

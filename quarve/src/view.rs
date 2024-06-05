@@ -1,22 +1,22 @@
 use std::ffi::c_void;
-use crate::core::{EnvironmentProvider, MSlock};
-use crate::util::geo::{AlignedFrame, Rect, Size};
+use crate::core::{Environment, MSlock};
+use crate::util::geo::{AlignedFrame, Point, Rect, Size};
 use crate::view::inner_view::InnerView;
+use crate::native;
 
 mod inner_view {
     use std::ffi::c_void;
     use std::mem::{MaybeUninit, transmute};
     use std::sync::{Arc, Weak};
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use crate::core::{EnvironmentProvider, MSlock, Slock, WindowEnvironmentBase};
+    use crate::core::{Environment, MSlock, Slock, WindowEnvironmentBase};
     use crate::native;
     use crate::native::view::{view_add_child_at, view_clear_children, view_remove_child, view_set_frame};
     use crate::state::slock_cell::SlockCell;
     use crate::util::geo::{AlignedFrame, Point, Rect};
     use crate::util::rust_util::PhantomUnsendUnsync;
-    use crate::view::{ImmutHandle, Invalidator, View, ViewProvider};
+    use crate::view::{Handle, Invalidator, View, ViewProvider};
 
-    pub(crate) trait InnerViewBase<E> where E: EnvironmentProvider {
+    pub(crate) trait InnerViewBase<E> where E: Environment {
         /* native methods */
 
         // must be called after show was called at least once
@@ -33,9 +33,11 @@ mod inner_view {
         fn depth(&self) -> u32;
 
         /* layout methods */
+        fn needs_layout_up(&self) -> bool;
+        fn needs_layout_down(&self) -> bool;
 
         // true if we need to go to the parent and lay that up
-        fn layout_up(&mut self, env: &E, s: MSlock<'_>) -> bool;
+        fn layout_up(&mut self, env: &mut E, s: MSlock<'_>) -> bool;
 
         // fails if the current view requires context
         // in such a case, we must go to the parent and retry
@@ -57,17 +59,21 @@ mod inner_view {
         fn hide(&mut self, s: MSlock<'_>);
 
 
-        fn invalidate(&self, this: Weak<SlockCell<dyn InnerViewBase<E>>>, s: Slock);
+        // this is done whenever a node has layout context
+        // and thus cannot be layed out trivially so that the
+        // parent must have its layout down flag set to true
+        // even though it doesn't need a layout up
+        fn set_needs_layout_down(&mut self);
+        fn invalidate(&mut self, this: Weak<SlockCell<dyn InnerViewBase<E>>>, s: Slock);
 
         /* environment */
 
         fn push_environment(&self, env: &mut E, s: MSlock);
         fn pop_environment(&self, env: &mut E, s: MSlock);
-
     }
 
     // contains a backing and
-    pub(crate) struct InnerView<E, P> where E: EnvironmentProvider, P: ViewProvider<E> {
+    pub(crate) struct InnerView<E, P> where E: Environment, P: ViewProvider<E> {
         /* tree */
         window: Option<Weak<SlockCell<dyn WindowEnvironmentBase<E>>>>,
         superview: Option<Weak<SlockCell<dyn InnerViewBase<E>>>>,
@@ -75,7 +81,8 @@ mod inner_view {
         /* also contains backing */
         subviews: Subviews<E>,
 
-        dirty_flag: AtomicBool,
+        needs_layout_up: bool,
+        needs_layout_down: bool,
 
         /* cached layout results */
         last_point: Point,
@@ -87,7 +94,7 @@ mod inner_view {
         provider: P
     }
 
-    impl<E, P> InnerView<E, P> where E: EnvironmentProvider, P: ViewProvider<E> {
+    impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
         #[inline]
         pub(super) fn is_trivial_context(&self) -> bool {
             std::any::TypeId::of::<P::LayoutContext>() == std::any::TypeId::of::<()>()
@@ -97,6 +104,8 @@ mod inner_view {
             &self.provider
         }
 
+        // returns position of rect
+        // in superview coordinate system
         pub(super) fn layout_down_with_context(
             &mut self,
             frame: AlignedFrame,
@@ -107,7 +116,7 @@ mod inner_view {
         ) -> Rect {
             // all writes to dirty flag are done with a state lock
             // we may set the dirty flag to false now that we are performing a layout
-            let mut actually_needs_layout = self.dirty_flag.swap(false, Ordering::Relaxed);
+            let mut actually_needs_layout = self.needs_layout_down;
             // if context isn't trivial, there may be updates
             // that were not taken into account
             actually_needs_layout = actually_needs_layout || !self.is_trivial_context();
@@ -115,46 +124,70 @@ mod inner_view {
             // maybe different overall frame
             actually_needs_layout = actually_needs_layout || frame != self.last_frame;
 
-            if actually_needs_layout {
-                self.provider.push_environment(env, s);
-                let ret = self.provider.layout_down(&mut self.subviews, frame, context, ImmutHandle(env), s);
-                self.provider.pop_environment(env, s);
+            self.needs_layout_down = false;
 
-                /* readjust backing frame */
-                let shifted_rect = Rect {
-                    x: ret.x + at.x,
-                    y: ret.y + at.y,
-                    w: ret.w,
-                    h: ret.h,
-                };
-                view_set_frame(self.backing(), shifted_rect, s);
+            let untranslated = if actually_needs_layout {
+                self.provider.push_environment(env, s);
+                let ret = self.provider.layout_down(frame, context, &mut Handle(env), s);
+                self.provider.pop_environment(env, s);
 
                 ret
             }
             else {
                 self.last_rect
-            }
+            };
+
+
+            self.last_point = at;
+            self.last_rect = untranslated;
+            self.last_frame = frame;
+
+            let translated = untranslated.translate(at);
+            view_set_frame(self.backing(), translated, s);
+
+            translated
         }
 
+        pub(super) fn replace_provider(&mut self, this: &Arc<SlockCell<Self>>, provider: P, env: &mut Handle<E>, s: MSlock) {
+            // if no backing, can do a trivial swap
+            if self.backing().is_null() {
+                self.provider = provider;
+            }
+            else {
+                self.provider = provider;
+                self.subviews.backing = 0 as *mut c_void;
+                self.subviews.clear(s);
+
+                if self.superview.is_some() {
+                    // we are currently mounted
+                    // so we may init the backing directly
+                    // this operation is in fact isomorphic to a show
+                    let weak = Arc::downgrade(this) as Weak<SlockCell<dyn InnerViewBase<E>>>;
+                    let window = self.window.clone().unwrap();
+                    self.show(weak, &window, env.0, self.depth, s);
+                }
+                // otherwise:
+                // not currently mounted
+                // all we have to dset the provider and reset the backing
+                // and upon the next mounting the magic will be done
+                // (i dont think this path can actually be called since it requires env?)
+            }
+        }
     }
 
-    impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: EnvironmentProvider, P: ViewProvider<E> {
-        #[inline]
+    impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewProvider<E> {
         fn backing(&self) -> *mut c_void {
             self.subviews.backing
         }
 
-        #[inline]
         fn window(&self) -> Option<Weak<SlockCell<dyn WindowEnvironmentBase<E>>>> {
             self.window.clone()
         }
 
-        #[inline]
         fn superview(&self) -> Option<Arc<SlockCell<dyn InnerViewBase<E>>>> {
             self.superview.as_ref().and_then(|s| s.upgrade())
         }
 
-        #[inline]
         fn set_superview(&mut self, superview: Weak<SlockCell<dyn InnerViewBase<E>>>) {
             if self.superview.is_some() {
                 panic!("Attempt to add view to superview when the subview is already mounted to a view. \
@@ -164,19 +197,27 @@ mod inner_view {
             self.superview = Some(superview);
         }
 
-        #[inline]
         fn subviews(&self) -> &Subviews<E> {
             &self.subviews
         }
 
-        #[inline]
         fn depth(&self) -> u32 {
             self.depth
         }
 
-        #[inline]
-        fn layout_up(&mut self, env: &E, s: MSlock<'_>) -> bool {
-            self.provider.layout_up(&mut self.subviews, env, s)
+        fn needs_layout_up(&self) -> bool {
+            self.needs_layout_up
+        }
+
+        fn needs_layout_down(&self) -> bool {
+            self.needs_layout_down
+        }
+
+        fn layout_up(&mut self, env: &mut E, s: MSlock<'_>) -> bool {
+            self.needs_layout_up = false;
+
+            let mut handle = Handle(env);
+            self.provider.layout_up(&mut self.subviews, &mut handle, s)
         }
 
         fn try_layout_down(&mut self, env: &mut E, s: MSlock<'_>) -> Result<(), ()> {
@@ -205,7 +246,12 @@ mod inner_view {
             s: MSlock<'_>
         ) {
             /* save attributes */
-            self.window = Some(window.clone());
+            let new_window = Some(window.clone());
+            if self.window.is_some() && !std::ptr::addr_eq(self.window.as_ref().unwrap().as_ptr(), window.as_ptr()) {
+                panic!("Cannot add view to different window than the original one it was mounted on!")
+            }
+
+            self.window = new_window;
             self.depth = depth;
 
             /* push environment */
@@ -217,7 +263,8 @@ mod inner_view {
                 let invalidator = Invalidator {
                     view: this.clone()
                 };
-                self.subviews.backing = self.provider.init_backing(invalidator, &mut self.subviews, None, None, e, s);
+                let mut handle = Handle(e);
+                self.subviews.backing = self.provider.init_backing(invalidator, &mut self.subviews, None, None, &mut handle, s);
             }
 
             /* invalidate this view */
@@ -247,7 +294,7 @@ mod inner_view {
         }
 
         fn hide(&mut self, s: MSlock<'_>) {
-            self.window = None;
+            // keep window, just remove superview
             self.superview = None;
 
             self.provider.pre_hide(s);
@@ -257,18 +304,21 @@ mod inner_view {
             self.provider.post_hide(s);
         }
 
-        fn invalidate(&self, this: Weak<SlockCell<dyn InnerViewBase<E>>>, s: Slock) {
+        fn set_needs_layout_down(&mut self) {
+            self.needs_layout_down = true;
+        }
 
+        fn invalidate(&mut self, this: Weak<SlockCell<dyn InnerViewBase<E>>>, s: Slock) {
             if let Some(window) = self.window.as_ref().and_then(|window| window.upgrade()) {
-                // only invalidate it if it wasn't dirty before
-                if !self.dirty_flag.swap(true, Ordering::Relaxed) {
-                    // safety:
-                    // the only part of window we're touching
-                    // is send
-                    unsafe {
-                        window.borrow_mut_non_main_non_send(s)
-                            .invalidate_view(this, s);
-                    }
+                self.needs_layout_up = true;
+                self.needs_layout_down = true;
+
+                // safety:
+                // the only part of window we're touching
+                // is send (guaranteed by protocol)
+                unsafe {
+                    window.borrow_non_main_non_send(s)
+                        .invalidate_view(Arc::downgrade(&window), this, self.depth, s);
                 }
             }
         }
@@ -297,7 +347,11 @@ mod inner_view {
         unsend_unsync: PhantomUnsendUnsync
     }
 
-    impl<E> Subviews<E> where E: EnvironmentProvider {
+    impl<E> Subviews<E> where E: Environment {
+        pub(super) fn subviews(&self) -> &Vec<Arc<SlockCell<dyn InnerViewBase<E>>>> {
+            &self.subviews
+        }
+
         pub fn remove_at(&mut self, index: usize, s: MSlock<'_>) {
             // remove from backing
             if !self.backing.is_null() {
@@ -327,23 +381,7 @@ mod inner_view {
             }
         }
 
-        pub(super) fn subviews(&self) -> &Vec<Arc<SlockCell<dyn InnerViewBase<E>>>> {
-            &self.subviews
-        }
-
-        fn stack(this: Arc<SlockCell<dyn InnerViewBase<E>>>, s: MSlock)
-                 -> Vec<Arc<SlockCell<dyn InnerViewBase<E>>>> {
-            let mut stack = Vec::new();
-            let mut curr = Some(this);
-            while let Some(view) = curr {
-                stack.push(view.clone());
-                curr = view.borrow_main(s).superview();
-            }
-
-            stack
-        }
-
-        pub fn insert<P>(&mut self, subview: &View<E, P>, index: usize, s: MSlock<'_>) where P: ViewProvider<E> {
+        pub fn insert<P>(&mut self, subview: &View<E, P>, index: usize, env: &mut Handle<E>, s: MSlock<'_>) where P: ViewProvider<E> {
             subview.0.borrow_mut_main(s).set_superview(self.owner.clone());
             self.subviews.insert(index, subview.0.clone());
 
@@ -357,14 +395,9 @@ mod inner_view {
                     let weak = Arc::downgrade(&window);
                     let depth = borrow.depth();
 
-                    let stack = Self::stack(this.clone(), s);
-                    let mut window_borrow = window.borrow_mut_main(s);
-
-                    let env = window_borrow.set_environment(&stack, s);
                     let subview_this = Arc::downgrade(&subview.0) as
                         Weak<SlockCell<dyn InnerViewBase<E>>>;
-                    subview.0.borrow_mut_main(s).show(subview_this, &weak, env, depth + 1, s);
-                    window_borrow.unset_environment(&stack, s);
+                    subview.0.borrow_mut_main(s).show(subview_this, &weak, env.0, depth + 1, s);
                 }
             }
 
@@ -374,12 +407,12 @@ mod inner_view {
             }
         }
 
-        pub fn push<P>(&mut self, subview: &View<E, P>, s: MSlock<'_>) where P: ViewProvider<E> {
-            self.insert(subview, self.subviews.len(), s);
+        pub fn push<P>(&mut self, subview: &View<E, P>, env: &mut Handle<E>, s: MSlock<'_>) where P: ViewProvider<E> {
+            self.insert(subview, self.subviews.len(), env, s);
         }
     }
 
-    impl<E, P> InnerView<E, P> where E:EnvironmentProvider, P: ViewProvider<E> {
+    impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
         pub(super) fn new(provider: P, s: MSlock) -> Arc<SlockCell<Self>> {
             // TODO see if theres way to do this without unsafe
             let org = Arc::new(SlockCell::new_main(MaybeUninit::uninit(), s));
@@ -404,7 +437,8 @@ mod inner_view {
                 },
                 // note that upon initial mount
                 // this will be set to true
-                dirty_flag: AtomicBool::new(false),
+                needs_layout_down: false,
+                needs_layout_up: false,
                 last_frame: AlignedFrame::default(),
                 last_point: Point::default(),
                 last_rect: Rect::default(),
@@ -418,7 +452,7 @@ mod inner_view {
         }
     }
 
-    impl<E, P> Drop for InnerView<E, P> where E:EnvironmentProvider, P: ViewProvider<E> {
+    impl<E, P> Drop for InnerView<E, P> where E: Environment, P: ViewProvider<E> {
         fn drop(&mut self) {
             if self.backing() as usize != 0 {
                 native::view::free_view(self.backing());
@@ -430,7 +464,7 @@ pub use inner_view::*;
 
 mod view {
     use std::sync::{Arc, Weak};
-    use crate::core::{EnvironmentProvider, MSlock, Slock};
+    use crate::core::{Environment, MSlock, Slock};
     use crate::state::slock_cell::SlockCell;
     use crate::util::geo::{AlignedFrame, Point, Rect, Size};
     use crate::util::rust_util::EnsureSend;
@@ -438,14 +472,15 @@ mod view {
     use crate::view::ViewProvider;
 
     pub struct View<E, P>(pub(crate) Arc<SlockCell<InnerView<E, P>>>)
-        where E: EnvironmentProvider, P: ViewProvider<E>;
+        where E: Environment, P: ViewProvider<E>;
 
-    impl<E, P> View<E, P> where E: EnvironmentProvider, P: ViewProvider<E> {
-        pub fn replace_provider(&self, _with: P, _s: Slock) {
-            todo!()
+    impl<E, P> View<E, P> where E: Environment, P: ViewProvider<E> {
+        pub fn replace_provider(&self, with: P, env: &mut Handle<E>, s: MSlock) {
+            self.0.borrow_mut_main(s)
+                .replace_provider(&self.0, with, env, s);
         }
 
-        pub fn layout_down_with_context(&self, aligned_frame: AlignedFrame, at: Point, context: &P::LayoutContext, parent_environment: ImmutHandle<E>, s: MSlock) -> Rect {
+        pub fn layout_down_with_context(&self, aligned_frame: AlignedFrame, at: Point, context: &P::LayoutContext, parent_environment: &mut Handle<E>, s: MSlock) -> Rect {
             self.0.borrow_mut_main(s)
                 .layout_down_with_context(aligned_frame, at, parent_environment.0, context, s)
         }
@@ -471,17 +506,17 @@ mod view {
         }
     }
 
-    impl<E, P> View<E, P> where E: EnvironmentProvider, P: ViewProvider<E, LayoutContext=()> {
-        pub fn layout_down(&self, aligned_frame: AlignedFrame, at: Point, parent_environment: ImmutHandle<E>, s: MSlock) -> Rect {
+    impl<E, P> View<E, P> where E: Environment, P: ViewProvider<E, LayoutContext=()> {
+        pub fn layout_down(&self, aligned_frame: AlignedFrame, at: Point, parent_environment: &mut Handle<E>, s: MSlock) -> Rect {
             self.layout_down_with_context(aligned_frame, at, &(), parent_environment, s)
         }
     }
 
-    pub struct Invalidator<E> where E: EnvironmentProvider {
+    pub struct Invalidator<E> where E: Environment {
         pub(crate) view: Weak<SlockCell<dyn InnerViewBase<E>>>
     }
 
-    impl<E> Invalidator<E> where E: EnvironmentProvider {
+    impl<E> Invalidator<E> where E: Environment {
         pub fn upgrade(&self) -> Option<StrongInvalidator<E>> {
             self.view.upgrade()
                 .map(|view| {
@@ -492,11 +527,11 @@ mod view {
         }
     }
 
-    pub struct StrongInvalidator<E> where E: EnvironmentProvider {
+    pub struct StrongInvalidator<E> where E: Environment {
         view: Arc<SlockCell<dyn InnerViewBase<E>>>
     }
 
-    impl<E> StrongInvalidator<E> where E: EnvironmentProvider {
+    impl<E> StrongInvalidator<E> where E: Environment {
         pub fn invalidate(&self, s: Slock) {
             // invalidate just this
             // safety:
@@ -507,24 +542,22 @@ mod view {
             // it's just the list of invalidated views)
             // FIXME add better descriptions of safety
             unsafe {
-                self.view.borrow_non_main_non_send(s)
+                self.view.borrow_mut_non_main_non_send(s)
                         .invalidate(Arc::downgrade(&self.view), s);
             }
         }
-
 
         fn dfs(curr: &Arc<SlockCell<dyn InnerViewBase<E>>>, s: Slock) {
             // safety is same reason invalidate above is safe
             // (only touching send parts)
             unsafe {
-                let borrow = curr.borrow_non_main_non_send(s);
+                let mut borrow = curr.borrow_mut_non_main_non_send(s);
                 borrow.invalidate(Arc::downgrade(curr), s);
 
                 for subview in borrow.subviews().subviews() {
                     StrongInvalidator::dfs(subview, s);
                 }
             }
-
         }
 
         pub fn invalidate_environment(&self, s: Slock) {
@@ -532,9 +565,9 @@ mod view {
         }
     }
 
-    pub struct ImmutHandle<'a, E>(pub(crate) &'a mut E) where E: EnvironmentProvider;
+    pub struct Handle<'a, E>(pub(crate) &'a mut E) where E: Environment;
 
-    impl<'a, E> ImmutHandle<'a, E> where E: EnvironmentProvider {
+    impl<'a, E> Handle<'a, E> where E: Environment {
         pub fn env<'b>(&'b self) -> &'a E
             where 'b: 'a
         {
@@ -542,25 +575,25 @@ mod view {
         }
     }
 
-    impl<E> EnsureSend for Invalidator<E> where E: EnvironmentProvider {
+    impl<E> EnsureSend for Invalidator<E> where E: Environment {
 
     }
 }
 pub use view::*;
 
 mod into_view {
-    use crate::core::{EnvironmentProvider, MSlock};
+    use crate::core::{Environment, MSlock};
     use crate::view::{View, ViewProvider};
 
-    pub trait IntoView<C: EnvironmentProvider> {
+    pub trait IntoView<C: Environment> {
         fn into_view(self, channels: &C, s: MSlock<'_>) -> View<C, impl ViewProvider<C>>;
     }
 }
 pub use into_view::*;
-use crate::native;
+use crate::state::{Signal, Store};
 
 pub unsafe trait ViewProvider<E>: Sized + 'static
-    where E: EnvironmentProvider
+    where E: Environment
 {
     /// Additional context to be used when performing layouts
     /// Typically, this is set to ()
@@ -595,7 +628,7 @@ pub unsafe trait ViewProvider<E>: Sized + 'static
         subviews: &mut Subviews<E>,
         replaced_backing: Option<*mut c_void>,
         replaced_provider: Option<Self>,
-        env: &E,
+        env: &mut Handle<E>,
         s: MSlock<'_>
     ) -> *mut c_void;
 
@@ -610,7 +643,7 @@ pub unsafe trait ViewProvider<E>: Sized + 'static
     fn layout_up(
         &mut self,
         subviews: &mut Subviews<E>,
-        env: &E,
+        env: &mut Handle<E>,
         s: MSlock<'_>
     ) -> bool;
 
@@ -621,10 +654,9 @@ pub unsafe trait ViewProvider<E>: Sized + 'static
     /// Return value is used value within the frame
     fn layout_down(
         &mut self,
-        subviews: &mut Subviews<E>,
         frame: AlignedFrame,
         layout_context: &Self::LayoutContext,
-        env: ImmutHandle<E>,
+        env: &mut Handle<E>,
         s: MSlock<'_>
     ) -> Rect;
 
@@ -664,7 +696,8 @@ pub unsafe trait ViewProvider<E>: Sized + 'static
 }
 
 pub struct Empty;
-unsafe impl<E: EnvironmentProvider> ViewProvider<E> for Empty {
+pub struct Layout<E: Environment, S: Signal<f32>>(pub View<E, Empty>, pub View<E, Empty>, pub S);
+unsafe impl<E: Environment> ViewProvider<E> for Empty {
     type LayoutContext = ();
 
     fn intrinsic_size(&self, _s: MSlock) -> Size {
@@ -690,15 +723,85 @@ unsafe impl<E: EnvironmentProvider> ViewProvider<E> for Empty {
         todo!()
     }
 
-    fn init_backing(&mut self, _invalidator: Invalidator<E>, _subviews: &mut Subviews<E>, _replaced_backing: Option<*mut c_void>, _replaced_provider: Option<Self>, _env: &E, s: MSlock<'_>) -> *mut c_void {
-        native::view::init_layout_view(s)
+    fn init_backing(&mut self, _invalidator: Invalidator<E>, _subviews: &mut Subviews<E>, _replaced_backing: Option<*mut c_void>, _replaced_provider: Option<Self>, _env: &mut Handle<E>, s: MSlock<'_>) -> *mut c_void {
+        native::view::debug_view_init(s)
     }
 
-    fn layout_up(&mut self, _subviews: &mut Subviews<E>, _env: &E, _s: MSlock<'_>) -> bool {
+    fn layout_up(&mut self, _subviews: &mut Subviews<E>, _env: &mut Handle<E>, _s: MSlock<'_>) -> bool {
         false
     }
 
-    fn layout_down(&mut self, _subviews: &mut Subviews<E>, frame: AlignedFrame, _layout_context: &Self::LayoutContext, _env: ImmutHandle<E>, _s: MSlock<'_>) -> Rect {
+    fn layout_down(&mut self, frame: AlignedFrame, _layout_context: &Self::LayoutContext, _env: &mut Handle<E>, _s: MSlock<'_>) -> Rect {
+        frame.full_rect()
+    }
+}
+
+unsafe impl<E: Environment, S: Signal<f32>> ViewProvider<E> for Layout<E, S> {
+    type LayoutContext = ();
+
+    fn intrinsic_size(&self, s: MSlock) -> Size {
+        Size {
+            w: 200.0,
+            h: 200.0
+        }
+    }
+
+    fn xsquished_size(&self, s: MSlock) -> Size {
+        todo!()
+    }
+
+    fn ysquished_size(&self, s: MSlock) -> Size {
+        todo!()
+    }
+    fn xstretched_size(&self, s: MSlock) -> Size {
+        todo!()
+    }
+
+    fn ystretched_size(&self, s: MSlock) -> Size {
+        todo!()
+    }
+
+    fn init_backing(&mut self, invalidator: Invalidator<E>, subviews: &mut Subviews<E>, replaced_backing: Option<*mut c_void>, replaced_provider: Option<Self>, env: &mut Handle<E>, s: MSlock<'_>) -> *mut c_void {
+        subviews.push(&self.0, env, s);
+        subviews.push(&self.1, env, s);
+
+        self.2.listen(move |_, s| {
+            let Some(invalidator) = invalidator.upgrade() else {
+                return false;
+            };
+
+            invalidator.invalidate(s);
+            true
+        }, s);
+
+        native::view::init_layout_view(s)
+    }
+
+    fn layout_up(&mut self, subviews: &mut Subviews<E>, env: &mut Handle<E>, s: MSlock<'_>) -> bool {
+        false
+    }
+
+    fn layout_down(&mut self, frame: AlignedFrame, layout_context: &Self::LayoutContext, env: &mut Handle<E>, s: MSlock<'_>) -> Rect {
+        let pos = self.2.borrow(s);
+        self.0.layout_down(AlignedFrame {
+            w: 100.0,
+            h: 100.0,
+            align: Default::default(),
+        }, Point {
+            x: 0.0,
+            y: 0.0
+        }, env, s);
+
+        println!("Reloading {}", *pos);
+        self.1.layout_down(AlignedFrame {
+            w: 100.0,
+            h: 100.0,
+            align: Default::default(),
+        }, Point {
+            x: *pos,
+            y: 0.0
+        }, env, s);
+
         frame.full_rect()
     }
 }
