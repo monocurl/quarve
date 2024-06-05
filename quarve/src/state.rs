@@ -1132,10 +1132,8 @@ mod store {
 
     pub trait Bindable<S: Stateful, F: ActionFilter<Target=S>> {
         type Binding: Binding<S, F> + Clone;
-        type Signal: Signal<S> + Clone;
 
         fn binding(&self) -> Self::Binding;
-        fn signal(&self) -> Self::Signal;
     }
 
     // Like with signal, I believe it makes more sense for
@@ -1242,7 +1240,6 @@ mod store {
 
         impl<S: Stateful, F: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, F>> Bindable<S, F> for I {
             type Binding = GeneralBinding<S, F, I>;
-            type Signal = Self::Binding;
 
             fn binding(&self) -> Self::Binding {
                 I::Inner::strong_count_increment(self.get_ref());
@@ -1254,9 +1251,6 @@ mod store {
                 }
             }
 
-            fn signal(&self) -> Self::Signal {
-                self.binding()
-            }
         }
 
         // Unfortunately can't do this for signal as well
@@ -1588,7 +1582,7 @@ mod store {
             state::{ActionFilter, Filterless, IntoAction, Signal, Stateful, StoreContainer, GeneralSignal},
             core::Slock,
         };
-        use crate::state::StateListener;
+        use crate::state::{Bindable, StateListener};
         use crate::state::store::state_ref::StateRef;
         use crate::state::{Filter};
         use crate::state::listener::{GeneralListener, InverseListener};
@@ -1703,6 +1697,14 @@ mod store {
                 }
             }
         }
+
+        // RPITIT adds an unnecessary lifetime parameter
+        // so this must be implemented manually unfortunately
+        impl<S, F> Store<S, F> where S: Stateful, F: ActionFilter<Target=S> {
+            pub fn signal(&self) -> impl Signal<S> + Clone {
+                self.binding()
+            }
+        }
     }
     pub use store::*;
 
@@ -1712,7 +1714,7 @@ mod store {
         use std::marker::PhantomData;
         use std::ops::{Deref, DerefMut};
         use std::sync::Arc;
-        use crate::state::StateListener;
+        use crate::state::{Bindable, StateListener};
         use crate::state::store::state_ref::StateRef;
         use crate::core::{Slock};
         use crate::state::{ActionFilter, Filter, Filterless, GeneralListener, GeneralSignal, IntoAction, Signal, Stateful, StoreContainer};
@@ -1798,7 +1800,8 @@ mod store {
             }
         }
 
-        impl<S> TokenStore<S, Filterless<S>> where S: Stateful + Copy + Hash + Eq {
+        impl<S> TokenStore<S, Filterless<S>>
+            where S: Stateful + Copy + Hash + Eq {
             pub fn new(initial: S) -> Self {
                 TokenStore {
                     inner: Arc::new(SlockCell::new(InnerTokenStore {
@@ -1809,7 +1812,8 @@ mod store {
             }
         }
 
-        impl<S> TokenStore<S, Filter<S>> where S: Stateful + Copy + Hash + Eq {
+        impl<S> TokenStore<S, Filter<S>>
+            where S: Stateful + Copy + Hash + Eq {
             pub fn new_with_filter(initial: S) -> Self {
                 TokenStore {
                     inner: Arc::new(SlockCell::new(InnerTokenStore {
@@ -1858,6 +1862,13 @@ mod store {
                 }
             }
         }
+
+        impl<S, F> TokenStore<S, F>
+            where S: Stateful + Copy + Hash + Eq, F: ActionFilter<Target=S> {
+            pub fn signal(&self) -> impl Signal<S> + Clone {
+                self.binding()
+            }
+        }
     }
     pub use token_store::*;
 
@@ -1872,7 +1883,7 @@ mod store {
             },
             core::Slock,
         };
-        use crate::state::StateListener;
+        use crate::state::{Bindable, StateListener};
         use crate::state::{Filter};
         use crate::state::listener::{GeneralListener, InverseListener};
         use crate::state::slock_cell::SlockCell;
@@ -1991,6 +2002,13 @@ mod store {
                 }
             }
         }
+
+        impl<S, F> DerivedStore<S, F>
+            where S: Stateful, F: ActionFilter<Target=S> {
+            pub fn signal(&self) -> impl Signal<S> + Clone {
+                self.binding()
+            }
+        }
     }
     pub use derived_store::*;
 
@@ -2000,7 +2018,7 @@ mod store {
         use std::sync::{Arc, Mutex};
         use std::sync::atomic::AtomicUsize;
         use std::sync::atomic::Ordering::Release;
-        use crate::state::{StateListener, GeneralListener, InverseListener};
+        use crate::state::{StateListener, GeneralListener, InverseListener,  Bindable};
         use crate::state::store::state_ref::StateRef;
         use crate::{
             state::{
@@ -2256,6 +2274,14 @@ mod store {
                 }
             }
         }
+
+        impl<I, IB, M, F, C> CoupledStore<I, IB, M, F, C>
+            where I: Stateful, IB: Binding<I>, M: Stateful, F: ActionFilter<Target=M>, C: Coupler<I, M, F>
+        {
+            pub fn signal(&self) -> impl Signal<M> + Clone {
+                self.binding()
+            }
+        }
     }
     pub use coupled_store::*;
 
@@ -2264,7 +2290,7 @@ mod store {
         use std::ops::Deref;
         use std::sync::Arc;
         use crate::core::{Slock};
-        use crate::state::StateListener;
+        use crate::state::{Bindable, StateListener};
         use crate::state::store::state_ref::StateRef;
         use crate::state::{RawStoreSharedOwner, Signal};
         use crate::state::signal::GeneralSignal;
@@ -2320,6 +2346,14 @@ mod store {
             where S: Stateful, A: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, A> {
             fn drop(&mut self) {
                 I::Inner::strong_count_decrement(self.inner.get_ref());
+            }
+        }
+
+        impl<S, A, I> GeneralBinding<S, A, I>
+            where S: Stateful, A: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, A> {
+            
+            pub fn signal(&self) -> impl Signal<S> + Clone {
+                self.binding()
             }
         }
     }

@@ -178,7 +178,6 @@ mod window {
     use std::collections::BinaryHeap;
     use std::ops::{Deref, DerefMut};
     use std::sync::{Arc, Weak};
-    use std::time::{Duration, Instant};
     use crate::core::{APP, Environment, MSlock, run_main_async, run_main_maybe_sync, Slock};
     use crate::native;
     use crate::native::{WindowHandle};
@@ -193,7 +192,7 @@ mod window {
 
         fn style(&self, s: MSlock<'_>);
 
-        fn tree(&self, s: MSlock<'_>)
+        fn tree(&self, env: &Self::Env, s: MSlock<'_>)
             -> View<Self::Env, impl ViewProvider<Self::Env, LayoutContext=()>>;
 
         fn can_close(&self, _s: MSlock<'_>) -> bool {
@@ -268,12 +267,14 @@ mod window {
         // order things are done is a bit awkward
         // but need to coordinate between many things
         pub(super) fn new(provider: P, s: MSlock<'_>) -> Arc<SlockCell<dyn WindowBase>> {
+            let root_env = P::Env::root_environment();
+
             let handle = native::window::window_init(s);
-            let content_view = provider.tree(s).0;
+            let content_view = provider.tree(&root_env, s).0;
 
             let window = Window {
                 provider,
-                environment: Cell::new(Some(Box::new(P::Env::root_environment()))),
+                environment: Cell::new(Some(Box::new(root_env))),
                 invalidated_views: RefCell::new(BinaryHeap::new()),
                 handle,
                 content_view
@@ -436,30 +437,6 @@ mod window {
         }
 
         fn layout(&self, s: MSlock) {
-            static mut FRAMES: usize = 0;
-            static mut START_TIME: Option<Instant> = None;
-
-            // Ensure atomic access to static variables
-            unsafe {
-                // Initialize start time if not already initialized
-                if START_TIME.is_none() {
-                    START_TIME = Some(Instant::now());
-                }
-
-                // Increment frames count
-                FRAMES += 1;
-
-                // Check if 1 second has passed
-                if START_TIME.unwrap().elapsed() >= Duration::from_secs(1) {
-                    // Print the FPS
-                    println!("FPS: {}", FRAMES);
-
-                    // Reset the counter and start time for the next second
-                    FRAMES = 0;
-                    START_TIME = Some(Instant::now());
-                }
-            }
-
             // layout down queue
             // layout up queue is stored in self
             // and may change by invalidations
@@ -741,11 +718,11 @@ mod slock {
     }
 
     impl<'a, M: ThreadMarker> Slock<'a, M> {
-        pub fn fixed_signal<T: Send + 'static>(self, val: T) -> impl Signal<T> {
+        pub fn fixed_signal<T: Send + 'static>(self, val: T) -> FixedSignal<T> {
             FixedSignal::new(val)
         }
 
-        pub fn clock_signal(self) -> impl Signal<f64> {
+        pub fn clock_signal(self) -> CapacitatedSignal<IncreasingCapacitor> {
             let constant = FixedSignal::new(0.0);
             CapacitatedSignal::from(&constant, IncreasingCapacitor, self)
         }
@@ -756,7 +733,7 @@ mod slock {
             timed_worker(f)
         }
 
-        pub fn map<S, T, U, F>(self, signal: &S, map: F) -> impl Signal<U>
+        pub fn map<S, T, U, F>(self, signal: &S, map: F) -> S::MappedOutput<U>
             where S: Signal<T>,
                   T: Send + 'static,
                   U: Send + 'static,
@@ -766,7 +743,7 @@ mod slock {
         }
 
         pub fn join<T, U>(self, t: &impl Signal<T>, u: &impl Signal<U>)
-                          -> impl Signal<(T, U)>
+                          -> JoinedSignal<T, U, (T, U)>
             where T: Send + Clone + 'static,
                   U: Send + Clone + 'static
         {
@@ -774,7 +751,7 @@ mod slock {
         }
 
         pub fn join_map<T, U, V, F>(self, t: &impl Signal<T>, u: &impl Signal<U>, map: F)
-                                    -> impl Signal<V>
+                                    -> JoinedSignal<T, U, V>
             where T: Send + Clone + 'static,
                   U: Send + Clone + 'static,
                   V: Send + 'static,
