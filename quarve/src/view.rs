@@ -3,6 +3,7 @@ use crate::core::{Environment, MSlock};
 use crate::util::geo::{AlignedFrame, Point, Rect, Size};
 use crate::view::inner_view::InnerView;
 use crate::native;
+use crate::state::{Signal};
 
 mod inner_view {
     use std::ffi::c_void;
@@ -590,7 +591,6 @@ mod into_view {
     }
 }
 pub use into_view::*;
-use crate::state::{Signal, Store};
 
 pub unsafe trait ViewProvider<E>: Sized + 'static
     where E: Environment
@@ -792,14 +792,13 @@ unsafe impl<E: Environment, S: Signal<f32>> ViewProvider<E> for Layout<E, S> {
             y: 0.0
         }, env, s);
 
-        println!("Reloading {}", *pos);
         self.1.layout_down(AlignedFrame {
             w: 100.0,
             h: 100.0,
             align: Default::default(),
         }, Point {
-            x: *pos,
-            y: 0.0
+            x: 20.0 * pos.cos(),
+            y: 20.0 * pos.sin()
         }, env, s);
 
         frame.full_rect()

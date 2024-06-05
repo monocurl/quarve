@@ -93,6 +93,9 @@ mod life_cycle {
             let curr_time = Instant::now();
             let passed = curr_time.duration_since(start_time);
             if passed < ANIMATION_THREAD_TICK {
+                // FIXME this is sleeping too long
+                // we may want to look at https://crates.io/crates/spin_sleep
+                // at some point
                 thread::sleep(ANIMATION_THREAD_TICK - passed);
             }
         }
@@ -175,6 +178,7 @@ mod window {
     use std::collections::BinaryHeap;
     use std::ops::{Deref, DerefMut};
     use std::sync::{Arc, Weak};
+    use std::time::{Duration, Instant};
     use crate::core::{APP, Environment, MSlock, run_main_async, run_main_maybe_sync, Slock};
     use crate::native;
     use crate::native::{WindowHandle};
@@ -364,17 +368,19 @@ mod window {
 
             let mut curr = from;
             let mut targ = to;
-            while (curr_depth > targ_depth) {
-                curr = curr.borrow_main(s).superview().unwrap();
+            while curr_depth > targ_depth {
+                let next = curr.borrow_main(s).superview().unwrap();
+                curr = next;
                 curr.borrow_main(s)
                     .pop_environment(env, s);
                 curr_depth -= 1;
             }
 
-            while (!std::ptr::addr_eq(curr.as_ptr(), targ.as_ptr())) {
-                if (curr_depth == targ_depth) {
+            while !std::ptr::addr_eq(curr.as_ptr(), targ.as_ptr()) {
+                if curr_depth == targ_depth {
                     // need to advance curr as well
-                    curr = curr.borrow_main(s).superview().unwrap();
+                    let next = curr.borrow_main(s).superview().unwrap();
+                    curr = next;
                     curr.borrow_main(s)
                         .pop_environment(env, s);
                     curr_depth -= 1;
@@ -382,7 +388,8 @@ mod window {
 
                 // remember that we want to be one above the target
                 // so we push to stack only afterwards
-                targ = targ.borrow_main(s).superview().unwrap();
+                let next = targ.borrow_main(s).superview().unwrap();
+                targ = next;
                 targ_stack.push(targ.clone());
                 targ_depth -= 1;
             }
@@ -429,11 +436,28 @@ mod window {
         }
 
         fn layout(&self, s: MSlock) {
-            // todo
-            enum LayoutState {
-                Down,
-                Up,
-                Done
+            static mut FRAMES: usize = 0;
+            static mut START_TIME: Option<Instant> = None;
+
+            // Ensure atomic access to static variables
+            unsafe {
+                // Initialize start time if not already initialized
+                if START_TIME.is_none() {
+                    START_TIME = Some(Instant::now());
+                }
+
+                // Increment frames count
+                FRAMES += 1;
+
+                // Check if 1 second has passed
+                if START_TIME.unwrap().elapsed() >= Duration::from_secs(1) {
+                    // Print the FPS
+                    println!("FPS: {}", FRAMES);
+
+                    // Reset the counter and start time for the next second
+                    FRAMES = 0;
+                    START_TIME = Some(Instant::now());
+                }
             }
 
             // layout down queue
@@ -503,7 +527,7 @@ mod window {
                         continue;
                     };
 
-                    let mut borrow = view.borrow_main(s);
+                    let borrow = view.borrow_main(s);
                     /* make sure it doesn't have a newer entry */
                     if borrow.depth() as i32 != -curr.depth || !borrow.needs_layout_down() {
                         continue;
@@ -513,7 +537,7 @@ mod window {
                     Self::walk_env(env.deref_mut(), env_spot.clone(), view.clone(), s);
 
                     drop(borrow);
-                    let mut borrow = view.borrow_mut(s);
+                    let mut borrow = view.borrow_mut_main(s);
 
                     // try to layout down
                     // if fail must mean we need to schedule a new layout of the parent
@@ -582,7 +606,7 @@ mod slock {
     use crate::core::{timed_worker};
     use crate::core::debug_stats::DebugInfo;
     use crate::native;
-    use crate::state::{ActionFilter, Binding, CapacitatedSignal, FixedSignal, IntoAction, JoinedSignal, Signal, Stateful};
+    use crate::state::{ActionFilter, Binding, FixedSignal, IntoAction, JoinedSignal, CapacitatedSignal, Signal, Stateful};
     use crate::state::capacitor::IncreasingCapacitor;
     use crate::util::markers::{AnyThreadMarker, MainThreadMarker, ThreadMarker};
     use crate::util::rust_util::PhantomUnsendUnsync;

@@ -1,5 +1,7 @@
+use quarve::state::WithCapacitor;
 use quarve::core::{Application, Environment, launch, MSlock};
 use quarve::state::{FixedSignal, Signal};
+use quarve::state::capacitor::SmoothCapacitor;
 use quarve::view::{Empty, Layout, View, ViewProvider};
 
 struct Env;
@@ -36,8 +38,13 @@ impl quarve::core::WindowProvider for WindowProvider {
     fn tree(&self, s: MSlock<'_>) -> View<Env, impl ViewProvider<Env, LayoutContext=()>> {
         let l0 = ViewProvider::make_view(Empty, s);
         let l1 = ViewProvider::make_view(Empty, s);
+
         let pos = s.clock_signal()
-            .map(|s| (*s * 20.0 % 100.0) as f32, s);
+            .map(|s| {
+                let t = *s as f32 % 1.0;
+                let u = 3.0 * t * t - 2.0 * t * t * t;
+                u * std::f32::consts::PI * 2.0
+            }, s);
 
         ViewProvider::make_view(Layout(l0, l1, pos), s)
     }

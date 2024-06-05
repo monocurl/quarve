@@ -1047,6 +1047,11 @@ pub mod capacitor {
             }
         }
 
+    }
+    // otherwise it's ambiguous implementation
+    impl<T> SmoothCapacitor<T, fn(f64) -> f64>
+        where T: Stateful + Lerp + Copy + Add<Output=T> + Sub<Output=T>,
+    {
         pub fn ease_in_out(time: f64) -> SmoothCapacitor<T, impl Fn(f64) -> f64> {
             SmoothCapacitor::new(|t| 3.0 * t * t - 2.0 * t * t * t, time)
         }
@@ -2370,6 +2375,7 @@ pub use buffer::*;
 mod signal {
     use std::ops::{Deref};
     use crate::core::{Slock};
+    use crate::util::markers::ThreadMarker;
 
     pub trait Signal<T: Send + 'static> : Sized + Send + Sync + 'static {
         /// Be careful about calling this method within an
@@ -2382,14 +2388,11 @@ mod signal {
         fn listen<F>(&self, listener: F, _s: Slock<'_, impl ThreadMarker>)
             where F: (FnMut(&T, Slock<'_>) -> bool) + Send + 'static;
 
-        type MappedOutput<S: Send + 'static>: Signal<S>;
+        type MappedOutput<S: Send + 'static>: Signal<S> + Clone;
         fn map<S, F>(&self, map: F, _s: Slock<'_, impl ThreadMarker>) -> Self::MappedOutput<S>
             where S: Send + 'static,
                   F: Send + 'static + Fn(&T) -> S;
 
-        fn with_capacitor(&self, capacitor: impl Capacitor<Target=T>, s: Slock<'_>) -> impl Signal<T> + Clone {
-            CapacitatedSignal::from(self, capacitor, s)
-        }
     }
 
     trait InnerSignal<T: Send> {
@@ -2811,6 +2814,18 @@ mod signal {
         use crate::util::markers::ThreadMarker;
         use crate::util::test_util::QuarveAllocTag;
 
+        pub trait WithCapacitor<T> where T: Send {
+            fn with_capacitor<C>(&self, capacitor: C, s: Slock<impl ThreadMarker>)
+                                 -> CapacitatedSignal<C> where C: Capacitor<Target=T>;
+        }
+
+        impl<T, S> WithCapacitor<T> for S where T: Send + 'static, S: Signal<T> {
+            fn with_capacitor<C>(&self, capacitor: C, s: Slock<impl ThreadMarker>)
+                -> CapacitatedSignal<C> where C: Capacitor<Target=T> {
+                CapacitatedSignal::from(self, capacitor, s)
+            }
+        }
+
         struct CapacitatedInnerSignal<C> where C: Capacitor {
             _quarve_tag: QuarveAllocTag,
             curr: C::Target,
@@ -2897,7 +2912,7 @@ mod signal {
         }
 
         impl<C> CapacitatedSignal<C> where C: Capacitor {
-            pub fn from(source: &impl Signal<C::Target>, mut capacitor: C, s: Slock<'_, impl ThreadMarker>) -> Self {
+            pub fn from(source: &impl Signal<C::Target>, mut capacitor: C, s: Slock<impl ThreadMarker>) -> Self {
                 capacitor.target_set(&*source.borrow(s), None);
                 let (curr, initial_thread) = capacitor.sample(Duration::from_secs(0));
 
@@ -2967,8 +2982,6 @@ mod signal {
         }
     }
     pub use timed_signal::*;
-    use crate::state::capacitor::Capacitor;
-    use crate::util::markers::ThreadMarker;
 }
 pub use signal::*;
 
@@ -2980,7 +2993,7 @@ mod test {
     use std::time::Duration;
     use rand::Rng;
     use crate::core::{setup_timing_thread, slock_owner, timed_worker};
-    use crate::state::{Store, Signal, TokenStore, Binding, Bindable, ActionDispatcher, StoreContainer, NumericAction, DirectlyInvertible, Filterable, DerivedStore, Stateful, CoupledStore, StringActionBasis, Buffer, Word, GroupAction};
+    use crate::state::{Store, Signal, TokenStore, Binding, Bindable, ActionDispatcher, StoreContainer, NumericAction, DirectlyInvertible, Filterable, DerivedStore, Stateful, CoupledStore, StringActionBasis, Buffer, Word, GroupAction, WithCapacitor};
     use crate::state::capacitor::{ConstantSpeedCapacitor, ConstantTimeCapacitor, SmoothCapacitor};
     use crate::state::coupler::{FilterlessCoupler, NumericStringCoupler};
     use crate::state::SetAction::{Identity, Set};
