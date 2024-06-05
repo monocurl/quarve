@@ -348,8 +348,50 @@ mod window {
             native::window::window_set_title(borrow.handle, &current, s);
         }
 
-        fn walk_env(env: &mut P::Env, from: &Arc<SlockCell<dyn InnerViewBase<P::Env>>>, to: &Arc<SlockCell<dyn InnerViewBase<P::Env>>>) {
+        // env is currently right above from
+        // and has to be moved right above to
+        fn walk_env(
+            env: &mut P::Env,
+            from: Arc<SlockCell<dyn InnerViewBase<P::Env>>>,
+            to: Arc<SlockCell<dyn InnerViewBase<P::Env>>>,
+            s: MSlock
+        ) {
+            // equalize level
+            let mut targ_stack = vec![];
 
+            let mut curr_depth = from.borrow_main(s).depth();
+            let mut targ_depth = to.borrow_main(s).depth();
+
+            let mut curr = from;
+            let mut targ = to;
+            while (curr_depth > targ_depth) {
+                curr = curr.borrow_main(s).superview().unwrap();
+                curr.borrow_main(s)
+                    .pop_environment(env, s);
+                curr_depth -= 1;
+            }
+
+            while (!std::ptr::addr_eq(curr.as_ptr(), targ.as_ptr())) {
+                if (curr_depth == targ_depth) {
+                    // need to advance curr as well
+                    curr = curr.borrow_main(s).superview().unwrap();
+                    curr.borrow_main(s)
+                        .pop_environment(env, s);
+                    curr_depth -= 1;
+                }
+
+                // remember that we want to be one above the target
+                // so we push to stack only afterwards
+                targ = targ.borrow_main(s).superview().unwrap();
+                targ_stack.push(targ.clone());
+                targ_depth -= 1;
+            }
+
+            // walk towards the target
+            for node in targ_stack.into_iter().rev() {
+                node.borrow_main(s)
+                    .push_environment(env, s);
+            }
         }
 
         #[cold]
@@ -422,7 +464,7 @@ mod window {
                         continue;
                     };
 
-                    let mut borrow = view.borrow_mut_main(s);
+                    let borrow = view.borrow_main(s);
 
                     /* make sure it doesn't have a newer entry */
                     if borrow.depth() as i32 != curr.depth || !borrow.needs_layout_up() {
@@ -430,7 +472,10 @@ mod window {
                     }
 
                     // move environment to target
-                    Self::walk_env(env.deref_mut(), &env_spot, &view);
+                    Self::walk_env(env.deref_mut(), env_spot.clone(), view.clone(), s);
+
+                    drop(borrow);
+                    let mut borrow = view.borrow_mut_main(s);
 
                     let superview = borrow.superview();
                     if borrow.layout_up(env.deref_mut(), s) && superview.is_some() {
@@ -458,14 +503,17 @@ mod window {
                         continue;
                     };
 
-                    let mut borrow = view.borrow_mut_main(s);
+                    let mut borrow = view.borrow_main(s);
                     /* make sure it doesn't have a newer entry */
                     if borrow.depth() as i32 != -curr.depth || !borrow.needs_layout_down() {
                         continue;
                     }
 
                     // move environment to (right above) target
-                    Self::walk_env(env.deref_mut(), &env_spot, &view);
+                    Self::walk_env(env.deref_mut(), env_spot.clone(), view.clone(), s);
+
+                    drop(borrow);
+                    let mut borrow = view.borrow_mut(s);
 
                     // try to layout down
                     // if fail must mean we need to schedule a new layout of the parent
@@ -489,8 +537,8 @@ mod window {
                 }
             }
 
-            // put back env
-            Self::walk_env(env.deref_mut(), &env_spot, &self.content_view);
+            // put back env to root
+            Self::walk_env(env.deref_mut(), env_spot, self.content_view.clone(), s);
             self.environment.set(Some(env));
         }
     }
