@@ -1146,7 +1146,7 @@ mod store {
     // S to be an associated type, but then we can't have default
     // filterless? So, it is done for consistency as a generic parameter
     pub trait Binding<S: Stateful, F: ActionFilter<Target=S>=Filterless<S>>: ActionDispatcher<S, F> + Signal<S> {
-        fn apply(&self, action: impl IntoAction<S::Action, S>, s: Slock<'_>);
+        fn apply(&self, action: impl IntoAction<S::Action, S>, s: Slock<'_, impl ThreadMarker>);
     }
 
     mod sealed_base {
@@ -1264,7 +1264,7 @@ mod store {
         // It's therefore done as macros
         impl<S, F, R> Binding<S, F> for R where
             S: Stateful, F: ActionFilter<Target=S>, R: RawStoreSharedOwnerBase<S, F> {
-            fn apply(&self, action: impl IntoAction<S::Action, S>, s: Slock<'_>) {
+            fn apply(&self, action: impl IntoAction<S::Action, S>, s: Slock<'_, impl ThreadMarker>) {
                 R::Inner::apply(self.get_ref(), action, false, s);
             }
         }

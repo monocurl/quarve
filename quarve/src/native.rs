@@ -122,6 +122,10 @@ pub mod window {
         fn back_window_set_title(window: *mut c_void, title: *const u8);
         fn back_window_set_needs_layout(window: *mut c_void);
         fn back_window_set_root(window: *mut c_void, root: *mut c_void);
+        fn back_window_get_size(window: *mut c_void, w: *mut f64, h: *mut f64);
+        fn back_window_set_size(window: *mut c_void, w: f64, h: f64);
+        fn back_window_set_min_size(window: *mut c_void, w: f64, h: f64);
+        fn back_window_set_max_size(window: *mut c_void, w: f64, h: f64);
         fn back_window_exit(window: *mut c_void);
         fn back_window_free(window: *mut c_void);
     }
@@ -144,6 +148,34 @@ pub mod window {
             let cstring = CString::new(title).unwrap();
             let bytes = cstring.as_bytes().as_ptr();
             back_window_set_title(window as *mut c_void, bytes)
+        }
+    }
+
+    pub fn window_get_size(window: WindowHandle, s: MSlock) -> (f64, f64) {
+        unsafe {
+            let mut w: f64 = 0.0;
+            let mut h: f64 = 0.0;
+            back_window_get_size(window as *mut c_void, &mut w as *mut f64, &mut h as *mut f64);
+
+            (w, h)
+        }
+    }
+
+    pub fn window_set_size(window: WindowHandle, w: f64, h: f64, _s: MSlock) {
+        unsafe {
+            back_window_set_size(window as *mut c_void, w, h);
+        }
+    }
+
+    pub fn window_set_min_size(window: WindowHandle, w: f64, h: f64, _s: MSlock) {
+        unsafe {
+            back_window_set_min_size(window as *mut c_void, w, h);
+        }
+    }
+
+    pub fn window_set_max_size(window: WindowHandle, w: f64, h: f64, _s: MSlock) {
+        unsafe {
+            back_window_set_max_size(window as *mut c_void, w, h);
         }
     }
 

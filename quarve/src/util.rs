@@ -372,6 +372,12 @@ pub mod geo {
         pub h: ScreenUnit,
     }
 
+    impl Size {
+        pub fn new(w: ScreenUnit, h: ScreenUnit) -> Self {
+            Size { w, h }
+        }
+    }
+
     #[derive(Copy, Clone, PartialEq, Eq, Debug)]
     pub enum Alignment {
         TopLeading,
@@ -399,6 +405,18 @@ pub mod geo {
     }
 
     impl AlignedFrame {
+        pub fn new(w: ScreenUnit, h: ScreenUnit, alignment: Alignment) -> Self {
+            AlignedFrame {
+                w, h, align: alignment
+            }
+        }
+
+        pub fn new_from_size(size: Size, alignment: Alignment) -> Self {
+            AlignedFrame {
+                w: size.w, h: size.h, align: alignment
+            }
+        }
+
         pub fn full_rect(self) -> Rect {
             Rect {
                 x: 0.0,

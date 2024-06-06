@@ -32,6 +32,7 @@ extern void front_execute_box(fat_pointer box);
     /* callbacks */
     @public fat_pointer handle;
 }
+- (void)setHandle:(fat_pointer) handle;
 - (instancetype)init;
 - (BOOL)windowShouldClose:(id)sender;
 @end
@@ -48,15 +49,19 @@ extern void front_execute_box(fat_pointer box);
 
 @implementation Window
 - (instancetype)init {
-    [super initWithContentRect:NSMakeRect(0, 0, 100, 100) styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
+    [super initWithContentRect:NSMakeRect(0, 0, 2, 2) styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
     [self setIsVisible:YES];
-
-    ContentView *contentView = [[ContentView alloc] initWithFrame:NSMakeRect(0, 0, 100, 100)];
-    [self setContentView:contentView];
 
     self.releasedWhenClosed = NO;
 
     return self;
+}
+- (void) setHandle:(fat_pointer) _handle {
+    self->handle = _handle;
+
+    ContentView *contentView = [[ContentView alloc] initWithFrame:NSMakeRect(0, 0, 100, 100)];
+    [self setContentView:contentView];
+    [self center];
 }
 
 - (BOOL)windowShouldClose:(id)sender {
@@ -105,7 +110,7 @@ back_window_init() {
 void
 back_window_set_handle(void *_window, fat_pointer handle) {
     Window* window = _window;
-    window->handle = handle;
+    [window setHandle:handle];
 }
 
 void
@@ -129,6 +134,32 @@ back_window_set_root(void *_window, void *root_view) {
     NSView* view = root_view;
 
     [[window contentView] addSubview: view];
+}
+
+void
+back_window_get_size(void *_window, double *w, double *h) {
+    Window* window = _window;
+    NSRect frame = [window contentView].frame;
+    *w = (double) frame.size.width;
+    *h = (double) frame.size.height;
+}
+
+void
+back_window_set_size(void *_window, double w, double h) {
+    Window* window = _window;
+    [window setContentSize: NSMakeSize(w, h)];
+}
+
+void
+back_window_set_min_size(void *_window, double w, double h) {
+    Window* window = _window;
+    window.contentMinSize = NSMakeSize(w, h);
+}
+
+void
+back_window_set_max_size(void *_window, double w, double h) {
+    Window* window = _window;
+    window.contentMaxSize = NSMakeSize(w, h);
 }
 
 void

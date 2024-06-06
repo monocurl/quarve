@@ -129,6 +129,9 @@ pub use view_provider::*;
 pub mod layout;
 pub mod modifers;
 
+#[cfg(debug_assertions)]
+pub mod dev_views;
+
 // vstack, hstack, zstack, hflex, vflex
 // scrollview
 // text, textfield, monotonicview

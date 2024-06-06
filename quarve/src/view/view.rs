@@ -21,23 +21,23 @@ impl<E, P> View<E, P> where E: Environment, P: ViewProvider<E> {
     }
 
     pub fn intrinsic_size(&self, s: MSlock) -> Size {
-        self.0.borrow_main(s).provider().intrinsic_size(s)
+        self.0.borrow_main(s).intrinsic_size(s)
     }
 
     pub fn xsquished_size(&self, s: MSlock) -> Size {
-        self.0.borrow_main(s).provider().xsquished_size(s)
+        self.0.borrow_main(s).xsquished_size(s)
     }
 
     pub fn xstretched_size(&self, s: MSlock) -> Size {
-        self.0.borrow_main(s).provider().xstretched_size(s)
+        self.0.borrow_main(s).xstretched_size(s)
     }
 
     pub fn ysquished_size(&self, s: MSlock) -> Size {
-        self.0.borrow_main(s).provider().ysquished_size(s)
+        self.0.borrow_main(s).ysquished_size(s)
     }
 
     pub fn ystretched_size(&self, s: MSlock) -> Size {
-        self.0.borrow_main(s).provider().ystretched_size(s)
+        self.0.borrow_main(s).ystretched_size(s)
     }
 }
 

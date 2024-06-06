@@ -1,9 +1,10 @@
 use quarve::core::{Application, Environment, launch, MSlock, timed_worker};
-use quarve::state::{Bindable, Binding, FixedSignal, NumericAction, Signal, Store, WithCapacitor};
-use quarve::state::capacitor::{ConstantSpeedCapacitor, SmoothCapacitor};
+use quarve::state::{Binding, FixedSignal, Signal, Store, WithCapacitor};
+use quarve::state::capacitor::{SmoothCapacitor};
 use quarve::state::SetAction::Set;
+use quarve::util::Vector;
 use quarve::view::{View, ViewProvider};
-use quarve::view::layout::{DebugView, Layout};
+use quarve::view::dev_views::{DebugView, Layout};
 
 struct Env;
 
@@ -40,25 +41,12 @@ impl quarve::core::WindowProvider for WindowProvider {
         let l0 = ViewProvider::make_view(DebugView, s);
         let l1 = ViewProvider::make_view(DebugView, s);
 
-        let pos = s.clock_signal()
-            .map(|s| {
-                let t = *s as f32 % 1.0;
-                let u = 3.0 * t * t - 2.0 * t * t * t;
-                u * std::f32::consts::PI * 2.0
-            }, s);
-
-        let store = Store::new(0.0);
+        let store = Store::new(Vector::from_array([0.0, 0.0]));
         let capacitated =
-            store.with_capacitor(SmoothCapacitor::ease_in_out(1.5), s);
+            // store.with_capacitor(ConstantSpeedCapacitor::new(10.0), s);
+            store.with_capacitor(SmoothCapacitor::ease_in_out(3.5), s);
 
-        let mut counter = 0;
-        timed_worker(move |d, s| {
-            if (d.as_secs_f64() > counter as f64) {
-                counter += 1;
-                store.apply(Set(counter as f32 % 2.0), s);
-            }
-            true
-        });
+        store.apply([Set(100.0), Set(10.0)], s);
 
         ViewProvider::make_view(Layout(l0, l1, capacitated), s)
     }

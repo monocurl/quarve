@@ -5,7 +5,7 @@ use crate::core::{Environment, MSlock, Slock, WindowEnvironmentBase};
 use crate::native;
 use crate::native::view::{view_add_child_at, view_clear_children, view_remove_child, view_set_frame};
 use crate::state::slock_cell::SlockCell;
-use crate::util::geo::{AlignedFrame, Point, Rect};
+use crate::util::geo::{AlignedFrame, Point, Rect, Size};
 use crate::util::rust_util::PhantomUnsendUnsync;
 use crate::view::{Handle, Invalidator, View, ViewProvider};
 
@@ -34,9 +34,17 @@ pub(crate) trait InnerViewBase<E> where E: Environment {
 
     // fails if the current view requires context
     // in such a case, we must go to the parent and retry
-    // this method should only be called if we know for sure
+    // frame should be the new frame for layout
+    // or null if we are to use the last frame
+    // this should only be done if we know for sure
     // the last frame is valid
-    fn try_layout_down(&mut self, env: &mut E, s: MSlock<'_>) -> Result<(), ()>;
+    fn try_layout_down(&mut self, env: &mut E, frame: Option<AlignedFrame>, s: MSlock<'_>) -> Result<(), ()>;
+
+    fn intrinsic_size(&self, s: MSlock) -> Size;
+    fn xsquished_size(&self, s: MSlock) -> Size;
+    fn xstretched_size(&self, s: MSlock) -> Size;
+    fn ysquished_size(&self, s: MSlock) -> Size;
+    fn ystretched_size(&self, s: MSlock) -> Size;
 
     /* mounting and unmounting */
 
@@ -117,8 +125,6 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
         // maybe different overall frame
         actually_needs_layout = actually_needs_layout || frame != self.last_frame;
 
-        self.needs_layout_down = false;
-
         let untranslated = if actually_needs_layout {
             self.provider.push_environment(env, s);
             let ret = self.provider.layout_down(frame, context, &mut Handle(env), s);
@@ -130,10 +136,11 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
             self.last_rect
         };
 
-
         self.last_point = at;
         self.last_rect = untranslated;
         self.last_frame = frame;
+
+        self.needs_layout_down = false;
 
         let translated = untranslated.translate(at);
         view_set_frame(self.backing(), translated, s);
@@ -207,13 +214,17 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
     }
 
     fn layout_up(&mut self, env: &mut E, s: MSlock<'_>) -> bool {
-        self.needs_layout_up = false;
+        assert!(self.needs_layout_up);
 
         let mut handle = Handle(env);
-        self.provider.layout_up(&mut self.subviews, &mut handle, s)
+        let ret = self.provider.layout_up(&mut self.subviews, &mut handle, s);
+
+        self.needs_layout_up = false;
+
+        ret
     }
 
-    fn try_layout_down(&mut self, env: &mut E, s: MSlock<'_>) -> Result<(), ()> {
+    fn try_layout_down(&mut self, env: &mut E, frame: Option<AlignedFrame>, s: MSlock<'_>) -> Result<(), ()> {
         // with optimizations, this has been tested to inline
         if self.is_trivial_context() {
             // safety: checked that P::LayoutContext == ()
@@ -221,13 +232,53 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
                 std::mem::transmute_copy::<(), P::LayoutContext>(&())
             };
 
-            self.layout_down_with_context(self.last_frame, self.last_point, env, &layout_context, s);
+            self.layout_down_with_context(frame.unwrap_or(self.last_frame), self.last_point, env, &layout_context, s);
 
             Ok(())
         }
         else {
             Err(())
         }
+    }
+
+    fn intrinsic_size(&self, s: MSlock) -> Size {
+        debug_assert!(!self.needs_layout_up() && self.window().is_some()
+                          && (self.superview.is_some() || self.depth == 0),
+                      "This method must only be called after the subview \
+                      has been mounted to the parent. Also, this view cannot be in an invalidated/dirty state");
+         self.provider.intrinsic_size(s)
+    }
+
+    fn xsquished_size(&self, s: MSlock) -> Size {
+        debug_assert!(!self.needs_layout_up() && self.window().is_some()
+                          && (self.superview.is_some() || self.depth == 0),
+                      "This method must only be called after the subview \
+                      has been mounted to the parent. Also, this view cannot be in an invalidated/dirty state");
+        self.provider.xsquished_size(s)
+    }
+
+    fn xstretched_size(&self, s: MSlock) -> Size {
+        debug_assert!(!self.needs_layout_up() && self.window().is_some()
+                          && (self.superview.is_some() || self.depth == 0),
+                      "This method must only be called after the subview \
+                      has been mounted to the parent. Also, this view cannot be in an invalidated/dirty state");
+        self.provider.xstretched_size(s)
+    }
+
+    fn ysquished_size(&self, s: MSlock) -> Size {
+        debug_assert!(!self.needs_layout_up() && self.window().is_some()
+                          && (self.superview.is_some() || self.depth == 0),
+                      "This method must only be called after the subview \
+                      has been mounted to the parent. Also, this view cannot be in an invalidated/dirty state");
+        self.provider.ysquished_size(s)
+    }
+
+    fn ystretched_size(&self, s: MSlock) -> Size {
+        debug_assert!(!self.needs_layout_up() && self.window().is_some()
+                          && (self.superview.is_some() || self.depth == 0),
+                      "This method must only be called after the subview \
+                      has been mounted to the parent. Also, this view cannot be in an invalidated/dirty state");
+        self.provider.ystretched_size(s)
     }
 
     fn show(
@@ -260,8 +311,11 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
             self.subviews.backing = self.provider.init_backing(invalidator, &mut self.subviews, None, None, &mut handle, s);
         }
 
-        /* invalidate this view */
-        self.invalidate(this, s.as_general_slock());
+        // we do NOT ask the window to invalidate this view
+        // instead, we only calculate layout_up after children do
+        // in all other cases layout_down will generally be called
+        self.needs_layout_up = true;
+        self.needs_layout_down = true;
 
         /* main notifications to provider and subtree */
         self.provider.pre_show(s);
@@ -282,6 +336,11 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         }
         self.provider.post_show(s);
 
+        // layout up now that subtree has done layout_up
+        // again, in most scenarios parent will call
+        // layout_down very soon (though technically not guaranteed)
+        self.layout_up(e, s);
+
         /* pop environment */
         self.pop_environment(e, s);
     }
@@ -289,6 +348,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
     fn hide(&mut self, s: MSlock<'_>) {
         // keep window, just remove superview
         self.superview = None;
+        self.depth = u32::MAX;
 
         self.provider.pre_hide(s);
         for subview in &self.subviews.subviews {
@@ -421,7 +481,8 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
         *org.borrow_mut_main(s) = MaybeUninit::new(InnerView {
             window: None,
             superview: None,
-            depth: 0,
+            // marker that it is not on a tree
+            depth: u32::MAX,
             subviews: Subviews {
                 owner: weak_transmute,
                 backing: 0 as *mut c_void,

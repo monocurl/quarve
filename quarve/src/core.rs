@@ -183,6 +183,7 @@ mod window {
     use crate::native::{WindowHandle};
     use crate::state::{Signal};
     use crate::state::slock_cell::SlockCell;
+    use crate::util::geo::{AlignedFrame, Alignment, Size};
     use crate::view::{InnerViewBase, View, ViewProvider};
 
     pub trait WindowProvider: 'static {
@@ -281,7 +282,7 @@ mod window {
             };
 
             let b = Arc::new(SlockCell::new_main(window, s));
-            // create initial tree
+            // create initial tree and other tasks
             Window::init(&b, s);
 
             // set handle of backing
@@ -291,6 +292,18 @@ mod window {
             }
 
             b
+        }
+
+        fn set_dimensions_of_window(&self, content_borrow: &mut dyn InnerViewBase<P::Env>, s: MSlock) {
+            let xsquish = content_borrow.xsquished_size(s);
+            let ysquish = content_borrow.ysquished_size(s);
+            let min = Size::new(xsquish.w.max(ysquish.w), xsquish.h.max(ysquish.h));
+            let xstretch = content_borrow.xstretched_size(s);
+            let ystretch = content_borrow.ystretched_size(s);
+            let max = Size::new(xstretch.w.min(ystretch.w), xstretch.h.max(ystretch.h));
+
+            native::window::window_set_min_size(self.handle, min.w as f64, min.h as f64, s);
+            native::window::window_set_max_size(self.handle, max.w as f64, max.h as f64, s);
         }
 
         fn init(this: &Arc<SlockCell<Self>>, s: MSlock) {
@@ -319,6 +332,17 @@ mod window {
 
             let mut content_borrow = content_copy.borrow_mut_main(s);
             content_borrow.show(weak_content, &weak_window, stolen_env.deref_mut(), 0u32, s);
+
+            let intrinsic = content_borrow.intrinsic_size(s);
+            content_borrow.try_layout_down(
+                stolen_env.deref_mut(),
+                Some(AlignedFrame::new_from_size(intrinsic, Alignment::Center)),
+                s
+            ).unwrap();
+
+            // set window size
+            native::window::window_set_size(borrow.handle, intrinsic.w as f64, intrinsic.h as f64, s);
+            borrow.set_dimensions_of_window(content_borrow.deref_mut(), s);
 
             // give back env
             borrow.environment.set(Some(stolen_env));
@@ -519,7 +543,7 @@ mod window {
                     // try to layout down
                     // if fail must mean we need to schedule a new layout of the parent
                     // as this node requires context
-                    if let Err(_) = borrow.try_layout_down(env.deref_mut(), s) {
+                    if let Err(_) = borrow.try_layout_down(env.deref_mut(), None, s) {
                         // superview must exist since otherwise layout
                         // wouldn't have failed
                         let superview = borrow.superview().unwrap();
@@ -541,6 +565,9 @@ mod window {
             // put back env to root
             Self::walk_env(env.deref_mut(), env_spot, self.content_view.clone(), s);
             self.environment.set(Some(env));
+
+            // maybe init dimensions of view
+            self.set_dimensions_of_window(self.content_view.borrow_mut_main(s).deref_mut(), s);
         }
     }
 
