@@ -10,9 +10,19 @@ pub struct View<E, P>(pub(crate) Arc<SlockCell<InnerView<E, P>>>)
     where E: Environment, P: ViewProvider<E>;
 
 impl<E, P> View<E, P> where E: Environment, P: ViewProvider<E> {
-    pub fn replace_provider(&self, with: P, env: &mut Handle<E>, s: MSlock) {
+    pub fn take_backing(&mut self, from: Self, env: &mut Handle<E>, s: MSlock) {
+        let mut other_inner = Arc::into_inner(from.0)
+            .expect("Can only take backing from view which has been removed from its superview")
+            .into_inner_main(s);
+
+        other_inner.subviews().clear_subviews(s);
+
+        let source = other_inner.into_backing_and_provider();
+
+        // init backing directly
+        let weak_this = Arc::downgrade(&self.0) as Weak<SlockCell<dyn InnerViewBase<E>>>;
         self.0.borrow_mut_main(s)
-            .replace_provider(&self.0, with, env, s);
+            .take_backing(weak_this, source, env, s)
     }
 
     pub fn layout_down_with_context(&self, aligned_frame: AlignedFrame, at: Point, context: &P::LayoutContext, parent_environment: &mut Handle<E>, s: MSlock) -> Rect {

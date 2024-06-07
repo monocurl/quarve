@@ -285,10 +285,14 @@ mod window {
             // create initial tree and other tasks
             Window::init(&b, s);
 
-            // set handle of backing
+            // set handle of backing as well as root view
             {
                 let borrow = b.borrow_main(s);
                 native::window::window_set_handle(handle, borrow.deref() as &dyn WindowBase, s);
+
+                let content_borrow = borrow.content_view.borrow_main(s);
+                debug_assert!(!content_borrow.backing().is_null());
+                native::window::window_set_root(handle, content_borrow.backing(), s);
             }
 
             b
@@ -323,7 +327,6 @@ mod window {
         // due to reentry
         fn mount_content_view(this: &Arc<SlockCell<Window<P>>>, s: MSlock, borrow: &Window<P>) {
             let handle = borrow.handle;
-            let weak_content = Arc::downgrade(&borrow.content_view);
             let weak_window = Arc::downgrade(this)
                 as Weak<SlockCell<dyn WindowEnvironmentBase<P::Env>>>;
 
@@ -331,8 +334,9 @@ mod window {
             let content_copy = borrow.content_view.clone();
 
             let mut content_borrow = content_copy.borrow_mut_main(s);
-            content_borrow.show(weak_content, &weak_window, stolen_env.deref_mut(), 0u32, s);
+            content_borrow.show(&borrow.content_view, &weak_window, stolen_env.deref_mut(), 0u32, s);
 
+            // show did layout up, now we must finish the layout down
             let intrinsic = content_borrow.intrinsic_size(s);
             content_borrow.try_layout_down(
                 stolen_env.deref_mut(),
@@ -340,16 +344,12 @@ mod window {
                 s
             ).unwrap();
 
-            // set window size
+            // set window size (not no recursive layout call can happen since handle not mounted yet)
             native::window::window_set_size(borrow.handle, intrinsic.w as f64, intrinsic.h as f64, s);
             borrow.set_dimensions_of_window(content_borrow.deref_mut(), s);
 
             // give back env
             borrow.environment.set(Some(stolen_env));
-
-            debug_assert!(!content_borrow.backing().is_null());
-
-            native::window::window_set_root(handle, content_borrow.backing(), s);
         }
 
         fn apply_window_style(s: MSlock, borrow: &Window<P>) {

@@ -1,55 +1,110 @@
 use crate::core::{Environment, MSlock};
-use crate::util::geo::Size;
-use crate::view::{Handle, Invalidator, Subviews};
+use crate::native;
+use crate::util::geo::{AlignedFrame, Rect, Size};
+use crate::view::{Handle, Invalidator, NativeView, Subtree, ViewProvider};
 
 // struct VStack, HStack, ZStack;
 // struct HFlex, VFlex;
 // struct VMap, HMap, ZMap, HFLexMap, VFlexMap;
 
 pub trait LayoutProvider<E>: Sized + 'static where E: Environment {
-    // fn make_view(self, s: MSlock) -> View<E, Self> {
-    //     todo!()
-    // }
-
     type LayoutContext: 'static;
 
-    fn intrinsic_size(&self) -> Size;
-
-    fn xsquished_size(&self) -> Size {
-        self.intrinsic_size()
+    fn into_layout_view_provider(self) -> LayoutViewProvider<E, Self> {
+        LayoutViewProvider(self)
     }
 
-    fn ysquished_size(&self) -> Size {
-        self.intrinsic_size()
+    fn intrinsic_size(&self, s: MSlock) -> Size;
+
+    fn xsquished_size(&self, s: MSlock) -> Size {
+        self.intrinsic_size(s)
     }
 
-    fn xstretched_size(&self) -> Size {
-        Size::new(1000.0, 400.0)
+    fn ysquished_size(&self, s: MSlock) -> Size {
+        self.intrinsic_size(s)
     }
 
-    fn ystretched_size(&self) -> Size {
-        Size::new(1000.0, 400.0)
+    fn xstretched_size(&self, s: MSlock) -> Size {
+        self.intrinsic_size(s)
     }
 
-
-    fn init(&self, invalidator: Invalidator<E>, s: MSlock) {
-
+    fn ystretched_size(&self, s: MSlock) -> Size {
+        self.intrinsic_size(s)
     }
 
-    fn layout_up(&self, subviews: &Subviews<E>, env: &mut Handle<E>, s: MSlock);
+    fn init(
+        &mut self,
+        invalidator: Invalidator<E>,
+        subtree: &mut Subtree<E>,
+        source_provider: Option<Self>,
+        env: &mut Handle<E>,
+        s: MSlock
+    );
 
-    fn layout_down(self, env: &mut Handle<E>, s: MSlock);
+    fn layout_up(
+        &mut self,
+        subtree: &mut Subtree<E>,
+        env: &mut Handle<E>,
+        s: MSlock
+    ) -> bool;
+
+    fn layout_down(
+        &mut self,
+        subtree: &Subtree<E>,
+        frame: AlignedFrame,
+        layout_context: &Self::LayoutContext,
+        env: &mut Handle<E>,
+        s: MSlock
+    ) -> Rect;
 }
 
-pub enum Monotonicity {
-    None,
-    Vertical,
-    Horizontal
+pub struct LayoutViewProvider<E, L>(L) where E: Environment, L: LayoutProvider<E>;
+unsafe impl<E, L> ViewProvider<E> for LayoutViewProvider<E, L>
+    where E: Environment, L: LayoutProvider<E> {
+    type LayoutContext = L::LayoutContext;
+
+    fn intrinsic_size(&self, s: MSlock) -> Size {
+        self.0.intrinsic_size(s)
+    }
+
+    fn xsquished_size(&self, s: MSlock) -> Size {
+        self.0.xsquished_size(s)
+    }
+
+    fn ysquished_size(&self, s: MSlock) -> Size {
+        self.ysquished_size(s)
+    }
+
+    fn xstretched_size(&self, s: MSlock) -> Size {
+        self.xstretched_size(s)
+    }
+
+    fn ystretched_size(&self, s: MSlock) -> Size {
+        self.ystretched_size(s)
+    }
+
+    fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut Handle<E>, s: MSlock<'_>) -> NativeView {
+        if let Some(source) = backing_source {
+            self.0.init(invalidator, subtree, Some(source.1.0), env, s);
+
+            source.0
+        }
+        else {
+            self.0.init(invalidator, subtree, None, env, s);
+
+            NativeView::new(native::view::init_layout_view(s))
+        }
+    }
+
+    fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut Handle<E>, s: MSlock<'_>) -> bool {
+        self.0.layout_up(subtree, env, s)
+    }
+
+    fn layout_down(&mut self, subtree: &Subtree<E>, frame: AlignedFrame, layout_context: &Self::LayoutContext, env: &mut Handle<E>, s: MSlock<'_>) -> Rect {
+        self.0.layout_down(subtree, frame, layout_context, env, s)
+    }
 }
+
 pub trait DynamicLayoutProvider {
-    const MONOTONICITY_OPTIMIZATIONS: Monotonicity;
 
-    // fn make_view(self, s: MSlock) {
-    //
-    // }
 }

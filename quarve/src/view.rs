@@ -4,22 +4,20 @@ pub use inner_view::*;
 mod view;
 pub use view::*;
 
-mod into_view {
+mod into_view_provider {
     use crate::core::{Environment, MSlock};
-    use crate::view::{View, ViewProvider};
+    use crate::view::{ViewProvider};
 
-    pub trait IntoView<E: Environment> {
-        fn into_view(self, env: &E, s: MSlock<'_>) -> View<E, impl ViewProvider<E>>;
+    pub trait IntoViewProvider<E: Environment>: Sized {
+        fn into_view_provider(self, env: &E, s: MSlock) -> impl ViewProvider<E>;
     }
 }
-pub use into_view::*;
+pub use into_view_provider::*;
 
 mod view_provider {
-    use std::ffi::c_void;
     use crate::core::{Environment, MSlock};
     use crate::util::geo::{AlignedFrame, Rect, Size};
-    use crate::view::inner_view::InnerView;
-    use crate::view::{Handle, Invalidator, Subviews, View};
+    use crate::view::{Handle, InnerView, Invalidator, NativeView, Subtree, View};
 
     pub unsafe trait ViewProvider<E>: Sized + 'static
         where E: Environment
@@ -30,7 +28,7 @@ mod view_provider {
         /// must be sent down to child (or grandchild) views
         type LayoutContext: 'static;
 
-        fn make_view(self, s: MSlock) -> View<E, Self> {
+        fn into_view(self, s: MSlock) -> View<E, Self> {
             View(InnerView::new(self, s))
         }
 
@@ -43,7 +41,7 @@ mod view_provider {
         /// Allocate a backing and perform other initialization steps.
         /// This method will only be called once for a given view provider.
         ///
-        /// * `replaced_backing` - The old backing that this view will be replacing.
+        /// * `backing_source` - The old backing that this view will be replacing.
         /// This will be None if we are not replacing an old view (i.e. a fresh allocation).
         /// It is guaranteed that the backing provided will be allocated from a view of the same type,
         /// specifically that which was provided the `replaced_provider`.
@@ -54,12 +52,11 @@ mod view_provider {
         fn init_backing(
             &mut self,
             invalidator: Invalidator<E>,
-            subviews: &mut Subviews<E>,
-            replaced_backing: Option<*mut c_void>,
-            replaced_provider: Option<Self>,
+            subtree: &mut Subtree<E>,
+            backing_source: Option<(NativeView, Self)>,
             env: &mut Handle<E>,
             s: MSlock<'_>
-        ) -> *mut c_void;
+        ) -> NativeView;
 
         /// The children have properly calculated their
         /// minimum, intrinsic, and maximum sizes
@@ -71,7 +68,7 @@ mod view_provider {
         /// and is generally the place to relay state changes to backings
         fn layout_up(
             &mut self,
-            subviews: &mut Subviews<E>,
+            subtree: &mut Subtree<E>,
             env: &mut Handle<E>,
             s: MSlock<'_>
         ) -> bool;
@@ -83,6 +80,7 @@ mod view_provider {
         /// Return value is used value within the frame
         fn layout_down(
             &mut self,
+            subtree: &Subtree<E>,
             frame: AlignedFrame,
             layout_context: &Self::LayoutContext,
             env: &mut Handle<E>,
@@ -131,6 +129,7 @@ pub mod modifers;
 
 #[cfg(debug_assertions)]
 pub mod dev_views;
+mod macros;
 
 // vstack, hstack, zstack, hflex, vflex
 // scrollview

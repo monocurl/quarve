@@ -16,10 +16,20 @@ pub mod slock_cell {
         pub fn new(val: T) -> Self {
             SlockCell(RefCell::new(val))
         }
+
+        // slock isnt necessary
+        // since we have ownership at this point
+        pub fn into_inner(self) -> T {
+            self.0.into_inner()
+        }
     }
 
     impl<T> SlockCell<T> {
-        pub fn new_main(val: T, _m: MSlock) -> Self {
+        pub fn into_inner_main(self, _s: MSlock) -> T {
+            self.0.into_inner()
+        }
+
+        pub fn new_main(val: T, _s: MSlock) -> Self {
             SlockCell(RefCell::new(val))
         }
     }
