@@ -3,18 +3,35 @@ use quarve::state::{Binding, FixedSignal, Signal, Store, WithCapacitor};
 use quarve::state::capacitor::{ConstantTimeCapacitor};
 use quarve::state::SetAction::Set;
 use quarve::util::Vector;
-use quarve::view::{View, ViewProvider};
+use quarve::view::{IntoViewProvider, View, ViewProvider};
 use quarve::view::dev_views::{DebugView, Layout};
+use quarve::view::layout::{VecSignalLayout, VStack};
+use quarve::view::layout::*;
 
-struct Env;
+struct Env(());
 
 struct ApplicationProvider;
 
 struct WindowProvider;
 
 impl Environment for Env {
+    type Const = ();
+    type Variable = ();
+
     fn root_environment() -> Self {
-        Env
+        Env(())
+    }
+
+    fn const_env(&self) -> &Self::Const {
+        &self.0
+    }
+
+    fn variable_env(&self) -> &Self::Variable {
+        &self.0
+    }
+
+    fn variable_env_mut(&mut self) -> &mut Self::Variable {
+        &mut self.0
     }
 }
 
@@ -37,18 +54,17 @@ impl quarve::core::WindowProvider for WindowProvider {
 
     }
 
-    fn tree(&self, env: &Env, s: MSlock<'_>) -> View<Env, impl ViewProvider<Env, LayoutContext=()>> {
-        let l0 = DebugView.into_view(s);
-        let l1 = DebugView.into_view(s);
-
-        let store = Store::new(Vector::from_array([0.0, 0.0]));
-        let capacitated =
-            store.with_capacitor(ConstantTimeCapacitor::new(0.5), s);
-            // store.with_capacitor(SmoothCapacitor::ease_in_out(3.5), s);
-
-        store.apply([Set(100.0), Set(10.0)], s);
-
-        Layout(l0, l1, capacitated)
+    fn tree(&self, env: &Env, s: MSlock<'_>) -> View<Env, impl ViewProvider<Env, DownContext=()>> {
+        // let items = s.clock_signal()
+        //     .map(|s| {
+        //         let range = 0 .. ((5.0 * s.sin().abs()) as i32);
+        //         range.into_iter().collect()
+        //     }, s);
+        let items = FixedSignal::new(vec![1, 2]);
+        items.signal_vmap(|i, s| {
+            DebugView
+        })
+            .into_view_provider(env.const_env(), s)
             .into_view(s)
     }
 }

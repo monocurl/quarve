@@ -6,130 +6,54 @@ pub use view::*;
 
 mod into_view_provider {
     use crate::core::{Environment, MSlock};
-    use crate::view::{ViewProvider};
+    use crate::view::ViewProvider;
 
+    // it may seem like we will have to wait a while for
+    // TAIT but in the meantime it's not so bad
+    // since 99% of the time intoviewprovider is only called
+    // from intoviewprovider methods, which means capturing
+    // rules arent that bad. Otherwise, it's fine to elide
+    // the capture rules anyways since ViewProvider references static data
+    // (does require unsafe still though)
     pub trait IntoViewProvider<E: Environment>: Sized {
-        fn into_view_provider(self, env: &E, s: MSlock) -> impl ViewProvider<E>;
+        type UpContext;
+        type DownContext;
+
+        fn into_view_provider(self, env: &E::Const, s: MSlock)
+            -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext>;
     }
 }
 pub use into_view_provider::*;
 
-mod view_provider {
-    use crate::core::{Environment, MSlock};
-    use crate::util::geo::{AlignedFrame, Rect, Size};
-    use crate::view::{Handle, InnerView, Invalidator, NativeView, Subtree, View};
-
-    pub unsafe trait ViewProvider<E>: Sized + 'static
-        where E: Environment
+mod into_up_context {
+    // can't implement Into for our own context
+    pub trait IntoUpContext<T>: 'static
+        where T: 'static
     {
-        /// Additional context to be used when performing layouts
-        /// Typically, this is set to ()
-        /// This may be useful when information from parent views
-        /// must be sent down to child (or grandchild) views
-        type LayoutContext: 'static;
+        fn into_up_context(self) -> T;
+    }
 
-        fn into_view(self, s: MSlock) -> View<E, Self> {
-            View(InnerView::new(self, s))
-        }
-
-        fn intrinsic_size(&self, s: MSlock) -> Size;
-        fn xsquished_size(&self, s: MSlock) -> Size;
-        fn ysquished_size(&self, s: MSlock) -> Size;
-        fn xstretched_size(&self, s: MSlock) -> Size;
-        fn ystretched_size(&self, s: MSlock) -> Size;
-
-        /// Allocate a backing and perform other initialization steps.
-        /// This method will only be called once for a given view provider.
-        ///
-        /// * `backing_source` - The old backing that this view will be replacing.
-        /// This will be None if we are not replacing an old view (i.e. a fresh allocation).
-        /// It is guaranteed that the backing provided will be allocated from a view of the same type,
-        /// specifically that which was provided the `replaced_provider`.
-        /// The high level idea is that by providing the old backing,
-        /// allocations may be avoided in a manner very similar to a recycler view.
-        /// * `replaced_provider` - The provider that this view is replacing. None if if we are doing a
-        /// fresh allocation and not replacing an old view.
-        fn init_backing(
-            &mut self,
-            invalidator: Invalidator<E>,
-            subtree: &mut Subtree<E>,
-            backing_source: Option<(NativeView, Self)>,
-            env: &mut Handle<E>,
-            s: MSlock<'_>
-        ) -> NativeView;
-
-        /// The children have properly calculated their
-        /// minimum, intrinsic, and maximum sizes
-        /// We must now calculate ours
-        /// If any changes to the bounds happened,
-        /// this method should return true to indicate that
-        /// the parent must recalculate as well
-        /// This method is always called before layout down
-        /// and is generally the place to relay state changes to backings
-        fn layout_up(
-            &mut self,
-            subtree: &mut Subtree<E>,
-            env: &mut Handle<E>,
-            s: MSlock<'_>
-        ) -> bool;
-
-        /// The children have properly calculated their
-        /// minimum, intrinsic, and maximum sizes
-        /// (and so have we)
-        /// Now, we must position them according to the given frame
-        /// Return value is used value within the frame
-        fn layout_down(
-            &mut self,
-            subtree: &Subtree<E>,
-            frame: AlignedFrame,
-            layout_context: &Self::LayoutContext,
-            env: &mut Handle<E>,
-            s: MSlock<'_>
-        ) -> Rect;
-
-        // callback methods
-        fn pre_show(&self, _s: MSlock<'_>) {
-
-        }
-
-        fn post_show(&self, _s: MSlock<'_>) {
-
-        }
-
-        fn pre_hide(&self, _s: MSlock<'_>) {
-
-        }
-
-        fn post_hide(&self, _s: MSlock<'_>) {
-
-        }
-
-        // focus and unfocused state...
-        fn focused(&self, _s: MSlock<'_>) {
-
-        }
-
-        fn unfocused(&self, _s: MSlock<'_>) {
-
-        }
-
-        fn push_environment(&self, _env: &mut E, _s: MSlock) {
-
-        }
-
-        fn pop_environment(&self, _env: &mut E, _s: MSlock) {
-
+    impl<T> IntoUpContext<T> for T
+        where T: 'static
+    {
+        fn into_up_context(self) -> T {
+            self
         }
     }
 }
+pub use into_up_context::*;
+
+pub mod view_provider;
 pub use view_provider::*;
 
 pub mod layout;
 pub mod modifers;
+pub mod macros;
+pub mod util;
 
 #[cfg(debug_assertions)]
+#[allow(unused_variables)]
 pub mod dev_views;
-mod macros;
 
 // vstack, hstack, zstack, hflex, vflex
 // scrollview

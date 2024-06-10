@@ -151,6 +151,7 @@ pub mod window {
         }
     }
 
+    #[allow(unused_variables)]
     pub fn window_get_size(window: WindowHandle, s: MSlock) -> (f64, f64) {
         unsafe {
             let mut w: f64 = 0.0;

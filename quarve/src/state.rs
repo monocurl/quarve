@@ -11,6 +11,7 @@ pub mod slock_cell {
     use crate::util::rust_util::{EnsureSend, EnsureSync};
 
     pub struct SlockCell<T>(RefCell<T>) where T: ?Sized;
+    pub struct MainSlockCell<T>(Option<RefCell<T>>);
 
     impl<T> SlockCell<T> where T: Send {
         pub fn new(val: T) -> Self {
@@ -151,7 +152,8 @@ mod group {
         // This method should return an action listener
         // to be applied on the surrounding container
         // (if it wants)
-        fn subtree_general_listener<F>(&self, _f: F, _s: Slock<'_, impl ThreadMarker>)
+        #[allow(unused_variables)]
+        fn subtree_general_listener<F>(&self, f: F, s: Slock<'_, impl ThreadMarker>)
             -> Option<impl Send + FnMut(&Self, &Self::Action, Slock<'_>) -> bool + 'static>
             where F: GeneralListener + Clone {
             None::<fn(&Self, &Self::Action, Slock<'_>) -> bool>
@@ -159,7 +161,8 @@ mod group {
 
         // Returns an action listener to be applied on the parent container
         // (if necessary)
-        fn subtree_inverse_listener<F>(&self, _f: F, _s: Slock<'_, impl ThreadMarker>)
+        #[allow(unused_variables)]
+        fn subtree_inverse_listener<F>(&self, f: F, s: Slock<'_, impl ThreadMarker>)
             -> Option<impl Send + FnMut(&Self, &Self::Action, Slock<'_>) -> bool + 'static>
             where F: InverseListener + Clone {
             None::<fn(&Self, &Self::Action, Slock<'_>) -> bool>
@@ -203,46 +206,49 @@ mod group {
     }
 
     mod word {
-        use std::marker::PhantomData;
         use std::ops::Mul;
         use crate::state::{GroupAction, GroupBasis, IntoAction, Stateful};
 
-        pub struct Word<T, B> where T: Stateful, B: GroupBasis<T> {
-            items: Vec<B>,
-            stateful: PhantomData<T>
+        #[derive(Debug)]
+        pub struct Word<T> where T: 'static {
+            items: Vec<T>,
         }
 
-        impl<T, B> Clone for Word<T, B> where B: GroupBasis<T> + Clone, T: Stateful {
+        impl<T> Default for Word<T> where T: 'static {
+            fn default() -> Self {
+                Word::new(vec![])
+            }
+        }
+
+        impl<T> Clone for Word<T> where T: Clone + 'static {
             fn clone(&self) -> Self {
                 Word {
                     items: self.items.clone(),
-                    stateful: PhantomData
                 }
             }
         }
-        impl<T, B> Word<T, B> where B: GroupBasis<T>, T: Stateful {
-            pub fn new(word: Vec<B>) -> Self {
+        impl<T> Word<T> where T: 'static {
+            pub fn new(word: Vec<T>) -> Self {
                 Word {
                     items: word,
-                    stateful: PhantomData
                 }
             }
 
-            pub fn iter(&self) -> impl Iterator<Item=&B> {
+            pub fn iter(&self) -> impl Iterator<Item=&T> {
                 self.items.iter()
             }
         }
 
-        impl<T, B> IntoIterator for Word<T, B> where B: GroupBasis<T>, T: Stateful {
-            type Item = B;
-            type IntoIter = <Vec<B> as IntoIterator>::IntoIter;
+        impl<T> IntoIterator for Word<T> where T: 'static {
+            type Item = T;
+            type IntoIter = <Vec<T> as IntoIterator>::IntoIter;
 
             fn into_iter(self) -> Self::IntoIter {
                 self.items.into_iter()
             }
         }
 
-        impl<T, B> Mul for Word<T, B> where B: GroupBasis<T>, T: Stateful {
+        impl<T> Mul for Word<T> where T: 'static {
             type Output = Self;
 
             fn mul(mut self, mut rhs: Self) -> Self::Output {
@@ -252,7 +258,7 @@ mod group {
             }
         }
 
-        impl<T, B> GroupBasis<T> for Word<T, B> where T: Stateful, B: GroupBasis<T> {
+        impl<T, B> GroupBasis<T> for Word<B> where T: Stateful, B: GroupBasis<T> {
             fn apply(self, to: &mut T) -> Self {
                 let bases = self.items;
 
@@ -266,15 +272,15 @@ mod group {
             }
         }
 
-        impl<T, B> GroupAction<T> for Word<T, B> where T: Stateful, B: GroupBasis<T> {
+        impl<T, B> GroupAction<T> for Word<B> where T: Stateful, B: GroupBasis<T> {
 
             fn identity() -> Self {
                 Word::new(Vec::new())
             }
         }
 
-        impl<T, B> IntoAction<Word<T, B>, T> for B where T: Stateful, B: GroupBasis<T> {
-            fn into_action(self, _target: &T) -> Word<T, B> {
+        impl<T, B> IntoAction<Word<B>, T> for B where T: Stateful, B: GroupBasis<T> {
+            fn into_action(self, _target: &T) -> Word<B> {
                 Word::new(vec![self])
             }
         }
@@ -444,13 +450,14 @@ mod group {
             }
 
             impl Stateful for String {
-                type Action = Word<String, StringActionBasis>;
+                type Action = Word<StringActionBasis>;
                 type HasInnerStores = FalseMarker;
             }
         }
         pub use string_action::*;
 
         mod vec_action {
+            use std::ops::Range;
             use crate::core::{Slock};
             use crate::state::{GeneralListener, GroupBasis, InverseListener, Stateful, StoreContainer, Word};
             use crate::util::markers::{ThreadMarker, TrueMarker};
@@ -460,6 +467,9 @@ mod group {
                 /* indices */
                 Insert(T, usize),
                 Remove(usize),
+                InsertMany(Vec<T>, usize),
+                RemoveMany(Range<usize>),
+                // u, v
                 Swap(usize, usize)
             }
 
@@ -472,9 +482,21 @@ mod group {
                             to.insert(at, elem);
                             VecActionBasis::Remove(at)
                         },
+                        VecActionBasis::InsertMany(items, at) => {
+                            let reverse = VecActionBasis::RemoveMany(at.. at + items.len());
+                            to.splice(at..at, items.into_iter());
+                            reverse
+                        }
                         VecActionBasis::Remove(at) => {
                             let removed = to.remove(at);
                             VecActionBasis::Insert(removed, at)
+                        }
+                        VecActionBasis::RemoveMany(start) => {
+                            let at = start.start;
+                            let items: Vec<T> = to.splice(start, std::iter::empty())
+                                .collect();
+
+                            VecActionBasis::InsertMany(items, at)
                         }
                         VecActionBasis::Swap(a, b) => {
                             to.swap(a, b);
@@ -488,7 +510,7 @@ mod group {
             /* in certain cases (for inverse listener), some listeners can be held on a bit longer than they ideally should be */
             /* but this is somewhat hard to avoid */
             impl<T> Stateful for Vec<T> where T: StoreContainer {
-                type Action = Word<Vec<T>, VecActionBasis<T>>;
+                type Action = Word<VecActionBasis<T>>;
                 type HasInnerStores = TrueMarker;
 
                 fn subtree_general_listener<F>(&self, mut f: F, s: Slock<'_, impl ThreadMarker>)
@@ -499,7 +521,7 @@ mod group {
                         store.subtree_general_listener(f.clone(), s);
                     }
 
-                    Some(move |_v: &Vec<T>, w: &Word<Vec<T>, VecActionBasis<T>>, s: Slock| {
+                    Some(move |_v: &Vec<T>, w: &Word<VecActionBasis<T>>, s: Slock| {
                         for a in w.iter() {
                             match a {
                                 VecActionBasis::Insert(store, _) => {
@@ -525,7 +547,7 @@ mod group {
                         store.subtree_inverse_listener(f.clone(), s);
                     }
 
-                    Some(move |_v: &Vec<T>, w: &Word<Vec<T>, VecActionBasis<T>>, s: Slock| {
+                    Some(move |_v: &Vec<T>, w: &Word<VecActionBasis<T>>, s: Slock| {
                         for a in w.iter() {
                             match a {
                                 VecActionBasis::Insert(store, _) => {
@@ -2414,6 +2436,12 @@ mod buffer {
         }
     }
 
+    impl<T> Buffer<T> where T: Send + Default {
+        pub fn take(&self, s: Slock<'_, impl ThreadMarker>) -> T {
+            std::mem::take(self.borrow_mut(s).deref_mut())
+        }
+    }
+
     impl<T> WeakBuffer<T> where T: Send {
         pub fn upgrade(&self) -> Option<Buffer<T>> {
             self.0.upgrade().map(|arc| Buffer(arc))
@@ -2427,7 +2455,8 @@ mod signal {
     use crate::core::{Slock};
     use crate::util::markers::ThreadMarker;
 
-    pub trait Signal<T: Send + 'static> : Sized + Send + Sync + 'static {
+    pub trait Signal<T> : Sized + Send + Sync + 'static
+        where T: Send + 'static {
         /// Be careful about calling this method within an
         /// action_listener or related fields. While not bad by itself
         /// This can easily cause retain cycles
@@ -2435,11 +2464,11 @@ mod signal {
         /// DerivedStores, or Buffers
         fn borrow(&self, s: Slock<'_, impl ThreadMarker>) -> impl Deref<Target=T> + '_;
 
-        fn listen<F>(&self, listener: F, _s: Slock<'_, impl ThreadMarker>)
+        fn listen<F>(&self, listener: F, s: Slock<'_, impl ThreadMarker>)
             where F: (FnMut(&T, Slock<'_>) -> bool) + Send + 'static;
 
         type MappedOutput<S: Send + 'static>: Signal<S> + Clone;
-        fn map<S, F>(&self, map: F, _s: Slock<'_, impl ThreadMarker>) -> Self::MappedOutput<S>
+        fn map<S, F>(&self, map: F, s: Slock<'_, impl ThreadMarker>) -> Self::MappedOutput<S>
             where S: Send + 'static,
                   F: Send + 'static + Fn(&T) -> S;
 

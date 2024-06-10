@@ -4,13 +4,14 @@ use crate::state::slock_cell::SlockCell;
 use crate::util::geo::{AlignedFrame, Point, Rect, Size};
 use crate::util::rust_util::EnsureSend;
 use crate::view::inner_view::{InnerView, InnerViewBase};
-use crate::view::ViewProvider;
+use crate::view::util::SizeContainer;
+use crate::view::view_provider::ViewProvider;
 
 pub struct View<E, P>(pub(crate) Arc<SlockCell<InnerView<E, P>>>)
-    where E: Environment, P: ViewProvider<E>;
+    where E: Environment, P: ViewProvider<E> + ?Sized;
 
 impl<E, P> View<E, P> where E: Environment, P: ViewProvider<E> {
-    pub fn take_backing(&mut self, from: Self, env: &mut Handle<E>, s: MSlock) {
+    pub fn take_backing(&mut self, from: Self, env: &mut EnvHandle<E>, s: MSlock) {
         let mut other_inner = Arc::into_inner(from.0)
             .expect("Can only take backing from view which has been removed from its superview")
             .into_inner_main(s);
@@ -25,34 +26,45 @@ impl<E, P> View<E, P> where E: Environment, P: ViewProvider<E> {
             .take_backing(weak_this, source, env, s)
     }
 
-    pub fn layout_down_with_context(&self, aligned_frame: AlignedFrame, at: Point, context: &P::LayoutContext, parent_environment: &mut Handle<E>, s: MSlock) -> Rect {
+    pub fn up_context(&self, s: MSlock) -> P::UpContext {
+        self.0.borrow_mut_main(s)
+            .provider()
+            .up_context(s)
+    }
+
+    pub fn layout_down_with_context(&self, aligned_frame: AlignedFrame, at: Point, context: &P::DownContext, parent_environment: &mut EnvHandle<E>, s: MSlock) -> Rect {
         self.0.borrow_mut_main(s)
             .layout_down_with_context(aligned_frame, at, parent_environment.0, context, s)
     }
 
     pub fn intrinsic_size(&self, s: MSlock) -> Size {
-        self.0.borrow_main(s).intrinsic_size(s)
+        self.0.borrow_mut_main(s).intrinsic_size(s)
     }
 
     pub fn xsquished_size(&self, s: MSlock) -> Size {
-        self.0.borrow_main(s).xsquished_size(s)
+        self.0.borrow_mut_main(s).xsquished_size(s)
     }
 
     pub fn xstretched_size(&self, s: MSlock) -> Size {
-        self.0.borrow_main(s).xstretched_size(s)
+        self.0.borrow_mut_main(s).xstretched_size(s)
     }
 
     pub fn ysquished_size(&self, s: MSlock) -> Size {
-        self.0.borrow_main(s).ysquished_size(s)
+        self.0.borrow_mut_main(s).ysquished_size(s)
     }
 
     pub fn ystretched_size(&self, s: MSlock) -> Size {
-        self.0.borrow_main(s).ystretched_size(s)
+        self.0.borrow_mut_main(s).ystretched_size(s)
+    }
+
+    pub fn sizes(&self, s: MSlock) -> SizeContainer {
+        self.0.borrow_mut_main(s)
+            .provider().sizes(s)
     }
 }
 
-impl<E, P> View<E, P> where E: Environment, P: ViewProvider<E, LayoutContext=()> {
-    pub fn layout_down(&self, aligned_frame: AlignedFrame, at: Point, parent_environment: &mut Handle<E>, s: MSlock) -> Rect {
+impl<E, P> View<E, P> where E: Environment, P: ViewProvider<E, DownContext=()> {
+    pub fn layout_down(&self, aligned_frame: AlignedFrame, at: Point, parent_environment: &mut EnvHandle<E>, s: MSlock) -> Rect {
         self.layout_down_with_context(aligned_frame, at, &(), parent_environment, s)
     }
 }
@@ -110,13 +122,19 @@ impl<E> StrongInvalidator<E> where E: Environment {
     }
 }
 
-pub struct Handle<'a, E>(pub(crate) &'a mut E) where E: Environment;
+pub struct EnvHandle<'a, E>(pub(crate) &'a mut E) where E: Environment;
 
-impl<'a, E> Handle<'a, E> where E: Environment {
-    pub fn env<'b>(&'b self) -> &'a E
+impl<'a, E> EnvHandle<'a, E> where E: Environment {
+    pub fn const_env<'b>(&'b self) -> &'a E::Const
         where 'b: 'a
     {
-        self.0
+        self.0.const_env()
+    }
+
+    pub fn variable_env<'b>(&'b self) -> &'a E::Variable
+        where 'b: 'a
+    {
+        self.0.variable_env()
     }
 }
 

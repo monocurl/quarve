@@ -147,6 +147,8 @@ back_window_get_size(void *_window, double *w, double *h) {
 void
 back_window_set_size(void *_window, double w, double h) {
     Window* window = _window;
+    w = 1000;
+    h = 1000;
     [window setContentSize: NSMakeSize(w, h)];
 }
 

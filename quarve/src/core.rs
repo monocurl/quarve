@@ -127,7 +127,14 @@ mod application {
     use crate::state::slock_cell::SlockCell;
 
     pub trait Environment: 'static {
+        type Const: 'static;
+        type Variable: 'static;
+
         fn root_environment() -> Self;
+
+        fn const_env(&self) -> &Self::Const;
+        fn variable_env(&self) -> &Self::Variable;
+        fn variable_env_mut(&mut self) -> &mut Self::Variable;
     }
 
     pub trait ApplicationProvider: 'static {
@@ -184,7 +191,8 @@ mod window {
     use crate::state::{Signal};
     use crate::state::slock_cell::SlockCell;
     use crate::util::geo::{AlignedFrame, Alignment, Size};
-    use crate::view::{InnerViewBase, View, ViewProvider};
+    use crate::view::{InnerViewBase, View};
+    use crate::view::view_provider::{ViewProvider};
 
     pub trait WindowProvider: 'static {
         type Env: Environment;
@@ -194,7 +202,7 @@ mod window {
         fn style(&self, s: MSlock<'_>);
 
         fn tree(&self, env: &Self::Env, s: MSlock<'_>)
-            -> View<Self::Env, impl ViewProvider<Self::Env, LayoutContext=()>>;
+            -> View<Self::Env, impl ViewProvider<Self::Env, DownContext=()>>;
 
         fn can_close(&self, _s: MSlock<'_>) -> bool {
             true
@@ -326,7 +334,6 @@ mod window {
         // logic is a bit tricky for initial mounting
         // due to reentry
         fn mount_content_view(this: &Arc<SlockCell<Window<P>>>, s: MSlock, borrow: &Window<P>) {
-            let handle = borrow.handle;
             let weak_window = Arc::downgrade(this)
                 as Weak<SlockCell<dyn WindowEnvironmentBase<P::Env>>>;
 
@@ -391,12 +398,13 @@ mod window {
             let mut curr_depth = from.borrow_main(s).depth();
             let mut targ_depth = to.borrow_main(s).depth();
 
+            // FIXME, some borrows can be elided into one
             let mut curr = from;
             let mut targ = to;
             while curr_depth > targ_depth {
                 let next = curr.borrow_main(s).superview().unwrap();
                 curr = next;
-                curr.borrow_main(s)
+                curr.borrow_mut_main(s)
                     .pop_environment(env, s);
                 curr_depth -= 1;
             }
@@ -406,7 +414,7 @@ mod window {
                     // need to advance curr as well
                     let next = curr.borrow_main(s).superview().unwrap();
                     curr = next;
-                    curr.borrow_main(s)
+                    curr.borrow_mut_main(s)
                         .pop_environment(env, s);
                     curr_depth -= 1;
                 }
@@ -421,7 +429,7 @@ mod window {
 
             // walk towards the target
             for node in targ_stack.into_iter().rev() {
-                node.borrow_main(s)
+                node.borrow_mut_main(s)
                     .push_environment(env, s);
             }
         }
@@ -619,6 +627,7 @@ mod slock {
     #[cfg(debug_assertions)]
     static LOCKED_THREAD: Mutex<Option<thread::ThreadId>> = Mutex::new(None);
 
+    #[allow(unused)]
     pub struct SlockOwner<M=AnyThreadMarker> where M: ThreadMarker {
         _guard: MutexGuard<'static, ()>,
         pub(crate) debug_info: DebugInfo,
@@ -628,6 +637,7 @@ mod slock {
 
     #[cfg(debug_assertions)]
     #[derive(Copy, Clone)]
+    #[allow(unused)]
     pub struct Slock<'a, M=AnyThreadMarker> where M: ThreadMarker {
         pub(crate) owner: &'a SlockOwner<M>,
         // unnecessary? but to emphasize
@@ -636,6 +646,7 @@ mod slock {
 
     #[cfg(not(debug_assertions))]
     #[derive(Copy, Clone)]
+    #[allow(unused)]
     pub struct Slock<'a, M=AnyThreadMarker> where M: ThreadMarker {
         owner: PhantomData<&'a SlockOwner<M>>,
         unsend_unsync: PhantomUnsendUnsync,
@@ -807,7 +818,7 @@ mod slock {
                 // data layouts of us and owner are the same
                 // and we confirmed we're on the main thread
                 unsafe {
-                    Some(std::mem::transmute(self))
+                    Some(std::mem::transmute::<Slock<'a, M>, MSlock<'a>>(self))
                 }
             }
         }
@@ -827,7 +838,7 @@ mod slock {
             // (the layout of slock are certainly the same)
             // (and the layout of slock owner are the same)
             unsafe {
-                std::mem::transmute(self)
+                std::mem::transmute::<Self, Slock<'a>>(self)
             }
         }
     }

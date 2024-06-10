@@ -7,7 +7,9 @@ use crate::native::view::{view_add_child_at, view_clear_children, view_remove_ch
 use crate::state::slock_cell::SlockCell;
 use crate::util::geo::{AlignedFrame, Point, Rect, Size};
 use crate::util::rust_util::PhantomUnsendUnsync;
-use crate::view::{Handle, Invalidator, View, ViewProvider};
+use crate::view::{EnvHandle, Invalidator, View};
+use crate::view::util::SizeContainer;
+use crate::view::view_provider::ViewProvider;
 
 pub(crate) trait InnerViewBase<E> where E: Environment {
     /* native methods */
@@ -40,12 +42,12 @@ pub(crate) trait InnerViewBase<E> where E: Environment {
     // the last frame is valid
     fn try_layout_down(&mut self, env: &mut E, frame: Option<AlignedFrame>, s: MSlock<'_>) -> Result<(), ()>;
 
-    fn intrinsic_size(&self, s: MSlock) -> Size;
-    fn xsquished_size(&self, s: MSlock) -> Size;
-    fn xstretched_size(&self, s: MSlock) -> Size;
-    fn ysquished_size(&self, s: MSlock) -> Size;
-    fn ystretched_size(&self, s: MSlock) -> Size;
-
+    fn intrinsic_size(&mut self, s: MSlock) -> Size;
+    fn xsquished_size(&mut self, s: MSlock) -> Size;
+    fn xstretched_size(&mut self, s: MSlock) -> Size;
+    fn ysquished_size(&mut self, s: MSlock) -> Size;
+    fn ystretched_size(&mut self, s: MSlock) -> Size;
+    fn sizes(&mut self, s: MSlock) -> SizeContainer;
     /* mounting and unmounting */
 
     fn show(
@@ -69,17 +71,14 @@ pub(crate) trait InnerViewBase<E> where E: Environment {
 
     /* environment */
 
-    fn push_environment(&self, env: &mut E, s: MSlock);
-    fn pop_environment(&self, env: &mut E, s: MSlock);
+    fn push_environment(&mut self, env: &mut E, s: MSlock);
+    fn pop_environment(&mut self, env: &mut E, s: MSlock);
 }
 
 // contains a backing and
-pub(crate) struct InnerView<E, P> where E: Environment, P: ViewProvider<E> {
-    /* tree */
-    window: Option<Weak<SlockCell<dyn WindowEnvironmentBase<E>>>>,
-    superview: Option<Weak<SlockCell<dyn InnerViewBase<E>>>>,
-    depth: u32,
-    /* also contains backing */
+pub(crate) struct InnerView<E, P> where E: Environment,
+                                        P: ViewProvider<E> {
+    /* subtree (and some backpointers) */
     subtree: Subtree<E>,
 
     needs_layout_up: bool,
@@ -98,15 +97,15 @@ pub(crate) struct InnerView<E, P> where E: Environment, P: ViewProvider<E> {
 impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
     #[inline]
     pub(super) fn is_trivial_context(&self) -> bool {
-        std::any::TypeId::of::<P::LayoutContext>() == std::any::TypeId::of::<()>()
+        std::any::TypeId::of::<P::DownContext>() == std::any::TypeId::of::<()>()
     }
 
     pub(super) fn into_backing_and_provider(self) -> (NativeView, P) {
         (self.subtree.backing, self.provider)
     }
 
-    pub(super) fn provider(&self) -> &P {
-        &self.provider
+    pub(super) fn provider(&mut self) -> &mut P {
+        &mut self.provider
     }
 
     // returns position of rect
@@ -116,7 +115,7 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
         frame: AlignedFrame,
         at: Point,
         env: &mut E,
-        context: &P::LayoutContext,
+        context: &P::DownContext,
         s: MSlock<'_>
     ) -> Rect {
         // all writes to dirty flag are done with a state lock
@@ -130,9 +129,9 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
         actually_needs_layout = actually_needs_layout || frame != self.last_frame;
 
         let untranslated = if actually_needs_layout {
-            self.provider.push_environment(env, s);
-            let ret = self.provider.layout_down(&self.subtree, frame, context, &mut Handle(env), s);
-            self.provider.pop_environment(env, s);
+            self.provider.push_environment(env.variable_env_mut(), s);
+            let ret = self.provider.layout_down(&self.subtree, frame, context, &mut EnvHandle(env), s);
+            self.provider.pop_environment(env.variable_env_mut(), s);
 
             ret
         }
@@ -156,7 +155,7 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
         &mut self,
         this: Weak<SlockCell<dyn InnerViewBase<E>>>,
         source: (NativeView, P),
-        env: &mut Handle<E>,
+        env: &mut EnvHandle<E>,
         s: MSlock
     ) {
         if !self.backing().is_null() {
@@ -167,7 +166,8 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
             // we are guaranteed to have had zero children
             // and that we cannot have been shown already
             // therefore, show must be called on this view sometime in the future
-            self.provider.push_environment(env.0, s);
+            self.provider.push_environment(env.0.variable_env_mut(), s);
+
             let invalidator = Invalidator {
                 view: this
             };
@@ -178,7 +178,8 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
                 env,
                 s
             );
-            self.provider.pop_environment(env.0, s);
+
+            self.provider.pop_environment(env.0.variable_env_mut(), s);
         }
         // else: nothing to copy from so this is no op
     }
@@ -192,20 +193,20 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
     }
 
     fn window(&self) -> Option<Weak<SlockCell<dyn WindowEnvironmentBase<E>>>> {
-        self.window.clone()
+        self.subtree.window.clone()
     }
 
     fn superview(&self) -> Option<Arc<SlockCell<dyn InnerViewBase<E>>>> {
-        self.superview.as_ref().and_then(|s| s.upgrade())
+        self.subtree.superview.as_ref().and_then(|s| s.upgrade())
     }
 
     fn set_superview(&mut self, superview: Option<Weak<SlockCell<dyn InnerViewBase<E>>>>) {
-        if self.superview.is_some() && superview.is_some() {
+        if self.subtree.superview.is_some() && superview.is_some() {
             panic!("Attempt to add view to superview when the subview is already mounted to a view. \
                         Please remove the view from the other view before proceeding");
         }
 
-        self.superview = superview;
+        self.subtree.superview = superview;
     }
 
     fn subviews(&mut self) -> &mut Subtree<E> {
@@ -213,7 +214,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
     }
 
     fn depth(&self) -> u32 {
-        self.depth
+        self.subtree.depth
     }
 
     fn needs_layout_up(&self) -> bool {
@@ -227,7 +228,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
     fn layout_up(&mut self, env: &mut E, s: MSlock<'_>) -> bool {
         assert!(self.needs_layout_up);
 
-        let mut handle = Handle(env);
+        let mut handle = EnvHandle(env);
         let ret = self.provider.layout_up(&mut self.subtree, &mut handle, s);
 
         self.needs_layout_up = false;
@@ -240,7 +241,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         if self.is_trivial_context() {
             // safety: checked that P::LayoutContext == ()
             let layout_context = unsafe {
-                std::mem::transmute_copy::<(), P::LayoutContext>(&())
+                std::mem::transmute_copy::<(), P::DownContext>(&())
             };
 
             self.layout_down_with_context(frame.unwrap_or(self.last_frame), self.last_point, env, &layout_context, s);
@@ -252,44 +253,46 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         }
     }
 
-    fn intrinsic_size(&self, s: MSlock) -> Size {
-        debug_assert!(!self.needs_layout_up() && self.window().is_some()
-                          && (self.superview.is_some() || self.depth == 0),
+    fn intrinsic_size(&mut self, s: MSlock) -> Size {
+        debug_assert!(!self.needs_layout_up() && self.depth() != u32::MAX,
                       "This method must only be called after the subview \
                       has been mounted to the parent. Also, this view cannot be in an invalidated/dirty state");
          self.provider.intrinsic_size(s)
     }
 
-    fn xsquished_size(&self, s: MSlock) -> Size {
-        debug_assert!(!self.needs_layout_up() && self.window().is_some()
-                          && (self.superview.is_some() || self.depth == 0),
+    fn xsquished_size(&mut self, s: MSlock) -> Size {
+        debug_assert!(!self.needs_layout_up() && self.depth() != u32::MAX,
                       "This method must only be called after the subview \
                       has been mounted to the parent. Also, this view cannot be in an invalidated/dirty state");
         self.provider.xsquished_size(s)
     }
 
-    fn xstretched_size(&self, s: MSlock) -> Size {
-        debug_assert!(!self.needs_layout_up() && self.window().is_some()
-                          && (self.superview.is_some() || self.depth == 0),
+    fn xstretched_size(&mut self, s: MSlock) -> Size {
+        debug_assert!(!self.needs_layout_up() && self.depth() != u32::MAX,
                       "This method must only be called after the subview \
                       has been mounted to the parent. Also, this view cannot be in an invalidated/dirty state");
         self.provider.xstretched_size(s)
     }
 
-    fn ysquished_size(&self, s: MSlock) -> Size {
-        debug_assert!(!self.needs_layout_up() && self.window().is_some()
-                          && (self.superview.is_some() || self.depth == 0),
+    fn ysquished_size(&mut self, s: MSlock) -> Size {
+        debug_assert!(!self.needs_layout_up() && self.depth() != u32::MAX,
                       "This method must only be called after the subview \
                       has been mounted to the parent. Also, this view cannot be in an invalidated/dirty state");
         self.provider.ysquished_size(s)
     }
 
-    fn ystretched_size(&self, s: MSlock) -> Size {
-        debug_assert!(!self.needs_layout_up() && self.window().is_some()
-                          && (self.superview.is_some() || self.depth == 0),
+    fn ystretched_size(&mut self, s: MSlock) -> Size {
+        debug_assert!(!self.needs_layout_up() && self.depth() != u32::MAX,
                       "This method must only be called after the subview \
                       has been mounted to the parent. Also, this view cannot be in an invalidated/dirty state");
         self.provider.ystretched_size(s)
+    }
+
+    fn sizes(&mut self, s: MSlock) -> SizeContainer {
+        debug_assert!(!self.needs_layout_up() && self.depth() != u32::MAX,
+                      "This method must only be called after the subview \
+                      has been mounted to the parent. Also, this view cannot be in an invalidated/dirty state");
+        self.provider.sizes(s)
     }
 
     fn show(
@@ -302,12 +305,12 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
     ) {
         /* save attributes */
         let new_window = Some(window.clone());
-        if self.window.is_some() && !std::ptr::addr_eq(self.window.as_ref().unwrap().as_ptr(), window.as_ptr()) {
+        if self.subtree.window.is_some() && !std::ptr::addr_eq(self.subtree.window.as_ref().unwrap().as_ptr(), window.as_ptr()) {
             panic!("Cannot add view to different window than the original one it was mounted on!")
         }
 
-        self.window = new_window;
-        self.depth = depth;
+        self.subtree.window = new_window;
+        self.subtree.depth = depth;
 
         /* push environment */
         self.push_environment(e, s);
@@ -318,7 +321,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
             let invalidator = Invalidator {
                 view: Arc::downgrade(this)
             };
-            let mut handle = Handle(e);
+            let mut handle = EnvHandle(e);
             self.subtree.backing = self.provider.init_backing(invalidator, &mut self.subtree, None, &mut handle, s);
         }
 
@@ -361,7 +364,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         // keep window,
         // note that superview is responsible for removing itself
         // when appropriate
-        self.depth = u32::MAX;
+        self.subtree.depth = u32::MAX;
 
         self.provider.pre_hide(s);
         for subview in &self.subtree.subviews {
@@ -375,7 +378,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
     }
 
     fn invalidate(&mut self, this: Weak<SlockCell<dyn InnerViewBase<E>>>, s: Slock) {
-        if let Some(window) = self.window.as_ref().and_then(|window| window.upgrade()) {
+        if let Some(window) = self.subtree.window.as_ref().and_then(|window| window.upgrade()) {
             self.needs_layout_up = true;
             self.needs_layout_down = true;
 
@@ -384,17 +387,17 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
             // is send (guaranteed by protocol)
             unsafe {
                 window.borrow_non_main_non_send(s)
-                    .invalidate_view(Arc::downgrade(&window), this, self.depth, s);
+                    .invalidate_view(Arc::downgrade(&window), this, self.subtree.depth, s);
             }
         }
     }
 
-    fn push_environment(&self, env: &mut E, s: MSlock) {
-        self.provider.push_environment(env, s);
+    fn push_environment(&mut self, env: &mut E, s: MSlock) {
+        self.provider.push_environment(env.variable_env_mut(), s);
     }
 
-    fn pop_environment(&self, env: &mut E, s: MSlock) {
-        self.provider.pop_environment(env, s);
+    fn pop_environment(&mut self, env: &mut E, s: MSlock) {
+        self.provider.pop_environment(env.variable_env_mut(), s);
     }
 }
 
@@ -413,6 +416,9 @@ impl NativeView {
 impl Drop for NativeView {
     fn drop(&mut self) {
         if !self.0.is_null() {
+            // this should be true in most cases?
+            // a little hard to prove
+            debug_assert!(native::global::is_main());
             native::view::free_view(self.0)
         }
     }
@@ -429,6 +435,12 @@ impl Drop for NativeView {
 pub struct Subtree<E> {
     owner: Weak<SlockCell<dyn InnerViewBase<E>>>,
     backing: NativeView,
+
+    superview: Option<Weak<SlockCell<dyn InnerViewBase<E>>>>,
+    window: Option<Weak<SlockCell<dyn WindowEnvironmentBase<E>>>>,
+    // u32::MAX indicates detached view
+    depth: u32,
+
     subviews: Vec<Arc<SlockCell<dyn InnerViewBase<E>>>>,
     unsend_unsync: PhantomUnsendUnsync
 }
@@ -469,24 +481,17 @@ impl<E> Subtree<E> where E: Environment {
         }
     }
 
-    pub fn insert_subview<P>(&mut self, subview: &View<E, P>, index: usize, env: &mut Handle<E>, s: MSlock<'_>) where P: ViewProvider<E> {
+    // note that cyclic is technically possible if you work hard enough
+    // but this will often just result in a stall or other weird effects
+    pub fn insert_subview<P>(&mut self, subview: &View<E, P>, index: usize, env: &mut EnvHandle<E>, s: MSlock<'_>) where P: ViewProvider<E> {
         subview.0.borrow_mut_main(s).set_superview(Some(self.owner.clone()));
         self.subviews.insert(index, subview.0.clone());
 
-        // 1. we were mounted at some time in the past
-        if !self.backing.0.is_null() {
-            let this = self.owner.upgrade().unwrap();
-            let borrow = this.borrow_main(s);
-            let window = borrow.window().and_then(|w| w.upgrade()).unwrap();
-
-            let weak = Arc::downgrade(&window);
-            let depth = borrow.depth();
-
-            // 2. we are currently mounted
-            if depth != u32::MAX {
-                let subview_this = subview.0.clone() as Arc<SlockCell<dyn InnerViewBase<E>>>;
-                subview.0.borrow_mut_main(s).show(&subview_this, &weak, env.0, depth + 1, s);
-            }
+        // 1. we are currently mounted
+        if self.depth != u32::MAX {
+            let weak = self.window.as_ref().unwrap().clone();
+            let subview_this = subview.0.clone() as Arc<SlockCell<dyn InnerViewBase<E>>>;
+            subview.0.borrow_mut_main(s).show(&subview_this, &weak, env.0, self.depth + 1, s);
         }
 
         // add to backing
@@ -495,7 +500,7 @@ impl<E> Subtree<E> where E: Environment {
         }
     }
 
-    pub fn push_subview<P>(&mut self, subview: &View<E, P>, env: &mut Handle<E>, s: MSlock<'_>) where P: ViewProvider<E> {
+    pub fn push_subview<P>(&mut self, subview: &View<E, P>, env: &mut EnvHandle<E>, s: MSlock<'_>) where P: ViewProvider<E> {
         self.insert_subview(subview, self.subviews.len(), env, s);
     }
 }
@@ -514,12 +519,12 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
         };
 
         *org.borrow_mut_main(s) = MaybeUninit::new(InnerView {
-            window: None,
-            superview: None,
             // marker that it is not on a tree
-            depth: u32::MAX,
             subtree: Subtree {
                 owner: weak_transmute,
+                depth: u32::MAX,
+                window: None,
+                superview: None,
                 backing: NativeView(0 as *mut c_void),
                 subviews: vec![],
                 unsend_unsync: Default::default(),

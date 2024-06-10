@@ -1,6 +1,12 @@
 pub(crate) mod rust_util {
     use std::marker::PhantomData;
 
+    pub trait Captures<'a> {
+
+    }
+    impl<'a, T: ?Sized> Captures<'a> for T { }
+
+
     #[allow(unused)]
     pub trait EnsureSend: Send {
 
@@ -341,7 +347,7 @@ pub mod markers {
 pub mod geo {
     pub type ScreenUnit = f32;
 
-    #[derive(Copy, Clone, Default, Debug)]
+    #[derive(Copy, Clone, Default, Debug, PartialEq)]
     pub struct Rect {
         pub x: ScreenUnit,
         pub y: ScreenUnit,
@@ -360,13 +366,19 @@ pub mod geo {
         }
     }
 
-    #[derive(Copy, Clone, Default, Debug)]
+    #[derive(Copy, Clone, Default, Debug, PartialEq)]
     pub struct Point {
         pub x: ScreenUnit,
         pub y: ScreenUnit,
     }
 
-    #[derive(Copy, Clone, Default, Debug)]
+    impl Point {
+        pub fn new(x: ScreenUnit, y: ScreenUnit) -> Self {
+            Point { x, y }
+        }
+    }
+
+    #[derive(Copy, Clone, Default, Debug, PartialEq)]
     pub struct Size {
         pub w: ScreenUnit,
         pub h: ScreenUnit,
