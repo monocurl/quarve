@@ -66,6 +66,7 @@ mod callbacks {
 
 /* crate endpoints */
 pub mod global {
+    use std::cell::Cell;
     use crate::core::Slock;
     use crate::native::FatPointer;
     use crate::util::markers::MainThreadMarker;
@@ -73,23 +74,25 @@ pub mod global {
     extern "C" {
         fn back_main_loop();
 
-        fn back_is_main() -> bool;
         fn back_run_main(bx: FatPointer);
-
 
         fn back_terminate();
     }
 
+    thread_local! {
+        static MAIN: Cell<bool> = const { Cell::new(false) };
+    }
+
     pub fn main_loop() {
+        MAIN.set(true);
+
         unsafe {
             back_main_loop();
         }
     }
 
     pub fn is_main() -> bool {
-        unsafe {
-            back_is_main()
-        }
+        MAIN.get()
     }
 
     pub fn run_main<F: for<'a> FnOnce(Slock<'a, MainThreadMarker>) + Send + 'static>(f: F) {

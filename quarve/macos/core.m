@@ -83,11 +83,6 @@ back_main_loop() {
     }
 }
 
-bool
-back_is_main() {
-    return [NSThread isMainThread];
-}
-
 void
 back_run_main(fat_pointer box) {
     dispatch_async(dispatch_get_main_queue(), ^(void){

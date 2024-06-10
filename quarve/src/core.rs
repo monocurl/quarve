@@ -124,7 +124,7 @@ mod application {
     use crate::core::life_cycle::setup_timing_thread;
     use crate::core::window::{Window, WindowBase, WindowProvider};
     use crate::native;
-    use crate::state::slock_cell::SlockCell;
+    use crate::state::slock_cell::{MainSlockCell, SlockCell};
 
     pub trait Environment: 'static {
         type Const: 'static;
@@ -143,7 +143,7 @@ mod application {
 
     pub struct Application {
         provider: Box<dyn ApplicationProvider>,
-        pub(super) windows: RefCell<Vec<Arc<SlockCell<dyn WindowBase>>>>
+        pub(super) windows: RefCell<Vec<Arc<MainSlockCell<dyn WindowBase>>>>
     }
 
     impl Application {
@@ -189,7 +189,7 @@ mod window {
     use crate::native;
     use crate::native::{WindowHandle};
     use crate::state::{Signal};
-    use crate::state::slock_cell::SlockCell;
+    use crate::state::slock_cell::{MainSlockCell, SlockCell};
     use crate::util::geo::{AlignedFrame, Alignment, Size};
     use crate::view::{InnerViewBase, View};
     use crate::view::view_provider::{ViewProvider};
@@ -222,11 +222,11 @@ mod window {
         // this method is guaranteed to only touch
         // Send parts of self
         // handle is because of some async operations
-        fn invalidate_view(&self, handle: Weak<SlockCell<dyn WindowEnvironmentBase<E>>>, view: Weak<SlockCell<dyn InnerViewBase<E>>>, depth: u32, s: Slock);
+        fn invalidate_view(&self, handle: Weak<MainSlockCell<dyn WindowEnvironmentBase<E>>>, view: Weak<MainSlockCell<dyn InnerViewBase<E>>>, depth: u32, s: Slock);
     }
 
     struct InvalidatedEntry<E> where E: Environment {
-        view: Weak<SlockCell<dyn InnerViewBase<E>>>,
+        view: Weak<MainSlockCell<dyn InnerViewBase<E>>>,
         // use negative depth to flip ordering
         depth: i32
     }
@@ -269,13 +269,13 @@ mod window {
 
         /* native */
         handle: WindowHandle,
-        content_view: Arc<SlockCell<dyn InnerViewBase<P::Env>>>
+        content_view: Arc<MainSlockCell<dyn InnerViewBase<P::Env>>>
     }
 
     impl<P> Window<P> where P: WindowProvider {
         // order things are done is a bit awkward
         // but need to coordinate between many things
-        pub(super) fn new(provider: P, s: MSlock<'_>) -> Arc<SlockCell<dyn WindowBase>> {
+        pub(super) fn new(provider: P, s: MSlock<'_>) -> Arc<MainSlockCell<dyn WindowBase>> {
             let root_env = P::Env::root_environment();
 
             let handle = native::window::window_init(s);
@@ -289,7 +289,7 @@ mod window {
                 content_view
             };
 
-            let b = Arc::new(SlockCell::new_main(window, s));
+            let b = Arc::new(MainSlockCell::new_main(window, s));
             // create initial tree and other tasks
             Window::init(&b, s);
 
@@ -318,7 +318,7 @@ mod window {
             native::window::window_set_max_size(self.handle, max.w as f64, max.h as f64, s);
         }
 
-        fn init(this: &Arc<SlockCell<Self>>, s: MSlock) {
+        fn init(this: &Arc<MainSlockCell<Self>>, s: MSlock) {
             let borrow = this.borrow_main(s);
 
             /* apply style */
@@ -333,9 +333,9 @@ mod window {
 
         // logic is a bit tricky for initial mounting
         // due to reentry
-        fn mount_content_view(this: &Arc<SlockCell<Window<P>>>, s: MSlock, borrow: &Window<P>) {
+        fn mount_content_view(this: &Arc<MainSlockCell<Window<P>>>, s: MSlock, borrow: &Window<P>) {
             let weak_window = Arc::downgrade(this)
-                as Weak<SlockCell<dyn WindowEnvironmentBase<P::Env>>>;
+                as Weak<MainSlockCell<dyn WindowEnvironmentBase<P::Env>>>;
 
             let mut stolen_env = borrow.environment.take().unwrap();
             let content_copy = borrow.content_view.clone();
@@ -363,7 +363,7 @@ mod window {
             let _style = borrow.provider.style(s);
         }
 
-        fn title_listener(this: &Arc<SlockCell<Window<P>>>, borrow: &Window<P>, s: MSlock) {
+        fn title_listener(this: &Arc<MainSlockCell<Window<P>>>, borrow: &Window<P>, s: MSlock) {
             let title = borrow.provider.title(s);
             let weak = Arc::downgrade(&this);
             title.listen(move |val, _s| {
@@ -388,8 +388,8 @@ mod window {
         // and has to be moved right above to
         fn walk_env(
             env: &mut P::Env,
-            from: Arc<SlockCell<dyn InnerViewBase<P::Env>>>,
-            to: Arc<SlockCell<dyn InnerViewBase<P::Env>>>,
+            from: Arc<MainSlockCell<dyn InnerViewBase<P::Env>>>,
+            to: Arc<MainSlockCell<dyn InnerViewBase<P::Env>>>,
             s: MSlock
         ) {
             // equalize level
@@ -434,8 +434,7 @@ mod window {
             }
         }
 
-        #[cold]
-        pub fn exit(&self, s: MSlock<'_>) {
+        fn remove_from_app(&self, s: MSlock) {
             /* remove from application window list */
             APP.with(|app| {
                 app.get().unwrap()
@@ -443,6 +442,11 @@ mod window {
                     .borrow_mut()
                     .retain(|window| window.borrow_main(s).get_handle() != self.handle);
             });
+        }
+
+        #[cold]
+        pub fn exit(&self, s: MSlock) {
+            self.remove_from_app(s);
 
             native::window::window_exit(self.handle, s);
         }
@@ -453,12 +457,7 @@ mod window {
             let can_close = self.provider.can_close(s);
 
             if can_close {
-                APP.with(|app| {
-                    app.get().unwrap()
-                        .windows
-                        .borrow_mut()
-                        .retain(|window| window.borrow_main(s).get_handle() != self.handle);
-                });
+                self.remove_from_app(s);
             }
 
             can_close
@@ -580,7 +579,7 @@ mod window {
     }
 
     impl<P> WindowEnvironmentBase<P::Env> for Window<P> where P: WindowProvider {
-        fn invalidate_view(&self, handle: Weak<SlockCell<dyn WindowEnvironmentBase<P::Env>>>, view: Weak<SlockCell<dyn InnerViewBase<P::Env>>>, depth: u32, s: Slock) {
+        fn invalidate_view(&self, handle: Weak<MainSlockCell<dyn WindowEnvironmentBase<P::Env>>>, view: Weak<MainSlockCell<dyn InnerViewBase<P::Env>>>, depth: u32, s: Slock) {
             // note that we're only touching send parts of self
             let mut borrow = self.invalidated_views.borrow_mut();
             if borrow.is_empty() {

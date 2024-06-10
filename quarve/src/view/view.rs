@@ -1,13 +1,13 @@
 use std::sync::{Arc, Weak};
 use crate::core::{Environment, MSlock, Slock};
-use crate::state::slock_cell::SlockCell;
+use crate::state::slock_cell::{MainSlockCell, SlockCell};
 use crate::util::geo::{AlignedFrame, Point, Rect, Size};
 use crate::util::rust_util::EnsureSend;
 use crate::view::inner_view::{InnerView, InnerViewBase};
 use crate::view::util::SizeContainer;
 use crate::view::view_provider::ViewProvider;
 
-pub struct View<E, P>(pub(crate) Arc<SlockCell<InnerView<E, P>>>)
+pub struct View<E, P>(pub(crate) Arc<MainSlockCell<InnerView<E, P>>>)
     where E: Environment, P: ViewProvider<E> + ?Sized;
 
 impl<E, P> View<E, P> where E: Environment, P: ViewProvider<E> {
@@ -21,7 +21,7 @@ impl<E, P> View<E, P> where E: Environment, P: ViewProvider<E> {
         let source = other_inner.into_backing_and_provider();
 
         // init backing directly
-        let weak_this = Arc::downgrade(&self.0) as Weak<SlockCell<dyn InnerViewBase<E>>>;
+        let weak_this = Arc::downgrade(&self.0) as Weak<MainSlockCell<dyn InnerViewBase<E>>>;
         self.0.borrow_mut_main(s)
             .take_backing(weak_this, source, env, s)
     }
@@ -70,7 +70,7 @@ impl<E, P> View<E, P> where E: Environment, P: ViewProvider<E, DownContext=()> {
 }
 
 pub struct Invalidator<E> where E: Environment {
-    pub(crate) view: Weak<SlockCell<dyn InnerViewBase<E>>>
+    pub(crate) view: Weak<MainSlockCell<dyn InnerViewBase<E>>>
 }
 
 impl<E> Invalidator<E> where E: Environment {
@@ -85,7 +85,7 @@ impl<E> Invalidator<E> where E: Environment {
 }
 
 pub struct StrongInvalidator<E> where E: Environment {
-    view: Arc<SlockCell<dyn InnerViewBase<E>>>
+    view: Arc<MainSlockCell<dyn InnerViewBase<E>>>
 }
 
 impl<E> StrongInvalidator<E> where E: Environment {
@@ -104,7 +104,7 @@ impl<E> StrongInvalidator<E> where E: Environment {
         }
     }
 
-    fn dfs(curr: &Arc<SlockCell<dyn InnerViewBase<E>>>, s: Slock) {
+    fn dfs(curr: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, s: Slock) {
         // safety is same reason invalidate above is safe
         // (only touching send parts)
         unsafe {

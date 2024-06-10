@@ -6,12 +6,17 @@
 
 pub mod slock_cell {
     use std::cell::{Ref, RefCell, RefMut};
+    use std::mem;
+    use std::mem::{ManuallyDrop};
+    use std::ops::{Deref, DerefMut};
     use crate::core::{MSlock, Slock};
+    use crate::native;
     use crate::util::markers::ThreadMarker;
     use crate::util::rust_util::{EnsureSend, EnsureSync};
 
-    pub struct SlockCell<T>(RefCell<T>) where T: ?Sized;
-    pub struct MainSlockCell<T>(Option<RefCell<T>>);
+    pub struct SlockCell<T>(RefCell<T>) where T: Send + ?Sized;
+    struct DropHalter;
+    pub struct MainSlockCell<T>(DropHalter, RefCell<T>) where T: ?Sized;
 
     impl<T> SlockCell<T> where T: Send {
         pub fn new(val: T) -> Self {
@@ -25,13 +30,15 @@ pub mod slock_cell {
         }
     }
 
-    impl<T> SlockCell<T> {
+    impl<T> MainSlockCell<T> {
         pub fn into_inner_main(self, _s: MSlock) -> T {
-            self.0.into_inner()
+            // technically unnecessary, but micro optimization i guess
+            mem::forget(self.0);
+            self.1.into_inner()
         }
 
         pub fn new_main(val: T, _s: MSlock) -> Self {
-            SlockCell(RefCell::new(val))
+            MainSlockCell(DropHalter, RefCell::new(val))
         }
     }
 
@@ -41,26 +48,6 @@ pub mod slock_cell {
         }
 
         pub fn borrow_mut(&self, _s: Slock<'_, impl ThreadMarker>) -> RefMut<'_, T>  {
-            self.0.borrow_mut()
-        }
-    }
-
-    impl<T> SlockCell<T> where T: ?Sized {
-        pub fn borrow_main(&self, _s: MSlock<'_>) -> Ref<'_, T> {
-            self.0.borrow()
-        }
-
-        pub fn borrow_mut_main(&self, _s: MSlock<'_>) -> RefMut<'_, T>  {
-            self.0.borrow_mut()
-        }
-
-        // caller must ensure that the part they're
-        // borrowing is send
-        pub unsafe fn borrow_non_main_non_send(&self, _s: Slock<'_>) -> Ref<'_, T> {
-           self.0.borrow()
-        }
-
-        pub unsafe fn borrow_mut_non_main_non_send(&self, _s: Slock<'_>) -> RefMut<'_, T> {
             self.0.borrow_mut()
         }
 
@@ -73,14 +60,59 @@ pub mod slock_cell {
         }
     }
 
+    impl<T> MainSlockCell<T> where T: ?Sized {
+        pub fn borrow_main(&self, _s: MSlock<'_>) -> impl Deref<Target=T> + '_ {
+            self.1.borrow()
+        }
+
+        pub fn borrow_mut_main(&self, _s: MSlock<'_>) -> impl DerefMut<Target=T> + '_ {
+            self.1.borrow_mut()
+        }
+
+        // caller must ensure that the part they're
+        // borrowing is send
+        pub unsafe fn borrow_non_main_non_send(&self, _s: Slock<'_>) -> impl Deref<Target=T> + '_ {
+            self.1.borrow()
+        }
+
+        pub unsafe fn borrow_mut_non_main_non_send(&self, _s: Slock<'_>) -> impl DerefMut<Target=T> + '_ {
+            self.1.borrow_mut()
+        }
+
+        pub fn as_ptr(&self) -> *const T {
+            self.1.as_ptr()
+        }
+
+        pub fn as_mut_ptr(&self) -> *mut T {
+            self.1.as_ptr()
+        }
+    }
+
+    impl Drop for DropHalter {
+        fn drop(&mut self) {
+            assert!(native::global::is_main(),
+                    "Cannot drop a MainSlockCell (either directly or via drop glue) \
+                     outside of the main thread!
+                     note: we are working on ways to prevent this at compile time,
+                     though all proposed solutions require intense manual dropping.
+            ");
+        }
+    }
+
     // Safety: all borrows require the state lock and T: Send
     // OR required the Mslock (hence aren't being sent anywhere)
     // OR are unsafe
-    unsafe impl<T> Sync for SlockCell<T> where T: ?Sized {}
-    unsafe impl<T> Send for SlockCell<T> where T: ?Sized {}
+    unsafe impl<T> Sync for SlockCell<T> where T: Send + ?Sized {}
+    unsafe impl<T> Send for SlockCell<T> where T: Send + ?Sized {}
 
-    impl<T> EnsureSend for SlockCell<T> where T: ?Sized {}
-    impl<T> EnsureSync for SlockCell<T> where T: ?Sized {}
+    impl<T> EnsureSend for SlockCell<T> where T: Send + ?Sized {}
+    impl<T> EnsureSync for SlockCell<T> where T: Send + ?Sized {}
+
+    unsafe impl<T> Sync for MainSlockCell<T> where T: ?Sized {}
+    unsafe impl<T> Send for MainSlockCell<T> where T: ?Sized {}
+
+    impl<T> EnsureSend for MainSlockCell<T> where T: ?Sized {}
+    impl<T> EnsureSync for MainSlockCell<T> where T: ?Sized {}
 }
 
 mod listener {

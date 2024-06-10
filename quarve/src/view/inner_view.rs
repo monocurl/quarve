@@ -4,7 +4,7 @@ use std::sync::{Arc, Weak};
 use crate::core::{Environment, MSlock, Slock, WindowEnvironmentBase};
 use crate::native;
 use crate::native::view::{view_add_child_at, view_clear_children, view_remove_child, view_set_frame};
-use crate::state::slock_cell::SlockCell;
+use crate::state::slock_cell::{MainSlockCell, SlockCell};
 use crate::util::geo::{AlignedFrame, Point, Rect, Size};
 use crate::util::rust_util::PhantomUnsendUnsync;
 use crate::view::{EnvHandle, Invalidator, View};
@@ -20,9 +20,9 @@ pub(crate) trait InnerViewBase<E> where E: Environment {
 
     /* tree methods */
 
-    fn window(&self) -> Option<Weak<SlockCell<dyn WindowEnvironmentBase<E>>>>;
-    fn superview(&self) -> Option<Arc<SlockCell<dyn InnerViewBase<E>>>>;
-    fn set_superview(&mut self, superview: Option<Weak<SlockCell<dyn InnerViewBase<E>>>>);
+    fn window(&self) -> Option<Weak<MainSlockCell<dyn WindowEnvironmentBase<E>>>>;
+    fn superview(&self) -> Option<Arc<MainSlockCell<dyn InnerViewBase<E>>>>;
+    fn set_superview(&mut self, superview: Option<Weak<MainSlockCell<dyn InnerViewBase<E>>>>);
     fn subviews(&mut self) -> &mut Subtree<E>;
 
     fn depth(&self) -> u32;
@@ -52,8 +52,8 @@ pub(crate) trait InnerViewBase<E> where E: Environment {
 
     fn show(
         &mut self,
-        this: &Arc<SlockCell<dyn InnerViewBase<E>>>,
-        window: &Weak<SlockCell<dyn WindowEnvironmentBase<E>>>,
+        this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>,
+        window: &Weak<MainSlockCell<dyn WindowEnvironmentBase<E>>>,
         e: &mut E,
         depth: u32,
         s: MSlock<'_>
@@ -67,7 +67,7 @@ pub(crate) trait InnerViewBase<E> where E: Environment {
     // parent must have its layout down flag set to true
     // even though it doesn't need a layout up
     fn set_needs_layout_down(&mut self);
-    fn invalidate(&mut self, this: Weak<SlockCell<dyn InnerViewBase<E>>>, s: Slock);
+    fn invalidate(&mut self, this: Weak<MainSlockCell<dyn InnerViewBase<E>>>, s: Slock);
 
     /* environment */
 
@@ -153,7 +153,7 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
 
     pub(super) fn take_backing(
         &mut self,
-        this: Weak<SlockCell<dyn InnerViewBase<E>>>,
+        this: Weak<MainSlockCell<dyn InnerViewBase<E>>>,
         source: (NativeView, P),
         env: &mut EnvHandle<E>,
         s: MSlock
@@ -192,15 +192,15 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         self.subtree.backing.0
     }
 
-    fn window(&self) -> Option<Weak<SlockCell<dyn WindowEnvironmentBase<E>>>> {
+    fn window(&self) -> Option<Weak<MainSlockCell<dyn WindowEnvironmentBase<E>>>> {
         self.subtree.window.clone()
     }
 
-    fn superview(&self) -> Option<Arc<SlockCell<dyn InnerViewBase<E>>>> {
+    fn superview(&self) -> Option<Arc<MainSlockCell<dyn InnerViewBase<E>>>> {
         self.subtree.superview.as_ref().and_then(|s| s.upgrade())
     }
 
-    fn set_superview(&mut self, superview: Option<Weak<SlockCell<dyn InnerViewBase<E>>>>) {
+    fn set_superview(&mut self, superview: Option<Weak<MainSlockCell<dyn InnerViewBase<E>>>>) {
         if self.subtree.superview.is_some() && superview.is_some() {
             panic!("Attempt to add view to superview when the subview is already mounted to a view. \
                         Please remove the view from the other view before proceeding");
@@ -297,8 +297,8 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
 
     fn show(
         &mut self,
-        this: &Arc<SlockCell<dyn InnerViewBase<E>>>,
-        window: &Weak<SlockCell<dyn WindowEnvironmentBase<E>>>,
+        this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>,
+        window: &Weak<MainSlockCell<dyn WindowEnvironmentBase<E>>>,
         e: &mut E,
         depth: u32,
         s: MSlock<'_>
@@ -377,7 +377,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         self.needs_layout_down = true;
     }
 
-    fn invalidate(&mut self, this: Weak<SlockCell<dyn InnerViewBase<E>>>, s: Slock) {
+    fn invalidate(&mut self, this: Weak<MainSlockCell<dyn InnerViewBase<E>>>, s: Slock) {
         if let Some(window) = self.subtree.window.as_ref().and_then(|window| window.upgrade()) {
             self.needs_layout_up = true;
             self.needs_layout_down = true;
@@ -433,20 +433,20 @@ impl Drop for NativeView {
 // We'll see better designs in the future
 // but this suffices for now
 pub struct Subtree<E> {
-    owner: Weak<SlockCell<dyn InnerViewBase<E>>>,
+    owner: Weak<MainSlockCell<dyn InnerViewBase<E>>>,
     backing: NativeView,
 
-    superview: Option<Weak<SlockCell<dyn InnerViewBase<E>>>>,
-    window: Option<Weak<SlockCell<dyn WindowEnvironmentBase<E>>>>,
+    superview: Option<Weak<MainSlockCell<dyn InnerViewBase<E>>>>,
+    window: Option<Weak<MainSlockCell<dyn WindowEnvironmentBase<E>>>>,
     // u32::MAX indicates detached view
     depth: u32,
 
-    subviews: Vec<Arc<SlockCell<dyn InnerViewBase<E>>>>,
+    subviews: Vec<Arc<MainSlockCell<dyn InnerViewBase<E>>>>,
     unsend_unsync: PhantomUnsendUnsync
 }
 
 impl<E> Subtree<E> where E: Environment {
-    pub(super) fn subviews(&self) -> &Vec<Arc<SlockCell<dyn InnerViewBase<E>>>> {
+    pub(super) fn subviews(&self) -> &Vec<Arc<MainSlockCell<dyn InnerViewBase<E>>>> {
         &self.subviews
     }
 
@@ -463,7 +463,7 @@ impl<E> Subtree<E> where E: Environment {
     }
 
     pub fn remove_subview<P>(&mut self, subview: &View<E, P>, s: MSlock<'_>) where P: ViewProvider<E> {
-        let comp = subview.0.clone() as Arc<SlockCell<dyn InnerViewBase<E>>>;
+        let comp = subview.0.clone() as Arc<MainSlockCell<dyn InnerViewBase<E>>>;
         let index = self.subviews.iter()
             .position(|u| Arc::ptr_eq(u, &comp))
             .expect("Input view should be a child of the current view");
@@ -490,7 +490,7 @@ impl<E> Subtree<E> where E: Environment {
         // 1. we are currently mounted
         if self.depth != u32::MAX {
             let weak = self.window.as_ref().unwrap().clone();
-            let subview_this = subview.0.clone() as Arc<SlockCell<dyn InnerViewBase<E>>>;
+            let subview_this = subview.0.clone() as Arc<MainSlockCell<dyn InnerViewBase<E>>>;
             subview.0.borrow_mut_main(s).show(&subview_this, &weak, env.0, self.depth + 1, s);
         }
 
@@ -506,16 +506,16 @@ impl<E> Subtree<E> where E: Environment {
 }
 
 impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
-    pub(super) fn new(provider: P, s: MSlock) -> Arc<SlockCell<Self>> {
+    pub(super) fn new(provider: P, s: MSlock) -> Arc<MainSlockCell<Self>> {
         // TODO see if theres way to do this without unsafe
-        let org = Arc::new(SlockCell::new_main(MaybeUninit::uninit(), s));
+        let org = Arc::new(MainSlockCell::new_main(MaybeUninit::uninit(), s));
         let weak_transmute = unsafe {
             // safety: data layout of maybe uninit and
             // Self are the same. Arc only contains a reference
             // so the daya layouts remain the same
             // in particular, Arc does not directly contain T in the layout
-            let init: Arc<SlockCell<InnerView<E, P>>> = transmute(org.clone());
-            Arc::downgrade(&init) as Weak<SlockCell<dyn InnerViewBase<E>>>
+            let init: Arc<MainSlockCell<InnerView<E, P>>> = transmute(org.clone());
+            Arc::downgrade(&init) as Weak<MainSlockCell<dyn InnerViewBase<E>>>
         };
 
         *org.borrow_mut_main(s) = MaybeUninit::new(InnerView {

@@ -1,6 +1,7 @@
 use std::marker::PhantomData;
 use crate::core::{Environment, MSlock};
 use crate::event::{Event, EventResult};
+use crate::state::slock_cell::MainSlockCell;
 use crate::util::geo::{AlignedFrame, Rect, Size};
 use crate::view::{EnvHandle, InnerView, IntoUpContext,  Invalidator, NativeView, Subtree, View};
 use crate::view::util::SizeContainer;
@@ -90,22 +91,22 @@ pub unsafe trait ViewProvider<E>: Sized + 'static
 
     // callback methods
     #[allow(unused_variables)]
-    fn pre_show(&mut self, s: MSlock<'_>) {
+    fn pre_show(&mut self, s: MSlock) {
 
     }
 
     #[allow(unused_variables)]
-    fn post_show(&mut self, s: MSlock<'_>) {
+    fn post_show(&mut self, s: MSlock) {
 
     }
 
     #[allow(unused_variables)]
-    fn pre_hide(&mut self, s: MSlock<'_>) {
+    fn pre_hide(&mut self, s: MSlock) {
 
     }
 
     #[allow(unused_variables)]
-    fn post_hide(&mut self, s: MSlock<'_>) {
+    fn post_hide(&mut self, s: MSlock) {
 
     }
 
@@ -136,7 +137,7 @@ pub unsafe trait ViewProvider<E>: Sized + 'static
     }
 }
 
-pub struct UpContextAdapter<E, P, U>(P, PhantomData<(U, E)>)
+pub struct UpContextAdapter<E, P, U>(P, PhantomData<MainSlockCell<(U, E)>>)
     where E: Environment,
           P: ViewProvider<E>,
           U: 'static,

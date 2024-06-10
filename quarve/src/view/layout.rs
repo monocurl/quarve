@@ -2,7 +2,7 @@ mod general_layout {
     use std::marker::PhantomData;
     use crate::core::{Environment, MSlock};
     use crate::native;
-    use crate::state::slock_cell::SlockCell;
+    use crate::state::slock_cell::{MainSlockCell};
     use crate::util::geo::{AlignedFrame, Rect, Size};
     use crate::view::{EnvHandle, IntoViewProvider, Invalidator, NativeView, Subtree, ViewProvider};
 
@@ -60,7 +60,7 @@ mod general_layout {
         ) -> Rect;
     }
 
-    pub struct LayoutViewProvider<E, L>(L, PhantomData<SlockCell<E>>) where E: Environment, L: LayoutProvider<E>;
+    pub struct LayoutViewProvider<E, L>(L, PhantomData<MainSlockCell<E>>) where E: Environment, L: LayoutProvider<E>;
 
     unsafe impl<E, L> ViewProvider<E> for LayoutViewProvider<E, L>
         where E: Environment, L: LayoutProvider<E> {
