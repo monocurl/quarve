@@ -123,10 +123,12 @@ mod listener {
         use crate::state::listener::DirectlyInvertible;
 
         // I don't like this
-        // Maybe it can be done with dyn Any in a better
+        // FIXME Maybe it can be done with dyn Any in a better
         // fashion? I tried but it seems that right_multiply
         // is hard to take out the action, which may result in
         // requiring stateful to be clone, which is probably a no go
+        // (basically the issue is actions need to be Box<dyn Invertible>
+        // and box<dyn any> at the same time, hard to work around?)
         pub(in crate::state) trait DirectlyInvertibleBase {
             // This function must only be called once per instance
             // (We cannot take ownership since the caller is often unsized)

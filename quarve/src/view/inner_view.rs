@@ -94,6 +94,8 @@ pub(crate) struct InnerView<E, P> where E: Environment,
 }
 
 impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
+    // FIXME see if we can make related code use dyn Any
+    // at some point
     #[inline]
     pub(super) fn is_trivial_context(&self) -> bool {
         std::any::TypeId::of::<P::DownContext>() == std::any::TypeId::of::<()>()
