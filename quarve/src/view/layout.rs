@@ -126,7 +126,6 @@ mod general_layout {
 pub use general_layout::*;
 
 mod vec_layout {
-    use std::marker::PhantomData;
     use crate::core::{Environment, MSlock};
     use crate::util::geo::{AlignedFrame, Rect, Size};
     use crate::view::{EnvHandle, IntoViewProvider, View, ViewProvider};
@@ -237,7 +236,6 @@ mod vec_layout {
         }
 
         pub use impl_signal_layout_extension;
-        use crate::core::Environment;
     }
 
     // mod hetero_layout {
@@ -749,6 +747,5 @@ mod vec_layout {
         pub struct ZStack {}
     }
     pub use zstack::*;
-    use crate::state::Signal;
 }
 pub use vec_layout::*;

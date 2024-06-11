@@ -124,7 +124,7 @@ mod application {
     use crate::core::life_cycle::setup_timing_thread;
     use crate::core::window::{Window, WindowBase, WindowProvider};
     use crate::native;
-    use crate::state::slock_cell::{MainSlockCell, SlockCell};
+    use crate::state::slock_cell::{MainSlockCell};
 
     pub trait Environment: 'static {
         type Const: 'static;
@@ -189,7 +189,7 @@ mod window {
     use crate::native;
     use crate::native::{WindowHandle};
     use crate::state::{Signal};
-    use crate::state::slock_cell::{MainSlockCell, SlockCell};
+    use crate::state::slock_cell::{MainSlockCell};
     use crate::util::geo::{AlignedFrame, Alignment, Size};
     use crate::view::{InnerViewBase, View};
     use crate::view::view_provider::{ViewProvider};
@@ -346,6 +346,7 @@ mod window {
             // show did layout up, now we must finish the layout down
             let intrinsic = content_borrow.intrinsic_size(s);
             content_borrow.try_layout_down(
+                &borrow.content_view,
                 stolen_env.deref_mut(),
                 Some(AlignedFrame::new_from_size(intrinsic, Alignment::Center)),
                 s
@@ -510,7 +511,7 @@ mod window {
                     let mut borrow = view.borrow_mut_main(s);
 
                     let superview = borrow.superview();
-                    if borrow.layout_up(env.deref_mut(), s) && superview.is_some() {
+                    if borrow.layout_up(&view, env.deref_mut(), s) && superview.is_some() {
                         // we have to schedule parent
                         self.invalidated_views.borrow_mut()
                             .push(InvalidatedEntry {
@@ -550,7 +551,7 @@ mod window {
                     // try to layout down
                     // if fail must mean we need to schedule a new layout of the parent
                     // as this node requires context
-                    if let Err(_) = borrow.try_layout_down(env.deref_mut(), None, s) {
+                    if let Err(_) = borrow.try_layout_down(&view, env.deref_mut(), None, s) {
                         // superview must exist since otherwise layout
                         // wouldn't have failed
                         let superview = borrow.superview().unwrap();

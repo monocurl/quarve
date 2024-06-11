@@ -1,6 +1,6 @@
 use std::sync::{Arc, Weak};
 use crate::core::{Environment, MSlock, Slock};
-use crate::state::slock_cell::{MainSlockCell, SlockCell};
+use crate::state::slock_cell::{MainSlockCell};
 use crate::util::geo::{AlignedFrame, Point, Rect, Size};
 use crate::util::rust_util::EnsureSend;
 use crate::view::inner_view::{InnerView, InnerViewBase};
@@ -16,14 +16,14 @@ impl<E, P> View<E, P> where E: Environment, P: ViewProvider<E> {
             .expect("Can only take backing from view which has been removed from its superview")
             .into_inner_main(s);
 
-        other_inner.subviews().clear_subviews(s);
+        other_inner.graph().clear_subviews(s);
 
         let source = other_inner.into_backing_and_provider();
 
         // init backing directly
-        let weak_this = Arc::downgrade(&self.0) as Weak<MainSlockCell<dyn InnerViewBase<E>>>;
+        let arc = self.0.clone() as Arc<MainSlockCell<dyn InnerViewBase<E>>>;
         self.0.borrow_mut_main(s)
-            .take_backing(weak_this, source, env, s)
+            .take_backing(&arc, source, env, s)
     }
 
     pub fn up_context(&self, s: MSlock) -> P::UpContext {
@@ -33,8 +33,10 @@ impl<E, P> View<E, P> where E: Environment, P: ViewProvider<E> {
     }
 
     pub fn layout_down_with_context(&self, aligned_frame: AlignedFrame, at: Point, context: &P::DownContext, parent_environment: &mut EnvHandle<E>, s: MSlock) -> Rect {
+        let arc = self.0.clone() as Arc<MainSlockCell<dyn InnerViewBase<E>>>;
+
         self.0.borrow_mut_main(s)
-            .layout_down_with_context(aligned_frame, at, parent_environment.0, context, s)
+            .layout_down_with_context(&arc, aligned_frame, at, parent_environment.0, context, s)
     }
 
     pub fn intrinsic_size(&self, s: MSlock) -> Size {
@@ -111,7 +113,7 @@ impl<E> StrongInvalidator<E> where E: Environment {
             let mut borrow = curr.borrow_mut_non_main_non_send(s);
             borrow.invalidate(Arc::downgrade(curr), s);
 
-            for subview in borrow.subviews().subviews() {
+            for subview in borrow.graph().subviews() {
                 StrongInvalidator::dfs(subview, s);
             }
         }

@@ -7,7 +7,6 @@
 pub mod slock_cell {
     use std::cell::{Ref, RefCell, RefMut};
     use std::mem;
-    use std::mem::{ManuallyDrop};
     use std::ops::{Deref, DerefMut};
     use crate::core::{MSlock, Slock};
     use crate::native;
