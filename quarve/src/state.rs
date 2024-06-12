@@ -154,6 +154,7 @@ mod listener {
         fn id(&self) -> usize;
     }
 
+
     /* trait aliases */
     pub trait GeneralListener : for <'a> FnMut(Slock<'a>) -> bool + Send + 'static {}
     pub trait InverseListener : for <'a> FnMut(Box<dyn DirectlyInvertible>, Slock<'a>) -> bool + Send + 'static {}

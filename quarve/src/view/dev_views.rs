@@ -3,12 +3,12 @@ use crate::native;
 use crate::state::Signal;
 use crate::util::geo::{AlignedFrame, Point, Rect, Size};
 use crate::util::Vector;
-use crate::view::{EnvHandle, IntoViewProvider, Invalidator, NativeView, Subtree, View, ViewProvider};
+use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, View, ViewProvider};
 
 
 pub struct DebugView;
 pub struct Layout<E: Environment, S: Signal<Vector<f32, 2>>>(pub View<E, DebugView>, pub View<E, DebugView>, pub S);
-unsafe impl<E: Environment> ViewProvider<E> for DebugView {
+impl<E: Environment> ViewProvider<E> for DebugView {
     type UpContext = ();
     type DownContext = ();
 
@@ -51,20 +51,22 @@ unsafe impl<E: Environment> ViewProvider<E> for DebugView {
         ()
     }
 
-    fn init_backing(&mut self, _invalidator: Invalidator<E>, _subviews: &mut Subtree<E>, _replaced_backing: Option<(NativeView, Self)>, _env: &mut EnvHandle<E>, s: MSlock<'_>) -> NativeView {
-        NativeView::new(native::view::debug_view_init(s))
+    fn init_backing(&mut self, _invalidator: Invalidator<E>, _subviews: &mut Subtree<E>, _replaced_backing: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, s: MSlock<'_>) -> NativeView {
+        unsafe {
+            NativeView::new(native::view::debug_view_init(s))
+        }
     }
 
-    fn layout_up(&mut self, _subviews: &mut Subtree<E>, _env: &mut EnvHandle<E>, s: MSlock<'_>) -> bool {
+    fn layout_up(&mut self, _subviews: &mut Subtree<E>, _env: &mut EnvRef<E>, s: MSlock<'_>) -> bool {
         false
     }
 
-    fn layout_down(&mut self, subtree: &Subtree<E>, frame: AlignedFrame, _layout_context: &Self::DownContext, _env: &mut EnvHandle<E>, s: MSlock<'_>) -> Rect {
+    fn layout_down(&mut self, subtree: &Subtree<E>, frame: AlignedFrame, _layout_context: &Self::DownContext, _env: &mut EnvRef<E>, s: MSlock<'_>) -> Rect {
         frame.full_rect()
     }
 }
 
-unsafe impl<E: Environment, S: Signal<Vector<f32, 2>>> ViewProvider<E> for Layout<E, S> {
+impl<E: Environment, S: Signal<Vector<f32, 2>>> ViewProvider<E> for Layout<E, S> {
     type UpContext = ();
     type DownContext = ();
 
@@ -94,7 +96,7 @@ unsafe impl<E: Environment, S: Signal<Vector<f32, 2>>> ViewProvider<E> for Layou
         ()
     }
 
-    fn init_backing(&mut self, invalidator: Invalidator<E>, subviews: &mut Subtree<E>, _replaced_backing: Option<(NativeView, Self)>, env: &mut EnvHandle<E>, s: MSlock<'_>) -> NativeView {
+    fn init_backing(&mut self, invalidator: Invalidator<E>, subviews: &mut Subtree<E>, _replaced_backing: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock<'_>) -> NativeView {
         subviews.push_subview(&self.0, env, s);
         subviews.push_subview(&self.1, env, s);
 
@@ -107,14 +109,14 @@ unsafe impl<E: Environment, S: Signal<Vector<f32, 2>>> ViewProvider<E> for Layou
             true
         }, s);
 
-        NativeView::new(native::view::init_layout_view(s))
+        NativeView::layout_view(s)
     }
 
-    fn layout_up(&mut self, subviews: &mut Subtree<E>, env: &mut EnvHandle<E>, s: MSlock<'_>) -> bool {
+    fn layout_up(&mut self, subviews: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock<'_>) -> bool {
         false
     }
 
-    fn layout_down(&mut self, subtree: &Subtree<E>, frame: AlignedFrame, layout_context: &Self::DownContext, env: &mut EnvHandle<E>, s: MSlock<'_>) -> Rect {
+    fn layout_down(&mut self, subtree: &Subtree<E>, frame: AlignedFrame, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock<'_>) -> Rect {
         let pos = self.2.borrow(s);
         self.0.layout_down(AlignedFrame {
             w: 100.0,

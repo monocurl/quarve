@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::ffi::c_void;
 use std::sync::{Arc, Weak};
 use crate::core::{Environment, MSlock, Slock, WindowEnvironmentBase};
@@ -6,7 +7,7 @@ use crate::native::view::{view_add_child_at, view_clear_children, view_remove_ch
 use crate::state::slock_cell::{MainSlockCell};
 use crate::util::geo::{AlignedFrame, Point, Rect, Size};
 use crate::util::rust_util::PhantomUnsendUnsync;
-use crate::view::{EnvHandle, Invalidator, View};
+use crate::view::{EnvRef, Invalidator, View};
 use crate::view::util::SizeContainer;
 use crate::view::view_provider::ViewProvider;
 
@@ -94,15 +95,13 @@ pub(crate) struct InnerView<E, P> where E: Environment,
 }
 
 impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
-    // FIXME see if we can make related code use dyn Any
-    // at some point
-    #[inline]
-    pub(super) fn is_trivial_context(&self) -> bool {
-        std::any::TypeId::of::<P::DownContext>() == std::any::TypeId::of::<()>()
-    }
-
     pub(super) fn into_backing_and_provider(self) -> (NativeView, P) {
         (self.graph.backing, self.provider)
+    }
+
+    #[inline]
+    pub(super) fn is_trivial_context(&self) -> bool {
+        std::any::TypeId::of::<P>() == std::any::TypeId::of::<()>()
     }
 
     pub(super) fn provider(&mut self) -> &mut P {
@@ -137,7 +136,7 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
                 graph: &mut self.graph,
                 owner: this,
             };
-            let ret = self.provider.layout_down(&subtree, frame, context, &mut EnvHandle(env), s);
+            let ret = self.provider.layout_down(&subtree, frame, context, &mut EnvRef(env), s);
             self.provider.pop_environment(env.variable_env_mut(), s);
 
             ret
@@ -162,7 +161,7 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
         &mut self,
         this: &'_ Arc<MainSlockCell<dyn InnerViewBase<E>>>,
         source: (NativeView, P),
-        env: &mut EnvHandle<E>,
+        env: &mut EnvRef<E>,
         s: MSlock
     ) {
         if !self.backing().is_null() {
@@ -239,7 +238,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
     fn layout_up(&mut self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, env: &mut E, s: MSlock<'_>) -> bool {
         assert!(self.needs_layout_up);
 
-        let mut handle = EnvHandle(env);
+        let mut handle = EnvRef(env);
         let mut subtree = Subtree {
             graph: &mut self.graph,
             owner: this,
@@ -252,14 +251,11 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
     }
 
     fn try_layout_down(&mut self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, env: &mut E, frame: Option<AlignedFrame>, s: MSlock<'_>) -> Result<(), ()> {
-        // with optimizations, this has been tested to inline
-        if self.is_trivial_context() {
-            // safety: checked that P::LayoutContext == ()
-            let layout_context = unsafe {
-                std::mem::transmute_copy::<(), P::DownContext>(&())
-            };
+        let context = ();
+        let context_ref: &dyn Any = &context;
 
-            self.layout_down_with_context(this, frame.unwrap_or(self.last_frame), self.last_point, env, &layout_context, s);
+        if let Some(r) = context_ref.downcast_ref::<P::DownContext>() {
+            self.layout_down_with_context(this, frame.unwrap_or(self.last_frame), self.last_point, env, r, s);
 
             Ok(())
         }
@@ -336,7 +332,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
             let invalidator = Invalidator {
                 view: Arc::downgrade(this)
             };
-            let mut handle = EnvHandle(e);
+            let mut handle = EnvRef(e);
             let mut subtree = Subtree {
                 graph: &mut self.graph,
                 owner: this,
@@ -423,8 +419,14 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
 pub struct NativeView(*mut c_void);
 
 impl NativeView {
-    pub fn new(owned_view: *mut c_void) -> NativeView {
+    pub unsafe fn new(owned_view: *mut c_void) -> NativeView {
         NativeView(owned_view)
+    }
+
+    pub fn layout_view(s: MSlock) -> NativeView {
+        unsafe {
+            NativeView::new(native::view::init_layout_view(s))
+        }
     }
 
     pub fn view(&self) -> *mut c_void {
@@ -502,7 +504,7 @@ impl<'a, E> Subtree<'a, E> where E: Environment {
 
     // note that cyclic is technically possible if you work hard enough
     // but this will often just result in a stall or other weird effects
-    pub fn insert_subview<P>(&mut self, subview: &View<E, P>, index: usize, env: &mut EnvHandle<E>, s: MSlock<'_>) where P: ViewProvider<E> {
+    pub fn insert_subview<P>(&mut self, subview: &View<E, P>, index: usize, env: &mut EnvRef<E>, s: MSlock<'_>) where P: ViewProvider<E> {
         subview.0.borrow_mut_main(s).set_superview(Some(Arc::downgrade(self.owner)));
         self.graph.subviews.insert(index, subview.0.clone());
 
@@ -519,7 +521,7 @@ impl<'a, E> Subtree<'a, E> where E: Environment {
         }
     }
 
-    pub fn push_subview<P>(&mut self, subview: &View<E, P>, env: &mut EnvHandle<E>, s: MSlock<'_>) where P: ViewProvider<E> {
+    pub fn push_subview<P>(&mut self, subview: &View<E, P>, env: &mut EnvRef<E>, s: MSlock<'_>) where P: ViewProvider<E> {
         self.insert_subview(subview, self.graph.subviews.len(), env, s);
     }
 }

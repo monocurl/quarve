@@ -3,10 +3,10 @@ use crate::core::{Environment, MSlock};
 use crate::event::{Event, EventResult};
 use crate::state::slock_cell::MainSlockCell;
 use crate::util::geo::{AlignedFrame, Rect, Size};
-use crate::view::{EnvHandle, InnerView, IntoUpContext,  Invalidator, NativeView, Subtree, View};
+use crate::view::{EnvRef, InnerView, IntoUpContext, Invalidator, NativeView, Subtree, View};
 use crate::view::util::SizeContainer;
 
-pub unsafe trait ViewProvider<E>: Sized + 'static
+pub trait ViewProvider<E>: Sized + 'static
     where E: Environment
 {
     type UpContext: 'static;
@@ -56,7 +56,7 @@ pub unsafe trait ViewProvider<E>: Sized + 'static
         invalidator: Invalidator<E>,
         subtree: &mut Subtree<E>,
         backing_source: Option<(NativeView, Self)>,
-        env: &mut EnvHandle<E>,
+        env: &mut EnvRef<E>,
         s: MSlock<'_>
     ) -> NativeView;
 
@@ -71,7 +71,7 @@ pub unsafe trait ViewProvider<E>: Sized + 'static
     fn layout_up(
         &mut self,
         subtree: &mut Subtree<E>,
-        env: &mut EnvHandle<E>,
+        env: &mut EnvRef<E>,
         s: MSlock<'_>
     ) -> bool;
 
@@ -85,7 +85,7 @@ pub unsafe trait ViewProvider<E>: Sized + 'static
         subtree: &Subtree<E>,
         frame: AlignedFrame,
         layout_context: &Self::DownContext,
-        env: &mut EnvHandle<E>,
+        env: &mut EnvRef<E>,
         s: MSlock<'_>
     ) -> Rect;
 
@@ -152,7 +152,7 @@ impl<E, P, U> UpContextAdapter<E, P, U>
     }
 }
 
-unsafe impl<E, P, U> ViewProvider<E> for UpContextAdapter<E, P, U>
+impl<E, P, U> ViewProvider<E> for UpContextAdapter<E, P, U>
     where E: Environment,
           P: ViewProvider<E>,
           U: 'static,
@@ -185,18 +185,18 @@ unsafe impl<E, P, U> ViewProvider<E> for UpContextAdapter<E, P, U>
             .into_up_context()
     }
 
-    fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvHandle<E>, s: MSlock<'_>) -> NativeView where Self: Sized {
+    fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock<'_>) -> NativeView where Self: Sized {
         let source = backing_source
             .map(|(n, p)| (n, p.0));
 
         self.0.init_backing(invalidator, subtree, source, env, s)
     }
 
-    fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvHandle<E>, s: MSlock<'_>) -> bool {
+    fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock<'_>) -> bool {
         self.0.layout_up(subtree, env, s)
     }
 
-    fn layout_down(&mut self, subtree: &Subtree<E>, frame: AlignedFrame, layout_context: &Self::DownContext, env: &mut EnvHandle<E>, s: MSlock<'_>) -> Rect {
+    fn layout_down(&mut self, subtree: &Subtree<E>, frame: AlignedFrame, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock<'_>) -> Rect {
         self.0.layout_down(subtree, frame, layout_context, env, s)
     }
 
@@ -243,5 +243,49 @@ unsafe impl<E, P, U> ViewProvider<E> for UpContextAdapter<E, P, U>
     fn handle_event(&mut self, e: Event, s: MSlock) -> EventResult {
         self.0
             .handle_event(e, s)
+    }
+}
+
+pub(crate) struct DummyProvider<E, U, D>(pub PhantomData<(E, U, D)>);
+impl<E, U, D> ViewProvider<E> for DummyProvider<E, U, D>
+    where E: Environment, U: 'static, D: 'static
+{
+    type UpContext = U;
+    type DownContext = D;
+
+    fn intrinsic_size(&mut self, _s: MSlock) -> Size {
+        unreachable!()
+    }
+
+    fn xsquished_size(&mut self, _s: MSlock) -> Size {
+        unreachable!()
+    }
+
+    fn xstretched_size(&mut self, _s: MSlock) -> Size {
+        unreachable!()
+    }
+
+    fn ysquished_size(&mut self, _s: MSlock) -> Size {
+        unreachable!()
+    }
+
+    fn ystretched_size(&mut self, _s: MSlock) -> Size {
+        unreachable!()
+    }
+
+    fn up_context(&mut self, _s: MSlock) -> U {
+        unreachable!()
+    }
+
+    fn init_backing(&mut self, _invalidator: Invalidator<E>, _subtree: &mut Subtree<E>, _backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, _s: MSlock<'_>) -> NativeView {
+        unreachable!()
+    }
+
+    fn layout_up(&mut self, _subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, _s: MSlock<'_>) -> bool {
+        unreachable!()
+    }
+
+    fn layout_down(&mut self, _subtree: &Subtree<E>, _frame: AlignedFrame, _layout_context: &D, _env: &mut EnvRef<E>, _s: MSlock<'_>) -> Rect {
+        unreachable!()
     }
 }

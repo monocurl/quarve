@@ -1,12 +1,9 @@
 use quarve::core::{Application, Environment, launch, MSlock, timed_worker};
-use quarve::state::{Binding, FixedSignal, Signal, Store, WithCapacitor};
-use quarve::state::capacitor::{ConstantTimeCapacitor};
-use quarve::state::SetAction::Set;
-use quarve::util::Vector;
+use quarve::state::{FixedSignal, Signal};
 use quarve::view::{IntoViewProvider, View, ViewProvider};
-use quarve::view::dev_views::{DebugView, Layout};
-use quarve::view::layout::{VecSignalLayout, VStack};
+use quarve::view::dev_views::{DebugView};
 use quarve::view::layout::*;
+use quarve::vstack;
 
 struct Env(());
 
@@ -55,17 +52,24 @@ impl quarve::core::WindowProvider for WindowProvider {
     }
 
     fn tree(&self, env: &Env, s: MSlock<'_>) -> View<Env, impl ViewProvider<Env, DownContext=()>> {
-        // let items = s.clock_signal()
-        //     .map(|s| {
-        //         let range = 0 .. ((5.0 * s.sin().abs()) as i32);
-        //         range.into_iter().collect()
-        //     }, s);
-        let items = FixedSignal::new(vec![1, 2]);
-        items.signal_vmap(|i, s| {
-            DebugView
-        })
+        let items = s.clock_signal()
+            .map(|s| {
+                let range = 0 .. ((5.0 * s.sin().abs()) as i32);
+                range.into_iter().collect()
+            }, s);
+
+        vstack! {
+            DebugView;
+            DebugView;
+            items.signal_vmap(|i, s| {
+                DebugView
+            });
+        }
             .into_view_provider(env.const_env(), s)
             .into_view(s)
+
+        //     .into_view_provider(env.const_env(), s)
+        //     .into_view(s)
     }
 }
 
