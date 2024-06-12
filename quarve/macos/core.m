@@ -176,7 +176,7 @@ void *
 debug_back_view_init() {
     NSView* t = [[NSView alloc] initWithFrame:NSMakeRect(0,0,100,100)];
     [t setWantsLayer: YES];
-    [t.layer setBackgroundColor: [[NSColor whiteColor] CGColor]];
+    [t.layer setBackgroundColor: [[[NSColor whiteColor] colorWithAlphaComponent: 0.5] CGColor]];
     return t;
 }
 

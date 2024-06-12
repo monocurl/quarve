@@ -513,9 +513,13 @@ mod window {
                     let superview = borrow.superview();
                     if borrow.layout_up(&view, env.deref_mut(), s) && superview.is_some() {
                         // we have to schedule parent
+                        let unwrapped = superview.unwrap();
+                        unwrapped.borrow_mut_main(s)
+                            .set_needs_layout_up();
+
                         self.invalidated_views.borrow_mut()
                             .push(InvalidatedEntry {
-                                view: Arc::downgrade(&superview.unwrap()),
+                                view: Arc::downgrade(&unwrapped),
                                 depth: curr.depth - 1
                             });
                     }

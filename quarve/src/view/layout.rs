@@ -152,15 +152,18 @@ mod vec_layout {
         _into_view_provider(i, long_e, long_s)
     }
 
-    pub trait VecLayoutProvider<E>: 'static where E: Environment {
+    pub trait FromOptions {
         type Options: Default;
+
+        fn from_options(options: Self::Options) -> Self;
+        fn options(&mut self) -> &mut Self::Options;
+    }
+
+    pub trait VecLayoutProvider<E>: FromOptions + 'static where E: Environment {
         type DownContext: 'static;
         type UpContext: 'static;
         type SubviewDownContext: 'static;
         type SubviewUpContext: 'static;
-
-        fn from_options(options: Self::Options) -> Self;
-        fn options(&mut self) -> &mut Self::Options;
 
         fn intrinsic_size(&mut self, s: MSlock) -> Size;
         fn xsquished_size(&mut self, s: MSlock) -> Size;
@@ -188,19 +191,38 @@ mod vec_layout {
     }
 
     mod macros {
+        // https://github.com/rust-lang/rust/issues/35853#issuecomment-415993963
         #[macro_export]
-        macro_rules! vstack {
-            () => {
-                new_hetero_ivp(VStack::default())
+        macro_rules! impl_hetero_layout {
+            (__append_dollar_sign $($body:tt)*) => {
+                macro_rules! __quarve_inner_with_dollar_sign { $($body)* }
+                __quarve_inner_with_dollar_sign!($);
             };
-            ($first: expr $(; $child: expr )* $(;)?) => {
-                vstack! {
-                    $($child;)*
+            ($t: ty, $macro_name: ident) => {
+                impl_hetero_layout! {
+                    __append_dollar_sign
+                    ($d:tt) => {
+                        #[macro_export]
+                        macro_rules! $macro_name {
+                            () => {
+                                quarve::view::layout::new_hetero_ivp(
+                                    <$t as quarve::view::layout::FromOptions>::from_options(
+                                        <$t as quarve::view::layout::FromOptions>::Options::default()
+                                    )
+                                )
+                            };
+                            ($d first: expr $d(; $d child: expr )* $d(;)?) => {
+                                $macro_name! {
+                                    $d($d child;)*
+                                }
+                                .prepend($d first)
+                            }
+                        }
+                    }
                 }
-                .prepend($first)
-            }
+            };
         }
-        pub use vstack;
+        pub use impl_hetero_layout;
 
         #[macro_export]
         macro_rules! impl_signal_layout_extension {
@@ -224,7 +246,7 @@ mod vec_layout {
                                     DownContext=<$t as VecLayoutProvider<E>>::SubviewDownContext,
                                     UpContext=<$t as VecLayoutProvider<E>>::SubviewUpContext>
                 {
-                    VecSignalLayout::new(self, map, <$t as VecLayoutProvider<E>>::from_options(<$t as VecLayoutProvider<E>>::Options::default()))
+                    VecSignalLayout::new(self, map, <$t as FromOptions>::from_options(<$t as FromOptions>::Options::default()))
                 }
             };
 
@@ -237,12 +259,14 @@ mod vec_layout {
                 }
             };
             ($t: ty, $trait_name: ident, $method_name: ident, where E = $env: ty) => {
-                type E = $env;
-                impl_signal_layout_extension!(__declare_trait  $t, $trait_name, $method_name);
+                mod {
+                    type E = $env;
+                    impl_signal_layout_extension!(__declare_trait  $t, $trait_name, $method_name);
 
-                impl<T, S> $trait_name<T, S, E> for S where T: Send + 'static, S: Signal<Vec<T>>
-                {
-                    impl_signal_layout_extension!(__impl_trait $t, $trait_name, $method_name);
+                    impl<T, S> $trait_name<T, S, E> for S where T: Send + 'static, S: Signal<Vec<T>>
+                    {
+                        impl_signal_layout_extension!(__impl_trait $t, $trait_name, $method_name);
+                    }
                 }
             }
         }
@@ -342,48 +366,6 @@ mod vec_layout {
             phantom: PhantomData<(U, D)>,
         }
 
-        impl<E, U, D, P, N> ViewRef<E> for HeteroVPActualNode<E, U, D, P, N>
-            where E: Environment,
-                  P: ViewProvider<E, DownContext=D, UpContext=U>,
-                  N: HeteroVPNode<E, U, D>,
-                  U: 'static, D: 'static
-        {
-            type UpContext = U;
-            type DownContext = D;
-
-            fn sizes(&self, s: MSlock) -> SizeContainer {
-                self.view.sizes(s)
-            }
-
-            fn intrinsic_size(&self, s: MSlock) -> Size {
-                self.view.intrinsic_size(s)
-            }
-
-            fn xsquished_size(&self, s: MSlock) -> Size {
-                self.view.xsquished_size(s)
-            }
-
-            fn ysquished_size(&self, s: MSlock) -> Size {
-                self.view.ysquished_size(s)
-            }
-
-            fn xstretched_size(&self, s: MSlock) -> Size {
-                self.view.xstretched_size(s)
-            }
-
-            fn ystretched_size(&self, s: MSlock) -> Size {
-                self.view.ystretched_size(s)
-            }
-
-            fn up_context(&self, s: MSlock) -> Self::UpContext {
-                self.view.up_context(s)
-            }
-
-            fn layout_down_with_context(&self, aligned_frame: AlignedFrame, at: Point, layout_context: &Self::DownContext, parent_environment: &mut EnvRef<E>, s: MSlock) -> Rect {
-                self.view.layout_down_with_context(aligned_frame, at, layout_context, parent_environment, s)
-            }
-        }
-
         impl<E, U, D, P, N> HeteroVPNodeBase<E, U, D> for HeteroVPActualNode<E, U, D, P, N>
             where E: Environment,
                   P: ViewProvider<E, DownContext=D, UpContext=U>,
@@ -454,19 +436,20 @@ mod vec_layout {
             }
         }
 
+        pub fn new_hetero_ivp<E: Environment, L: VecLayoutProvider<E>>(layout: L) -> HeteroIVP<E, impl HeteroIVPNode<E, L::SubviewUpContext, L::SubviewDownContext>, L> {
+            HeteroIVP {
+                root: NullNode,
+                layout,
+                marker: PhantomData
+            }
+        }
+
 
         impl<E, H, L> HeteroIVP<E, H, L>
             where E: Environment,
                   L: VecLayoutProvider<E>,
                   H: HeteroIVPNode<E, L::SubviewUpContext, L::SubviewDownContext>
         {
-            pub fn new<E: Environment, L: VecLayoutProvider<E>>(layout: L) -> HeteroIVP<E, impl HeteroIVPNode<E, L::SubviewUpContext, L::SubviewDownContext>, L> {
-                HeteroIVP {
-                    root: NullNode,
-                    layout,
-                    marker: PhantomData
-                }
-            }
 
             pub fn prepend<P>(self, provider: P) -> HeteroIVP<E, impl HeteroIVPNode<E, L::SubviewUpContext, L::SubviewDownContext>, L>
                 where P: IntoViewProvider<E, UpContext=L::SubviewUpContext, DownContext=L::SubviewDownContext>
@@ -558,171 +541,6 @@ mod vec_layout {
         }
     }
     pub use hetero_layout::*;
-
-    // mod binding_layout {
-    //     use std::marker::PhantomData;
-    //     use crate::core::{Environment, MSlock};
-    //     use crate::state::{Binding, Buffer, StoreContainer, VecActionBasis, Word};
-    //     use crate::util::geo::{AlignedFrame, Rect, Size};
-    //     use crate::view::{EnvHandle, IntoUpContext, IntoViewProvider, Invalidator, Subtree, UpContextAdapter, View, ViewProvider};
-    //     use crate::view::layout::VecLayoutProvider;
-    //
-    //     pub struct VecBindingLayout<E, S, B, M, U, P, L>
-    //         where E: Environment,
-    //               S: StoreContainer,
-    //               B: Binding<Vec<S>>,
-    //               M: Fn(&S) -> P + 'static,
-    //               U: IntoUpContext<L::SubviewUpContext>,
-    //               P: ViewProvider<E,
-    //                   DownContext=L::SubviewDownContext,
-    //                   UpContext=U
-    //               >,
-    //               L: VecLayoutProvider<E>
-    //     {
-    //         binding: B,
-    //         layout: L,
-    //         map: M,
-    //         // everything is static so dont care about variacne too much
-    //         provider: PhantomData<fn(S) -> P>,
-    //         env: PhantomData<E>,
-    //         store: PhantomData<S>,
-    //         context: PhantomData<U>,
-    //     }
-    //
-    //     pub struct VecBindingViewProvider<E, S, B, M, U, P, L>
-    //         where E: Environment,
-    //               S: StoreContainer,
-    //               B: Binding<Vec<S>>,
-    //               M: Fn(&S) -> P + 'static,
-    //               U: IntoUpContext<L::SubviewUpContext>,
-    //               P: ViewProvider<E,
-    //                   DownContext=L::SubviewDownContext,
-    //                   UpContext=U
-    //               >,
-    //               L: VecLayoutProvider<E>
-    //     {
-    //         binding: B,
-    //         layout: L,
-    //         map: M,
-    //         action_buffer: Buffer<Word<VecActionBasis<()>>>,
-    //         subviews: Vec<View<E, UpContextAdapter<E, P, L::SubviewUpContext>>>,
-    //         // everything is static so dont care about variacne too much
-    //         provider: PhantomData<fn(S) -> P>,
-    //         env: PhantomData<E>,
-    //         store: PhantomData<S>,
-    //         context: PhantomData<U>,
-    //     }
-    //
-    //     impl<E, S, B, M, U, P, L> IntoViewProvider<E> for VecBindingLayout<E, S, B, M, U, P, L>
-    //         where E: Environment,
-    //               S: StoreContainer,
-    //               B: Binding<Vec<S>>,
-    //               M: Fn(&S) -> P + 'static,
-    //               U: IntoUpContext<L::SubviewUpContext>,
-    //               P: ViewProvider<E,
-    //                   DownContext=L::SubviewDownContext,
-    //                   UpContext=U
-    //               >,
-    //               L: VecLayoutProvider<E> {
-    //         type UpContext = ();
-    //         type DownContext = ();
-    //
-    //         fn into_view_provider(self, _env: &E::Const, s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
-    //             VecBindingViewProvider {
-    //                 binding: self.binding,
-    //                 layout: self.layout,
-    //                 map: self.map,
-    //                 action_buffer: Buffer::new(Word::default()),
-    //                 subviews: vec![],
-    //                 provider: Default::default(),
-    //                 env: Default::default(),
-    //                 store: Default::default(),
-    //                 context: Default::default(),
-    //             }
-    //         }
-    //     }
-    //
-    //     unsafe impl<E, S, B, M, U, P, L> ViewProvider<E> for VecBindingViewProvider<E, S, B, M, U, P, L>
-    //         where E: Environment,
-    //               S: StoreContainer,
-    //               B: Binding<Vec<S>>,
-    //               M: Fn(&S) -> P + 'static,
-    //               U: IntoUpContext<L::SubviewUpContext>,
-    //               P: ViewProvider<E,
-    //                   DownContext=L::SubviewDownContext,
-    //                   UpContext=U
-    //               >,
-    //               L: VecLayoutProvider<E> {
-    //         type UpContext = L::UpContext;
-    //         type DownContext = L::DownContext;
-    //
-    //         fn intrinsic_size(&mut self, s: MSlock) -> Size {
-    //             self.layout.intrinsic_size(s)
-    //         }
-    //
-    //         fn xsquished_size(&mut self, s: MSlock) -> Size {
-    //             self.layout.xsquished_size(s)
-    //         }
-    //
-    //         fn ysquished_size(&mut self, s: MSlock) -> Size {
-    //             self.layout.ysquished_size(s)
-    //         }
-    //
-    //         fn xstretched_size(&mut self, s: MSlock) -> Size {
-    //             self.layout.xstretched_size(s)
-    //         }
-    //
-    //         fn ystretched_size(&mut self, s: MSlock) -> Size {
-    //             self.layout.ystretched_size(s)
-    //         }
-    //
-    //         fn up_context(&mut self, s: MSlock) -> Self::UpContext {
-    //             self.layout.up_context(s)
-    //         }
-    //
-    //         fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvHandle<E>, s: MSlock<'_>) -> NativeView where Self: Sized {
-    //             // register invalidator for binding
-    //             let buffer = self.action_buffer.weak_buffer();
-    //             self.binding.action_listener(|_, a, s| {
-    //                 let Some(invalidator) = invalidator.upgrade() else {
-    //                     return false;
-    //                 };
-    //                 let Some(buffer) = buffer.upgrade() else {
-    //                     return false;
-    //                 };
-    //
-    //                 for a in a.iter() {
-    //                     let mapped = match a {
-    //                         VecActionBasis::Insert(_, at) => {
-    //                             // Vec
-    //                         }
-    //                         VecActionBasis::Remove(_) => {}
-    //                         VecActionBasis::InsertMany(_, _) => {}
-    //                         VecActionBasis::RemoveMany(_) => {}
-    //                         VecActionBasis::Swap(_, _) => {}
-    //                     }
-    //                 }
-    //
-    //                 invalidator.invalidate(s);
-    //                 true
-    //             }, s);
-    //             // if let Some(source) = invalidator.
-    //             todo!()
-    //         }
-    //
-    //         fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvHandle<E>, s: MSlock<'_>) -> bool {
-    //             // FIXME we should be able to derive this from the action alone
-    //             // this doesn't introduce additional complexity though i suppose at least
-    //             let source_indices =
-    //                 todo!()
-    //         }
-    //
-    //         fn layout_down(&mut self, subtree: &Subtree<E>, frame: AlignedFrame, layout_context: &Self::DownContext, env: &mut EnvHandle<E>, s: MSlock) -> Rect {
-    //             // self.
-    //         }
-    //     }
-    // }
-    // pub use binding_layout::*;
 
     mod signal_layout {
         use std::marker::PhantomData;
@@ -911,7 +729,7 @@ mod vec_layout {
     mod vstack {
         use crate::core::{Environment, MSlock};
         use crate::util::geo::{AlignedFrame, Alignment, Point, Rect, ScreenUnit, Size};
-        use crate::view::layout::{VecLayoutProvider};
+        use crate::view::layout::{FromOptions, VecLayoutProvider};
         use crate::view::{EnvRef, TrivialContextViewRef, ViewRef};
         use crate::view::util::SizeContainer;
 
@@ -937,12 +755,8 @@ mod vec_layout {
             }
         }
 
-        impl<E> VecLayoutProvider<E> for VStack where E: Environment {
+        impl FromOptions for VStack {
             type Options = VStackOptions;
-            type DownContext = ();
-            type UpContext = ();
-            type SubviewDownContext = ();
-            type SubviewUpContext = ();
 
             fn from_options(options: Self::Options) -> Self {
                 VStack(SizeContainer::default(), options)
@@ -951,6 +765,120 @@ mod vec_layout {
             fn options(&mut self) -> &mut Self::Options {
                 &mut self.1
             }
+        }
+
+        impl<E> VecLayoutProvider<E> for VStack where E: Environment {
+            type DownContext = ();
+            type UpContext = ();
+            type SubviewDownContext = ();
+            type SubviewUpContext = ();
+
+            fn intrinsic_size(&mut self, _s: MSlock) -> Size {
+                self.0.intrinsic()
+            }
+
+            fn xsquished_size(&mut self, _s: MSlock) -> Size {
+                self.0.xsquished()
+            }
+
+            fn ysquished_size(&mut self, _s: MSlock) -> Size {
+                self.0.ysquished()
+            }
+
+            fn xstretched_size(&mut self, _s: MSlock) -> Size {
+                self.0.xstretched()
+            }
+
+            fn ystretched_size(&mut self, _s: MSlock) -> Size {
+                self.0.ystretched()
+            }
+
+            fn up_context(&mut self, _s: MSlock) -> Self::UpContext {
+                ()
+            }
+
+            fn layout_up<'a, P>(&mut self, subviews: impl Iterator<Item=&'a P>, _env: &mut EnvRef<E>, s: MSlock) -> bool
+                where P: ViewRef<E, DownContext=Self::SubviewDownContext, UpContext=Self::SubviewUpContext> + ?Sized + 'a{
+                println!("Layout Up Called on vstack");
+                let new = subviews
+                    .map(|v| v.sizes(s))
+                    .reduce(|mut new, curr| {
+                        for i in 0..SizeContainer::num_sizes() {
+                            new[i].w = new[i].w.max(curr[i].w);
+                            new[i].h += curr[i].h + self.1.spacing;
+                        }
+                        new
+                    })
+                    .unwrap_or_default();
+
+                if new != self.0 {
+                    self.0 = new;
+                    true
+                }
+                else {
+                    false
+                }
+            }
+
+            fn layout_down<'a, P>(&mut self, subviews: impl Iterator<Item=&'a P>, frame: AlignedFrame, _context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> Rect
+                where P: ViewRef<E, DownContext=Self::SubviewDownContext, UpContext=Self::SubviewUpContext> + ?Sized + 'a {
+                let mut elapsed = 0.0;
+                for view in subviews {
+                    let intrinsic = view.intrinsic_size(s);
+                    let used = view.layout_down(AlignedFrame::new_from_size(intrinsic, Alignment::Center), Point::new(0.0, elapsed), env, s);
+                    elapsed += used.h + self.1.spacing;
+                }
+                frame.full_rect()
+            }
+        }
+    }
+    pub use vstack::*;
+
+    mod hstack {
+        use crate::core::{Environment, MSlock};
+        use crate::util::geo::{AlignedFrame, Alignment, Point, Rect, ScreenUnit, Size};
+        use crate::view::layout::{FromOptions, VecLayoutProvider};
+        use crate::view::{EnvRef, TrivialContextViewRef, ViewRef};
+        use crate::view::util::SizeContainer;
+
+        pub struct HStack(SizeContainer, HStackOptions);
+
+        pub struct HStackOptions {
+            spacing: ScreenUnit
+        }
+
+        impl Default for HStackOptions {
+            fn default() -> Self {
+                HStackOptions {
+                    spacing: 10.0
+                }
+            }
+        }
+
+        impl HStackOptions {
+            pub fn spacing(mut self, spacing: ScreenUnit) -> Self {
+                self.spacing = spacing;
+                self
+            }
+        }
+
+        impl FromOptions for HStack {
+            type Options = HStackOptions;
+
+            fn from_options(options: Self::Options) -> Self {
+                HStack(SizeContainer::default(), options)
+            }
+
+            fn options(&mut self) -> &mut Self::Options {
+                &mut self.1
+            }
+        }
+
+        impl<E> VecLayoutProvider<E> for HStack where E: Environment {
+            type DownContext = ();
+            type UpContext = ();
+            type SubviewDownContext = ();
+            type SubviewUpContext = ();
 
             fn intrinsic_size(&mut self, _s: MSlock) -> Size {
                 self.0.intrinsic()
@@ -982,8 +910,8 @@ mod vec_layout {
                     .map(|v| v.sizes(s))
                     .reduce(|mut new, curr| {
                         for i in 0..SizeContainer::num_sizes() {
-                            new[i].w = new[i].w.max(curr[i].w);
-                            new[i].h += curr[i].h;
+                            new[i].h = new[i].h.max(curr[i].h);
+                            new[i].w += curr[i].w;
                         }
                         new
                     })
@@ -1003,17 +931,12 @@ mod vec_layout {
                 let mut elapsed = 0.0;
                 for view in subviews {
                     let intrinsic = view.intrinsic_size(s);
-                    view.layout_down(AlignedFrame::new_from_size(intrinsic, Alignment::Center), Point::new(0.0, elapsed), env, s);
-                    elapsed += intrinsic.h + self.1.spacing;
+                    view.layout_down(AlignedFrame::new_from_size(intrinsic, Alignment::Center), Point::new(elapsed, 0.0), env, s);
+                    elapsed += intrinsic.w + self.1.spacing;
                 }
                 frame.full_rect()
             }
         }
-    }
-    pub use vstack::*;
-
-    mod hstack {
-        pub struct HStack {}
     }
     pub use hstack::*;
 
@@ -1027,11 +950,17 @@ mod vec_layout {
         use crate::core::Environment;
         use crate::view::IntoViewProvider;
         use crate::core::MSlock;
-        use crate::impl_signal_layout_extension;
-        use crate::view::layout::{VecSignalLayout, VecLayoutProvider};
-        use super::VStack;
+        use crate::{impl_hetero_layout, impl_signal_layout_extension};
+        use crate::view::layout::{FromOptions, VecSignalLayout, VecLayoutProvider};
+        use super::{VStack};
 
         impl_signal_layout_extension!(VStack, SignalVMap, signal_vmap, where E: Environment);
+
+        impl_hetero_layout!(VStack, vstack);
+        pub use vstack;
+
+        impl_hetero_layout!(HStack, hstack);
+        pub use hstack;
     }
     pub use impls::*;
 }

@@ -19,8 +19,6 @@ pub(crate) trait InnerViewBase<E> where E: Environment {
     fn backing(&self) -> *mut c_void;
 
     /* tree methods */
-
-    fn window(&self) -> Option<Weak<MainSlockCell<dyn WindowEnvironmentBase<E>>>>;
     fn superview(&self) -> Option<Arc<MainSlockCell<dyn InnerViewBase<E>>>>;
     fn set_superview(&mut self, superview: Option<Weak<MainSlockCell<dyn InnerViewBase<E>>>>);
     fn graph(&mut self) -> &mut Graph<E>;
@@ -67,6 +65,7 @@ pub(crate) trait InnerViewBase<E> where E: Environment {
     // parent must have its layout down flag set to true
     // even though it doesn't need a layout up
     fn set_needs_layout_down(&mut self);
+    fn set_needs_layout_up(&mut self);
     fn invalidate(&mut self, this: Weak<MainSlockCell<dyn InnerViewBase<E>>>, s: Slock);
 
     /* environment */
@@ -128,6 +127,7 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
         // if frame is different from last frame
         // maybe different overall frame
         actually_needs_layout = actually_needs_layout || frame != self.last_frame;
+        actually_needs_layout = true;
 
         let untranslated = if actually_needs_layout {
             self.provider.push_environment(env.variable_env_mut(), s);
@@ -153,6 +153,7 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
 
         let translated = untranslated.translate(at);
         view_set_frame(self.backing(), translated, s);
+        println!("Backing {:?} at {:?}", self.backing(), translated);
 
         translated
     }
@@ -202,10 +203,6 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         self.graph.backing.0
     }
 
-    fn window(&self) -> Option<Weak<MainSlockCell<dyn WindowEnvironmentBase<E>>>> {
-        self.graph.window.clone()
-    }
-
     fn superview(&self) -> Option<Arc<MainSlockCell<dyn InnerViewBase<E>>>> {
         self.graph.superview.as_ref().and_then(|s| s.upgrade())
     }
@@ -236,7 +233,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
     }
 
     fn layout_up(&mut self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, env: &mut E, s: MSlock<'_>) -> bool {
-        assert!(self.needs_layout_up);
+        debug_assert!(self.needs_layout_up);
 
         let mut handle = EnvRef(env);
         let mut subtree = Subtree {
@@ -246,6 +243,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         let ret = self.provider.layout_up(&mut subtree, &mut handle, s);
 
         self.needs_layout_up = false;
+        self.needs_layout_down = true;
 
         ret
     }
@@ -390,6 +388,10 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
 
     fn set_needs_layout_down(&mut self) {
         self.needs_layout_down = true;
+    }
+
+    fn set_needs_layout_up(&mut self) {
+        self.needs_layout_up = true;
     }
 
     fn invalidate(&mut self, this: Weak<MainSlockCell<dyn InnerViewBase<E>>>, s: Slock) {

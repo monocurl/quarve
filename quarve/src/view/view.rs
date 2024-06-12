@@ -91,7 +91,7 @@ mod view_ref {
 
         fn sizes(&self, s: MSlock) -> SizeContainer {
             self.0.borrow_mut_main(s)
-                .provider().sizes(s)
+                .sizes(s)
         }
 
         fn intrinsic_size(&self, s: MSlock) -> Size {
