@@ -153,7 +153,6 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
 
         let translated = untranslated.translate(at);
         view_set_frame(self.backing(), translated, s);
-        println!("Backing {:?} at {:?}", self.backing(), translated);
 
         translated
     }

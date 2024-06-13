@@ -10,7 +10,7 @@ pub struct View<E, P>(pub(crate) Arc<MainSlockCell<InnerView<E, P>>>)
     where E: Environment, P: ViewProvider<E> + ?Sized;
 
 impl<E, P> View<E, P> where E: Environment, P: ViewProvider<E> {
-    pub fn take_backing(&mut self, from: Self, env: &mut EnvRef<E>, s: MSlock) {
+    pub fn take_backing(&self, from: Self, env: &mut EnvRef<E>, s: MSlock) {
         let mut other_inner = Arc::into_inner(from.0)
             .expect("Can only take backing from view which has been removed from its superview")
             .into_inner_main(s);
@@ -95,23 +95,28 @@ mod view_ref {
         }
 
         fn intrinsic_size(&self, s: MSlock) -> Size {
-            self.0.borrow_mut_main(s).intrinsic_size(s)
+            self.0.borrow_mut_main(s)
+                .intrinsic_size(s)
         }
 
         fn xsquished_size(&self, s: MSlock) -> Size {
-            self.0.borrow_mut_main(s).xsquished_size(s)
+            self.0.borrow_mut_main(s)
+                .xsquished_size(s)
         }
 
         fn ysquished_size(&self, s: MSlock) -> Size {
-            self.0.borrow_mut_main(s).ysquished_size(s)
+            self.0.borrow_mut_main(s)
+                .ysquished_size(s)
         }
 
         fn xstretched_size(&self, s: MSlock) -> Size {
-            self.0.borrow_mut_main(s).xstretched_size(s)
+            self.0.borrow_mut_main(s)
+                .xstretched_size(s)
         }
 
         fn ystretched_size(&self, s: MSlock) -> Size {
-            self.0.borrow_mut_main(s).ystretched_size(s)
+            self.0.borrow_mut_main(s)
+                .ystretched_size(s)
         }
 
         fn up_context(&self, s: MSlock) -> P::UpContext {
@@ -119,6 +124,7 @@ mod view_ref {
                 .provider()
                 .up_context(s)
         }
+
         fn layout_down_with_context(&self, aligned_frame: AlignedFrame, at: Point, context: &P::DownContext, parent_environment: &mut EnvRef<E>, s: MSlock) -> Rect {
             let arc = self.0.clone() as Arc<MainSlockCell<dyn InnerViewBase<E>>>;
 

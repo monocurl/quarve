@@ -201,8 +201,8 @@ mod window {
 
         fn style(&self, s: MSlock<'_>);
 
-        fn tree(&self, env: &Self::Env, s: MSlock<'_>)
-            -> View<Self::Env, impl ViewProvider<Self::Env, DownContext=()>>;
+        fn root(&self, env: &<Self::Env as Environment>::Const, s: MSlock<'_>)
+                -> impl ViewProvider<Self::Env, DownContext=()>;
 
         fn can_close(&self, _s: MSlock<'_>) -> bool {
             true
@@ -279,7 +279,8 @@ mod window {
             let root_env = P::Env::root_environment();
 
             let handle = native::window::window_init(s);
-            let content_view = provider.tree(&root_env, s).0;
+            let content_view = provider.root(root_env.const_env(), s)
+                .into_view(s).0;
 
             let window = Window {
                 provider,

@@ -208,8 +208,7 @@ mod group {
         fn apply(self, to: &mut T) -> Self;
     }
 
-    pub trait GroupAction<T>: GroupBasis<T> + Mul<Output=Self>
-        where T: Stateful {
+    pub trait GroupAction<T>: GroupBasis<T> + Mul<Output=Self> {
 
         fn identity() -> Self;
 
@@ -229,7 +228,7 @@ mod group {
     /// it's more natural to make this just an impl<T: Stateful>
     /// but this runs into (what I believe are provably wrong) errors
     /// of possibly conflicting implementations
-    pub trait IntoAction<A, T> where A: GroupAction<T>, T: Stateful {
+    pub trait IntoAction<A, T> where A: GroupAction<T> {
         fn into_action(self, target: &T) -> A;
     }
 
@@ -240,8 +239,9 @@ mod group {
     }
 
     mod word {
+        use std::iter::Rev;
         use std::ops::Mul;
-        use crate::state::{GroupAction, GroupBasis, IntoAction, Stateful};
+        use crate::state::{GroupAction, GroupBasis, IntoAction};
 
         #[derive(Debug)]
         pub struct Word<T> where T: 'static {
@@ -270,15 +270,17 @@ mod group {
 
             pub fn iter(&self) -> impl Iterator<Item=&T> {
                 self.items.iter()
+                    .rev()
             }
         }
 
         impl<T> IntoIterator for Word<T> where T: 'static {
             type Item = T;
-            type IntoIter = <Vec<T> as IntoIterator>::IntoIter;
+            type IntoIter = Rev<<Vec<T> as IntoIterator>::IntoIter>;
 
             fn into_iter(self) -> Self::IntoIter {
                 self.items.into_iter()
+                    .rev()
             }
         }
 
@@ -292,7 +294,7 @@ mod group {
             }
         }
 
-        impl<T, B> GroupBasis<T> for Word<B> where T: Stateful, B: GroupBasis<T> {
+        impl<T, B> GroupBasis<T> for Word<B> where B: GroupBasis<T> {
             fn apply(self, to: &mut T) -> Self {
                 let bases = self.items;
 
@@ -306,14 +308,14 @@ mod group {
             }
         }
 
-        impl<T, B> GroupAction<T> for Word<B> where T: Stateful, B: GroupBasis<T> {
+        impl<T, B> GroupAction<T> for Word<B> where B: GroupBasis<T> {
 
             fn identity() -> Self {
                 Word::new(Vec::new())
             }
         }
 
-        impl<T, B> IntoAction<Word<B>, T> for B where T: Stateful, B: GroupBasis<T> {
+        impl<T, B> IntoAction<Word<B>, T> for B where B: GroupBasis<T> {
             fn into_action(self, _target: &T) -> Word<B> {
                 Word::new(vec![self])
             }
@@ -507,8 +509,7 @@ mod group {
                 Swap(usize, usize)
             }
 
-            impl<T> GroupBasis<Vec<T>> for VecActionBasis<T>
-                where T: StoreContainer
+            impl<T> GroupBasis<Vec<T>> for VecActionBasis<T> where T: Send + 'static
             {
                 fn apply(self, to: &mut Vec<T>) -> Self {
                     match self {

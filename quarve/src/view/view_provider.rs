@@ -57,7 +57,7 @@ pub trait ViewProvider<E>: Sized + 'static
         subtree: &mut Subtree<E>,
         backing_source: Option<(NativeView, Self)>,
         env: &mut EnvRef<E>,
-        s: MSlock<'_>
+        s: MSlock
     ) -> NativeView;
 
     /// The children have properly calculated their
@@ -72,7 +72,7 @@ pub trait ViewProvider<E>: Sized + 'static
         &mut self,
         subtree: &mut Subtree<E>,
         env: &mut EnvRef<E>,
-        s: MSlock<'_>
+        s: MSlock
     ) -> bool;
 
     /// The children have properly calculated their
@@ -86,7 +86,7 @@ pub trait ViewProvider<E>: Sized + 'static
         frame: AlignedFrame,
         layout_context: &Self::DownContext,
         env: &mut EnvRef<E>,
-        s: MSlock<'_>
+        s: MSlock
     ) -> Rect;
 
     // callback methods
@@ -185,47 +185,47 @@ impl<E, P, U> ViewProvider<E> for UpContextAdapter<E, P, U>
             .into_up_context()
     }
 
-    fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock<'_>) -> NativeView where Self: Sized {
+    fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView where Self: Sized {
         let source = backing_source
             .map(|(n, p)| (n, p.0));
 
         self.0.init_backing(invalidator, subtree, source, env, s)
     }
 
-    fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock<'_>) -> bool {
+    fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
         self.0.layout_up(subtree, env, s)
     }
 
-    fn layout_down(&mut self, subtree: &Subtree<E>, frame: AlignedFrame, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock<'_>) -> Rect {
+    fn layout_down(&mut self, subtree: &Subtree<E>, frame: AlignedFrame, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> Rect {
         self.0.layout_down(subtree, frame, layout_context, env, s)
     }
 
-    fn pre_show(&mut self, s: MSlock<'_>) {
+    fn pre_show(&mut self, s: MSlock) {
         self.0
             .pre_show(s)
     }
 
-    fn post_show(&mut self, s: MSlock<'_>) {
+    fn post_show(&mut self, s: MSlock) {
         self.0
             .post_show(s)
     }
 
-    fn pre_hide(&mut self, s: MSlock<'_>) {
+    fn pre_hide(&mut self, s: MSlock) {
         self.0
             .pre_hide(s)
     }
 
-    fn post_hide(&mut self, s: MSlock<'_>) {
+    fn post_hide(&mut self, s: MSlock) {
         self.0
             .post_hide(s)
     }
 
-    fn focused(&mut self, s: MSlock<'_>) {
+    fn focused(&mut self, s: MSlock) {
         self.0
             .focused(s)
     }
 
-    fn unfocused(&mut self, s: MSlock<'_>) {
+    fn unfocused(&mut self, s: MSlock) {
         self.0
             .unfocused(s)
     }
@@ -246,6 +246,7 @@ impl<E, P, U> ViewProvider<E> for UpContextAdapter<E, P, U>
     }
 }
 
+// when need to return None for Option<impl ViewProvider> and need concrete type
 pub(crate) struct DummyProvider<E, U, D>(pub PhantomData<(E, U, D)>);
 impl<E, U, D> ViewProvider<E> for DummyProvider<E, U, D>
     where E: Environment, U: 'static, D: 'static

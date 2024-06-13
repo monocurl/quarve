@@ -2,7 +2,7 @@ use std::thread;
 use std::time::Duration;
 use quarve::core::{Application, Environment, launch, MSlock, slock_owner, timed_worker};
 use quarve::state::{Bindable, Binding, FixedSignal, Signal, Store, VecActionBasis};
-use quarve::view::{IntoViewProvider, View, ViewProvider};
+use quarve::view::{IntoViewProvider, ViewProvider};
 use quarve::view::dev_views::{DebugView};
 use quarve::view::layout::*;
 use quarve::{hstack, vstack};
@@ -53,38 +53,34 @@ impl quarve::core::WindowProvider for WindowProvider {
 
     }
 
-    fn tree(&self, env: &Env, s: MSlock<'_>) -> View<Env, impl ViewProvider<Env, DownContext=()>> {
-        let store = Store::new(vec![Store::new(1)]);
-        let binding = store.binding();
+    fn root(&self, env: &<Env as Environment>::Const, s: MSlock<'_>) -> impl ViewProvider<Env, DownContext=()> {
+        // let iteration = |i: f64| {
+        //     s.clock_signal()
+        //         .map(move |s| {
+        //             let range = 0 .. (1 + (5.0 * (i + s).sin().abs()) as i32);
+        //             range.into_iter().collect()
+        //         }, s)
+        //         .signal_vmap(|_i, _s| {
+        //             DebugView
+        //         })
+        // };
+
+        let state = Store::new(vec![Store::new(1)]);
+        let binding = state.binding();
         thread::spawn(move || {
-            thread::sleep(Duration::from_secs(5));
-            println!("Applying");
+            thread::sleep(Duration::from_secs(4));
             let s = slock_owner();
-            binding.apply(VecActionBasis::Insert(Store::new(1), 1), s.marker());
+            binding.apply(VecActionBasis::Insert(Store::new(1), 0), s.marker());
         });
-        let items = s.clock_signal()
-            .map(|s| {
-                let range = 0 .. ((5.0 * s.sin().abs()) as i32);
-                range.into_iter().collect()
-            }, s);
-        // let items = FixedSignal::new(vec![1, 2, 3, 4]);
 
-        vstack! {
-            DebugView;
-            items.signal_vmap(|i, s| {
-                DebugView
-            });
-            hstack! {
-                DebugView;
-                DebugView;
-            };
-            DebugView;
+        let items = state
+            .binding_vmap(|_a, _s| DebugView);
+
+        hstack! {
+            // iteration(0.0);
+            items
         }
-            .into_view_provider(env.const_env(), s)
-            .into_view(s)
-
-        //     .into_view_provider(env.const_env(), s)
-        //     .into_view(s)
+        .into_view_provider(env, s)
     }
 }
 

@@ -48,7 +48,6 @@ pub use view_provider::*;
 
 pub mod layout;
 pub mod modifers;
-pub mod macros;
 pub mod util;
 
 #[cfg(debug_assertions)]
