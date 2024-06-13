@@ -1,7 +1,6 @@
 use std::thread;
-use std::time::Duration;
 use quarve::core::{Application, Environment, launch, MSlock, slock_owner, timed_worker};
-use quarve::state::{Bindable, Binding, FixedSignal, Signal, Store, VecActionBasis};
+use quarve::state::{Bindable, FixedSignal, Signal, Store};
 use quarve::view::{IntoViewProvider, ViewProvider};
 use quarve::view::dev_views::{DebugView};
 use quarve::view::layout::*;
@@ -54,31 +53,23 @@ impl quarve::core::WindowProvider for WindowProvider {
     }
 
     fn root(&self, env: &<Env as Environment>::Const, s: MSlock<'_>) -> impl ViewProvider<Env, DownContext=()> {
-        // let iteration = |i: f64| {
-        //     s.clock_signal()
-        //         .map(move |s| {
-        //             let range = 0 .. (1 + (5.0 * (i + s).sin().abs()) as i32);
-        //             range.into_iter().collect()
-        //         }, s)
-        //         .signal_vmap(|_i, _s| {
-        //             DebugView
-        //         })
-        // };
-
-        let state = Store::new(vec![Store::new(1)]);
-        let binding = state.binding();
-        thread::spawn(move || {
-            thread::sleep(Duration::from_secs(4));
-            let s = slock_owner();
-            binding.apply(VecActionBasis::Insert(Store::new(1), 0), s.marker());
-        });
-
-        let items = state
-            .binding_vmap(|_a, _s| DebugView);
+        let iteration = |i: f64| {
+            s.clock_signal()
+                .map(move |s| {
+                    let range = 0 .. (1 + (5.0 * (i + s).sin().abs()) as i32);
+                    range.into_iter().collect()
+                }, s)
+                .signal_vmap(|_i, _s| {
+                    DebugView
+                })
+        };
 
         hstack! {
-            // iteration(0.0);
-            items
+            iteration(0.0);
+            iteration(0.5);
+            iteration(1.0);
+            iteration(1.5);
+            DebugView
         }
         .into_view_provider(env, s)
     }

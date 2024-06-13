@@ -786,6 +786,8 @@ mod vec_layout {
             }
 
             fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
+                subtree.clear_subviews(s);
+
                 let mut view_buffer: Vec<_> = std::mem::take(&mut self.subviews)
                     .into_iter()
                     .map(|x| Some(x))
@@ -802,13 +804,14 @@ mod vec_layout {
                             view
                         }
                         else {
-                            let new = (self.map)(src, env.const_env(), s).into_view(s);
-                            subtree.push_subview(&new, env, s);
-
-                            new
+                            (self.map)(src, env.const_env(), s).into_view(s)
                         }
                     })
                     .collect();
+
+                // add new subviews
+                // FIXME do more efficient version in the future
+                self.subviews.iter().for_each(|sv| subtree.push_subview(sv, env, s));
 
                 self.layout
                     .layout_up(self.subviews.iter(), env, s)

@@ -456,6 +456,8 @@ pub(crate) struct Graph<E> where E: Environment {
     unsend_unsync: PhantomUnsendUnsync
 }
 
+// FIXME move subtree methods to graph
+// and then have subtree delegate to graph
 impl<E> Graph<E> where E: Environment {
     pub(crate) fn clear_subviews(&mut self, s: MSlock) {
         if !self.backing.0.is_null() {
@@ -463,7 +465,9 @@ impl<E> Graph<E> where E: Environment {
         }
 
         for subview in std::mem::take(&mut self.subviews) {
-            subview.borrow_mut_main(s).hide(s);
+            let mut borrow = subview.borrow_mut_main(s);
+            borrow.set_superview(None);
+            borrow.hide(s);
         }
     }
 
