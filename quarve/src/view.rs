@@ -43,7 +43,7 @@ mod into_up_context {
 }
 pub use into_up_context::*;
 
-pub mod view_provider;
+mod view_provider;
 pub use view_provider::*;
 
 pub mod layout;
@@ -60,12 +60,12 @@ mod signal_view;
 // text, textfield, monotonicview
 // button, link, spacer, radiobutton, checkbox
 // vsplit, hsplit
+// #if, #match (via view signal)
 // router view/mux/match
 // file opener
 // image
 // shape/path
-// sheet, popover, codecompletionthing that's like a new window
-
+// codecompletionthing that's like a new window
 // fonts
 
 // modifiers
@@ -73,7 +73,12 @@ mod signal_view;
 // background
 // border
 // corner radius
-// vmap, hmap, zmap
+
+// positional
+// padding, offset
+// box
+// layer
 // min_frame, frame, max_frame (and alignment)
+// vmap, hmap, zmap
 // flex_grow, flex_shrink, (and related)
 // all done in a monadic fashion?

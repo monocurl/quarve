@@ -191,8 +191,8 @@ mod window {
     use crate::state::{Signal};
     use crate::state::slock_cell::{MainSlockCell};
     use crate::util::geo::{AlignedFrame, Alignment, Size};
-    use crate::view::{InnerViewBase, View};
-    use crate::view::view_provider::{ViewProvider};
+    use crate::view::{InnerViewBase};
+    use crate::view::{ViewProvider};
 
     pub trait WindowProvider: 'static {
         type Env: Environment;

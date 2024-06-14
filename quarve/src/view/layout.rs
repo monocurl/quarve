@@ -152,13 +152,6 @@ mod vec_layout {
         _into_view_provider(i, long_e, long_s)
     }
 
-    pub trait FromOptions {
-        type Options: Default;
-
-        fn from_options(options: Self::Options) -> Self;
-        fn options(&mut self) -> &mut Self::Options;
-    }
-
     pub trait VecLayoutProvider<E>: FromOptions + 'static where E: Environment {
         type DownContext: 'static;
         type UpContext: 'static;
@@ -206,8 +199,8 @@ mod vec_layout {
                         macro_rules! $macro_name {
                             () => {
                                 quarve::view::layout::new_hetero_ivp(
-                                    <$t as quarve::view::layout::FromOptions>::from_options(
-                                        <$t as quarve::view::layout::FromOptions>::Options::default()
+                                    <$t as quarve::util::FromOptions>::from_options(
+                                        <$t as quarve::util::FromOptions>::Options::default()
                                     )
                                 )
                             };
@@ -216,7 +209,7 @@ mod vec_layout {
                                     $d($d child;)*
                                 }
                                 .prepend($d first)
-                            }
+                            };
                         }
                     }
                 }
@@ -226,7 +219,7 @@ mod vec_layout {
 
         #[macro_export]
         macro_rules! impl_signal_layout_extension {
-            (__declare_trait $t: ty, $trait_name: ident, $method_name: ident) => {
+            (__declare_trait $t: ty, $trait_name: ident, $method_name: ident, $method_name_options: ident) => {
                 pub trait $trait_name<T, S, E> where T: Send + 'static, S: Signal<Vec<T>>, E: Environment {
                     fn $method_name<P>(self, map: impl FnMut(&T, MSlock) -> P + 'static)
                         -> impl IntoViewProvider<E,
@@ -235,9 +228,16 @@ mod vec_layout {
                         where P: IntoViewProvider<E,
                                         DownContext=<$t as VecLayoutProvider<E>>::SubviewDownContext,
                                         UpContext=<$t as VecLayoutProvider<E>>::SubviewUpContext>;
+                    fn $method_name_options<P>(self, map: impl FnMut(&T, MSlock) -> P + 'static, options: impl FnOnce(<$t as FromOptions>::Options) -> <$t as FromOptions>::Options)
+                        -> impl IntoViewProvider<E,
+                                        DownContext=<$t as VecLayoutProvider<E>>::DownContext,
+                                        UpContext=<$t as VecLayoutProvider<E>>::UpContext>
+                        where P: IntoViewProvider<E,
+                                        DownContext=<$t as VecLayoutProvider<E>>::SubviewDownContext,
+                                        UpContext=<$t as VecLayoutProvider<E>>::SubviewUpContext>;
                 }
             };
-            (__impl_trait $t: ty, $trait_name: ident, $method_name: ident) => {
+            (__impl_trait $t: ty, $trait_name: ident, $method_name: ident, $method_name_options: ident) => {
                 fn $method_name<P>(self, map: impl FnMut(&T, MSlock) -> P + 'static)
                     -> impl IntoViewProvider<E,
                                     DownContext=<$t as VecLayoutProvider<E>>::DownContext,
@@ -248,24 +248,35 @@ mod vec_layout {
                 {
                     VecSignalLayout::new(self, map, <$t as FromOptions>::from_options(<$t as FromOptions>::Options::default()))
                 }
+
+                fn $method_name_options<P>(self, map: impl FnMut(&T, MSlock) -> P + 'static, options: impl FnOnce(<$t as FromOptions>::Options) -> <$t as FromOptions>::Options)
+                        -> impl IntoViewProvider<E,
+                                        DownContext=<$t as VecLayoutProvider<E>>::DownContext,
+                                        UpContext=<$t as VecLayoutProvider<E>>::UpContext>
+                        where P: IntoViewProvider<E,
+                                        DownContext=<$t as VecLayoutProvider<E>>::SubviewDownContext,
+                                        UpContext=<$t as VecLayoutProvider<E>>::SubviewUpContext>
+                {
+                    VecSignalLayout::new(self, map, <$t as FromOptions>::from_options(options(<$t as FromOptions>::Options::default())))
+                }
             };
 
-            ($t: ty, $trait_name: ident, $method_name: ident, where E: $env: path) => {
-                impl_signal_layout_extension!(__declare_trait  $t, $trait_name, $method_name);
+            ($t: ty, $trait_name: ident, $method_name: ident, $method_name_options: ident, where E: $env: path) => {
+                impl_signal_layout_extension!(__declare_trait  $t, $trait_name, $method_name, $method_name_options);
 
                 impl<E, T, S> $trait_name<T, S, E> for S where T: Send + 'static, S: Signal<Vec<T>>, E: $env
                 {
-                    impl_signal_layout_extension!(__impl_trait $t, $trait_name, $method_name);
+                    impl_signal_layout_extension!(__impl_trait $t, $trait_name, $method_name, $method_name_options);
                 }
             };
-            ($t: ty, $trait_name: ident, $method_name: ident, where E = $env: ty) => {
+            ($t: ty, $trait_name: ident, $method_name: ident, $method_name_options: ident, where E = $env: ty) => {
                 mod {
                     type E = $env;
-                    impl_signal_layout_extension!(__declare_trait  $t, $trait_name, $method_name);
+                    impl_signal_layout_extension!(__declare_trait  $t, $trait_name, $method_name, $method_name_options);
 
                     impl<T, S> $trait_name<T, S, E> for S where T: Send + 'static, S: Signal<Vec<T>>
                     {
-                        impl_signal_layout_extension!(__impl_trait $t, $trait_name, $method_name);
+                        impl_signal_layout_extension!(__impl_trait $t, $trait_name, $method_name, $method_name_options);
                     }
                 }
             }
@@ -274,7 +285,7 @@ mod vec_layout {
 
         #[macro_export]
         macro_rules! impl_binding_layout_extension {
-            (__declare_trait $t: ty, $trait_name: ident, $method_name: ident) => {
+            (__declare_trait $t: ty, $trait_name: ident, $method_name: ident, $method_name_options: ident) => {
                 pub trait $trait_name<T, S, E> where T: StoreContainer, S: Binding<Vec<T>>, E: Environment {
                     fn $method_name<P>(self, map: impl FnMut(&T, MSlock) -> P + 'static)
                         -> impl IntoViewProvider<E,
@@ -283,9 +294,16 @@ mod vec_layout {
                         where P: IntoViewProvider<E,
                                         DownContext=<$t as VecLayoutProvider<E>>::SubviewDownContext,
                                         UpContext=<$t as VecLayoutProvider<E>>::SubviewUpContext>;
+                    fn $method_name_options<P>(self, map: impl FnMut(&T, MSlock) -> P + 'static, options: impl FnOnce(<$t as FromOptions>::Options) -> <$t as FromOptions>::Options)
+                        -> impl IntoViewProvider<E,
+                                        DownContext=<$t as VecLayoutProvider<E>>::DownContext,
+                                        UpContext=<$t as VecLayoutProvider<E>>::UpContext>
+                        where P: IntoViewProvider<E,
+                                        DownContext=<$t as VecLayoutProvider<E>>::SubviewDownContext,
+                                        UpContext=<$t as VecLayoutProvider<E>>::SubviewUpContext>;
                 }
             };
-            (__impl_trait $t: ty, $trait_name: ident, $method_name: ident) => {
+            (__impl_trait $t: ty, $trait_name: ident, $method_name: ident, $method_name_options: ident) => {
                 fn $method_name<P>(self, map: impl FnMut(&T, MSlock) -> P + 'static)
                     -> impl IntoViewProvider<E,
                                     DownContext=<$t as VecLayoutProvider<E>>::DownContext,
@@ -296,30 +314,39 @@ mod vec_layout {
                 {
                     VecBindingLayout::new(self, map, <$t as FromOptions>::from_options(<$t as FromOptions>::Options::default()))
                 }
+                fn $method_name_options<P>(self, map: impl FnMut(&T, MSlock) -> P + 'static, options: impl FnOnce(<$t as FromOptions>::Options) -> <$t as FromOptions>::Options)
+                    -> impl IntoViewProvider<E,
+                                    DownContext=<$t as VecLayoutProvider<E>>::DownContext,
+                                    UpContext=<$t as VecLayoutProvider<E>>::UpContext>
+                    where P: IntoViewProvider<E,
+                                    DownContext=<$t as VecLayoutProvider<E>>::SubviewDownContext,
+                                    UpContext=<$t as VecLayoutProvider<E>>::SubviewUpContext>
+                {
+                    VecBindingLayout::new(self, map, <$t as FromOptions>::from_options(options(<$t as FromOptions>::Options::default())))
+                }
             };
 
-            ($t: ty, $trait_name: ident, $method_name: ident, where E: $env: path) => {
-                impl_binding_layout_extension!(__declare_trait  $t, $trait_name, $method_name);
+            ($t: ty, $trait_name: ident, $method_name: ident, $method_name_options: ident, where E: $env: path) => {
+                impl_binding_layout_extension!(__declare_trait  $t, $trait_name, $method_name, $method_name_options);
 
                 impl<E, T, S> $trait_name<T, S, E> for S where T: StoreContainer, S: Binding<Vec<T>>, E: $env
                 {
-                    impl_binding_layout_extension!(__impl_trait $t, $trait_name, $method_name);
+                    impl_binding_layout_extension!(__impl_trait $t, $trait_name, $method_name, $method_name_options);
                 }
             };
-            ($t: ty, $trait_name: ident, $method_name: ident, where E = $env: ty) => {
+            ($t: ty, $trait_name: ident, $method_name: ident, $method_name_options: ident, where E = $env: ty) => {
                 mod {
                     type E = $env;
-                    impl_binding_layout_extension!(__declare_trait  $t, $trait_name, $method_name);
+                    impl_binding_layout_extension!(__declare_trait  $t, $trait_name, $method_name, $method_name_options);
 
                     impl<T, S> $trait_name<T, S, E> for S where T: StoreContainer, S: Binding<Vec<T>>
                     {
-                        impl_binding_layout_extension!(__impl_trait $t, $trait_name, $method_name);
+                        impl_binding_layout_extension!(__impl_trait $t, $trait_name, $method_name, $method_name_options);
                     }
                 }
             }
         }
         pub use impl_binding_layout_extension;
-        use crate::state::StoreContainer;
     }
 
     // FIXME could make more organized
@@ -348,7 +375,7 @@ mod vec_layout {
 
         struct NullNode;
         impl<E: Environment, U: 'static, D: 'static> HeteroIVPNode<E, U, D> for NullNode {
-            fn into_layout(self, env: &E::Const, s: MSlock) -> impl HeteroVPNode<E, U, D> {
+            fn into_layout(self, _env: &E::Const, _s: MSlock) -> impl HeteroVPNode<E, U, D> {
                  NullNode
             }
         }
@@ -492,13 +519,11 @@ mod vec_layout {
             }
         }
 
-
         impl<E, H, L> HeteroIVP<E, H, L>
             where E: Environment,
                   L: VecLayoutProvider<E>,
                   H: HeteroIVPNode<E, L::SubviewUpContext, L::SubviewDownContext>
         {
-
             pub fn prepend<P>(self, provider: P) -> HeteroIVP<E, impl HeteroIVPNode<E, L::SubviewUpContext, L::SubviewDownContext>, L>
                 where P: IntoViewProvider<E, UpContext=L::SubviewUpContext, DownContext=L::SubviewDownContext>
             {
@@ -511,6 +536,12 @@ mod vec_layout {
                     layout: self.layout,
                     marker: Default::default(),
                 }
+            }
+
+            pub fn options(mut self, options: impl FnOnce(L::Options) -> L::Options) -> Self {
+                let current = std::mem::take(self.layout.options());
+                *self.layout.options() = options(current);
+                self
             }
         }
         impl<E, H, L> IntoViewProvider<E> for HeteroIVP<E, H, L>
@@ -636,6 +667,12 @@ mod vec_layout {
                     map,
                     phantom: Default::default(),
                 }
+            }
+
+            pub fn options(mut self, options: impl FnOnce(L::Options) -> L::Options) -> Self {
+                let current = std::mem::take(self.layout.options());
+                *self.layout.options() = options(current);
+                self
             }
         }
 
@@ -866,6 +903,12 @@ mod vec_layout {
                     phantom: Default::default(),
                 }
             }
+
+            pub fn options(mut self, options: impl FnOnce(L::Options) -> L::Options) -> Self {
+                let current = std::mem::take(self.layout.options());
+                *self.layout.options() = options(current);
+                self
+            }
         }
 
         pub struct VecSignalViewProvider<E, T, S, M, P, L>
@@ -1011,8 +1054,9 @@ mod vec_layout {
 
     mod vstack {
         use crate::core::{Environment, MSlock};
+        use crate::util::{FromOptions};
         use crate::util::geo::{AlignedFrame, Alignment, Point, Rect, ScreenUnit, Size};
-        use crate::view::layout::{FromOptions, VecLayoutProvider};
+        use crate::view::layout::{VecLayoutProvider};
         use crate::view::{EnvRef, TrivialContextViewRef, ViewRef};
         use crate::view::util::SizeContainer;
 
@@ -1118,8 +1162,9 @@ mod vec_layout {
 
     mod hstack {
         use crate::core::{Environment, MSlock};
+        use crate::util::FromOptions;
         use crate::util::geo::{AlignedFrame, Alignment, Point, Rect, ScreenUnit, Size};
-        use crate::view::layout::{FromOptions, VecLayoutProvider};
+        use crate::view::layout::{VecLayoutProvider};
         use crate::view::{EnvRef, TrivialContextViewRef, ViewRef};
         use crate::view::util::SizeContainer;
 
@@ -1234,11 +1279,12 @@ mod vec_layout {
         use crate::core::MSlock;
         use crate::{impl_hetero_layout, impl_signal_layout_extension};
         use crate::view::layout::vec_layout::macros::impl_binding_layout_extension;
-        use crate::view::layout::{FromOptions, VecSignalLayout, VecBindingLayout, VecLayoutProvider};
+        use crate::view::layout::{VecSignalLayout, VecBindingLayout, VecLayoutProvider};
+        use crate::util::{FromOptions};
         use super::{VStack};
 
-        impl_signal_layout_extension!(VStack, SignalVMap, signal_vmap, where E: Environment);
-        impl_binding_layout_extension!(VStack, BindingVMap, binding_vmap, where E: Environment);
+        impl_signal_layout_extension!(VStack, SignalVMap, signal_vmap, signal_vmap_options, where E: Environment);
+        impl_binding_layout_extension!(VStack, BindingVMap, binding_vmap, binding_vmap_options, where E: Environment);
 
         impl_hetero_layout!(VStack, vstack);
         pub use vstack;
@@ -1247,5 +1293,6 @@ mod vec_layout {
         pub use hstack;
     }
     pub use impls::*;
+    use crate::util::FromOptions;
 }
 pub use vec_layout::*;

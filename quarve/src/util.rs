@@ -439,3 +439,13 @@ pub mod geo {
         }
     }
 }
+
+mod options {
+    pub trait FromOptions {
+        type Options: Default;
+
+        fn from_options(options: Self::Options) -> Self;
+        fn options(&mut self) -> &mut Self::Options;
+    }
+}
+pub use options::*;
