@@ -1,7 +1,7 @@
 use std::sync::{Arc, Weak};
 use crate::core::{Environment, MSlock, Slock};
 use crate::state::slock_cell::{MainSlockCell};
-use crate::util::geo::{AlignedFrame, Point, Rect};
+use crate::util::geo::{AlignedOriginRect, Point, Rect};
 use crate::util::rust_util::EnsureSend;
 use crate::view::inner_view::{InnerView, InnerViewBase};
 use crate::view::view_provider::ViewProvider;
@@ -26,18 +26,11 @@ impl<E, P> View<E, P> where E: Environment, P: ViewProvider<E> {
     }
 
 }
-
-impl<E, P> View<E, P> where E: Environment, P: ViewProvider<E, DownContext=()> {
-    pub fn layout_down(&self, aligned_frame: AlignedFrame, at: Point, parent_environment: &mut EnvRef<E>, s: MSlock) -> Rect {
-        self.layout_down_with_context(aligned_frame, at, &(), parent_environment, s)
-    }
-}
-
 mod view_ref {
     use std::sync::Arc;
     use crate::core::{Environment, MSlock};
     use crate::state::slock_cell::MainSlockCell;
-    use crate::util::geo::{AlignedFrame, Point, Rect, Size};
+    use crate::util::geo::{AlignedOriginRect, AlignedRect, Rect, Size};
     use crate::view::{EnvRef, InnerViewBase, View, ViewProvider};
     use crate::view::util::SizeContainer;
 
@@ -58,8 +51,7 @@ mod view_ref {
 
         fn layout_down_with_context(
             &self,
-            aligned_frame: AlignedFrame,
-            at: Point,
+            at: AlignedRect,
             layout_context: &Self::DownContext,
             parent_environment: &mut EnvRef<E>,
             s: MSlock
@@ -69,8 +61,7 @@ mod view_ref {
     pub trait TrivialContextViewRef<E> where E: Environment {
         fn layout_down(
             &self,
-            aligned_frame: AlignedFrame,
-            at: Point,
+            aligned_frame: AlignedRect,
             parent_environment: &mut EnvRef<E>,
             s: MSlock
         ) -> Rect;
@@ -79,8 +70,8 @@ mod view_ref {
     impl<E, V> TrivialContextViewRef<E> for V
         where E: Environment, V: ViewRef<E, DownContext=()> + ?Sized {
         #[inline]
-        fn layout_down(&self, aligned_frame: AlignedFrame, at: Point, parent_environment: &mut EnvRef<E>, s: MSlock) -> Rect {
-            self.layout_down_with_context(aligned_frame, at, &(), parent_environment, s)
+        fn layout_down(&self, at: AlignedRect, parent_environment: &mut EnvRef<E>, s: MSlock) -> Rect {
+            self.layout_down_with_context(at, &(), parent_environment, s)
         }
     }
 
@@ -125,11 +116,11 @@ mod view_ref {
                 .up_context(s)
         }
 
-        fn layout_down_with_context(&self, aligned_frame: AlignedFrame, at: Point, context: &P::DownContext, parent_environment: &mut EnvRef<E>, s: MSlock) -> Rect {
+        fn layout_down_with_context(&self, aligned_frame: AlignedRect, context: &P::DownContext, parent_environment: &mut EnvRef<E>, s: MSlock) -> Rect {
             let arc = self.0.clone() as Arc<MainSlockCell<dyn InnerViewBase<E>>>;
 
             self.0.borrow_mut_main(s)
-                .layout_down_with_context(&arc, aligned_frame, at, parent_environment.0, context, s)
+                .layout_down_with_context(&arc, aligned_frame, parent_environment.0, context, s)
         }
     }
 }

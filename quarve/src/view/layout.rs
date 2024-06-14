@@ -2,7 +2,7 @@ mod general_layout {
     use std::marker::PhantomData;
     use crate::core::{Environment, MSlock};
     use crate::state::slock_cell::{MainSlockCell};
-    use crate::util::geo::{AlignedFrame, Rect, Size};
+    use crate::util::geo::{AlignedOriginRect, Rect, Size};
     use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, ViewProvider};
 
     pub trait LayoutProvider<E>: Sized + 'static where E: Environment {
@@ -52,11 +52,11 @@ mod general_layout {
         fn layout_down(
             &mut self,
             subtree: &Subtree<E>,
-            frame: AlignedFrame,
+            frame: AlignedOriginRect,
             layout_context: &Self::DownContext,
             env: &mut EnvRef<E>,
             s: MSlock
-        ) -> Rect;
+        ) -> (Rect, Rect);
     }
 
     pub struct LayoutViewProvider<E, L>(L, PhantomData<MainSlockCell<E>>) where E: Environment, L: LayoutProvider<E>;
@@ -106,7 +106,7 @@ mod general_layout {
             self.0.layout_up(subtree, env, s)
         }
 
-        fn layout_down(&mut self, subtree: &Subtree<E>, frame: AlignedFrame, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock<'_>) -> Rect {
+        fn layout_down(&mut self, subtree: &Subtree<E>, frame: AlignedOriginRect, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock<'_>) -> (Rect, Rect) {
             self.0.layout_down(subtree, frame, layout_context, env, s)
         }
     }
@@ -126,7 +126,7 @@ pub use general_layout::*;
 
 mod vec_layout {
     use crate::core::{Environment, MSlock};
-    use crate::util::geo::{AlignedFrame, Rect, Size};
+    use crate::util::geo::{AlignedOriginRect, Rect, Size};
     use crate::view::{EnvRef, IntoViewProvider, ViewProvider, ViewRef};
     // workaround for TAIT
     fn into_view_provider<E, I>(i: I, e: &E::Const, s: MSlock)
@@ -176,11 +176,11 @@ mod vec_layout {
         fn layout_down<'a, P>(
             &mut self,
             subviews: impl Iterator<Item=&'a P>,
-            frame: AlignedFrame,
+            frame: AlignedOriginRect,
             context: &Self::DownContext,
             env: &mut EnvRef<E>,
             s: MSlock
-        ) -> Rect where P: ViewRef<E, DownContext=Self::SubviewDownContext, UpContext=Self::SubviewUpContext> + ?Sized + 'a;
+        ) -> (Rect, Rect) where P: ViewRef<E, DownContext=Self::SubviewDownContext, UpContext=Self::SubviewUpContext> + ?Sized + 'a;
     }
 
     mod macros {
@@ -353,10 +353,9 @@ mod vec_layout {
     mod hetero_layout {
         use std::marker::PhantomData;
         use crate::core::{Environment, MSlock};
-        use crate::util::geo::{AlignedFrame, Point, Rect, Size};
-        use crate::view::{DummyProvider, EnvRef, IntoUpContext, IntoViewProvider, Invalidator, NativeView, Subtree, UpContextAdapter, View, ViewProvider, ViewRef};
+        use crate::util::geo::{AlignedOriginRect, Rect, Size};
+        use crate::view::{EnvRef, IntoUpContext, IntoViewProvider, Invalidator, NativeView, Subtree, UpContextAdapter, View, ViewProvider, ViewRef};
         use crate::view::layout::{VecLayoutProvider};
-        use crate::view::util::SizeContainer;
 
         pub trait HeteroIVPNode<E, U, D> where E: Environment, U: 'static, D: 'static {
             fn into_layout(self, env: &E::Const, s: MSlock) -> impl HeteroVPNode<E, U, D>;
@@ -612,7 +611,7 @@ mod vec_layout {
                 self.layout.layout_up(iterator, env, s)
             }
 
-            fn layout_down(&mut self, _subtree: &Subtree<E>, frame: AlignedFrame, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock<'_>) -> Rect {
+            fn layout_down(&mut self, _subtree: &Subtree<E>, frame: AlignedOriginRect, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock<'_>) -> (Rect, Rect) {
                 let iterator: HeteroVPIterator<E, L> = HeteroVPIterator(&self.root);
 
                 self.layout.layout_down(iterator, frame, layout_context, env, s)
@@ -625,7 +624,7 @@ mod vec_layout {
         use std::marker::PhantomData;
         use crate::core::{Environment, MSlock};
         use crate::state::{Binding, Buffer, GroupAction, GroupBasis, StoreContainer, VecActionBasis, Word};
-        use crate::util::geo::{AlignedFrame, Rect, Size};
+        use crate::util::geo::{AlignedOriginRect, Rect, Size};
         use crate::view::{EnvRef, IntoUpContext, IntoViewProvider, Invalidator, NativeView, Subtree, UpContextAdapter, View, ViewProvider};
         use crate::view::layout::vec_layout::into_view_provider;
         use crate::view::layout::VecLayoutProvider;
@@ -854,7 +853,7 @@ mod vec_layout {
                     .layout_up(self.subviews.iter(), env, s)
             }
 
-            fn layout_down(&mut self, _subtree: &Subtree<E>, frame: AlignedFrame, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> Rect {
+            fn layout_down(&mut self, _subtree: &Subtree<E>, frame: AlignedOriginRect, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
                 self.layout
                     .layout_down(self.subviews.iter(), frame, layout_context, env, s)
             }
@@ -866,7 +865,7 @@ mod vec_layout {
         use std::marker::PhantomData;
         use crate::core::{Environment, MSlock};
         use crate::state::Signal;
-        use crate::util::geo::{AlignedFrame, Rect, Size};
+        use crate::util::geo::{AlignedOriginRect, Rect, Size};
         use crate::view::{EnvRef, IntoUpContext, IntoViewProvider, Invalidator, NativeView, Subtree, UpContextAdapter, View, ViewProvider};
         use crate::view::layout::{VecLayoutProvider};
         use crate::view::layout::vec_layout::into_view_provider;
@@ -1039,7 +1038,7 @@ mod vec_layout {
                 )
             }
 
-            fn layout_down(&mut self, _subtree: &Subtree<E>, frame: AlignedFrame, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock<'_>) -> Rect {
+            fn layout_down(&mut self, _subtree: &Subtree<E>, frame: AlignedOriginRect, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock<'_>) -> (Rect, Rect) {
                 self.layout.layout_down(
                     self.subviews.iter(),
                     frame,
@@ -1055,7 +1054,7 @@ mod vec_layout {
     mod vstack {
         use crate::core::{Environment, MSlock};
         use crate::util::{FromOptions};
-        use crate::util::geo::{AlignedFrame, Alignment, Point, Rect, ScreenUnit, Size};
+        use crate::util::geo::{AlignedOriginRect, AlignedRect, Alignment, Point, Rect, ScreenUnit, Size};
         use crate::view::layout::{VecLayoutProvider};
         use crate::view::{EnvRef, TrivialContextViewRef, ViewRef};
         use crate::view::util::SizeContainer;
@@ -1146,15 +1145,15 @@ mod vec_layout {
                 }
             }
 
-            fn layout_down<'a, P>(&mut self, subviews: impl Iterator<Item=&'a P>, frame: AlignedFrame, _context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> Rect
+            fn layout_down<'a, P>(&mut self, subviews: impl Iterator<Item=&'a P>, frame: AlignedOriginRect, _context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect)
                 where P: ViewRef<E, DownContext=Self::SubviewDownContext, UpContext=Self::SubviewUpContext> + ?Sized + 'a {
                 let mut elapsed = 0.0;
                 for view in subviews {
                     let intrinsic = view.intrinsic_size(s);
-                    let used = view.layout_down(AlignedFrame::new_from_size(intrinsic, Alignment::Center), Point::new(0.0, elapsed), env, s);
+                    let used = view.layout_down(AlignedRect::new_from_point_size(Point::new(0.0, elapsed), intrinsic, Alignment::Center), env, s);
                     elapsed += used.h + self.1.spacing;
                 }
-                frame.full_rect()
+                (frame.full_rect(), frame.full_rect())
             }
         }
     }
@@ -1163,7 +1162,7 @@ mod vec_layout {
     mod hstack {
         use crate::core::{Environment, MSlock};
         use crate::util::FromOptions;
-        use crate::util::geo::{AlignedFrame, Alignment, Point, Rect, ScreenUnit, Size};
+        use crate::util::geo::{AlignedOriginRect, AlignedRect, Alignment, Point, Rect, ScreenUnit, Size};
         use crate::view::layout::{VecLayoutProvider};
         use crate::view::{EnvRef, TrivialContextViewRef, ViewRef};
         use crate::view::util::SizeContainer;
@@ -1253,15 +1252,16 @@ mod vec_layout {
                 }
             }
 
-            fn layout_down<'a, P>(&mut self, subviews: impl Iterator<Item=&'a P>, frame: AlignedFrame, _context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> Rect
+            fn layout_down<'a, P>(&mut self, subviews: impl Iterator<Item=&'a P>, frame: AlignedOriginRect, _context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect)
                 where P: ViewRef<E, DownContext=Self::SubviewDownContext, UpContext=Self::SubviewUpContext> + ?Sized + 'a {
                 let mut elapsed = 0.0;
                 for view in subviews {
                     let intrinsic = view.intrinsic_size(s);
-                    view.layout_down(AlignedFrame::new_from_size(intrinsic, Alignment::Center), Point::new(elapsed, 0.0), env, s);
+                    view.layout_down(AlignedRect::new_from_point_size(Point::new(elapsed, 0.0), intrinsic, Alignment::Center), env, s);
                     elapsed += intrinsic.w + self.1.spacing;
                 }
-                frame.full_rect()
+
+                (frame.full_rect(), frame.full_rect())
             }
         }
     }

@@ -1,9 +1,9 @@
 use crate::core::{Environment, MSlock};
 use crate::native;
 use crate::state::Signal;
-use crate::util::geo::{AlignedFrame, Point, Rect, Size};
+use crate::util::geo::{AlignedOriginRect, AlignedRect, Rect, Size};
 use crate::util::Vector;
-use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, View, ViewProvider};
+use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, TrivialContextViewRef, View, ViewProvider};
 
 
 pub struct DebugView;
@@ -61,8 +61,8 @@ impl<E: Environment> ViewProvider<E> for DebugView {
         false
     }
 
-    fn layout_down(&mut self, subtree: &Subtree<E>, frame: AlignedFrame, _layout_context: &Self::DownContext, _env: &mut EnvRef<E>, s: MSlock<'_>) -> Rect {
-        frame.full_rect()
+    fn layout_down(&mut self, subtree: &Subtree<E>, frame: AlignedOriginRect, _layout_context: &Self::DownContext, _env: &mut EnvRef<E>, s: MSlock<'_>) -> (Rect, Rect) {
+        (frame.full_rect(), frame.full_rect())
     }
 }
 
@@ -116,27 +116,25 @@ impl<E: Environment, S: Signal<Vector<f32, 2>>> ViewProvider<E> for Layout<E, S>
         false
     }
 
-    fn layout_down(&mut self, subtree: &Subtree<E>, frame: AlignedFrame, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock<'_>) -> Rect {
+    fn layout_down(&mut self, subtree: &Subtree<E>, frame: AlignedOriginRect, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
         let pos = self.2.borrow(s);
-        self.0.layout_down(AlignedFrame {
-            w: 100.0,
-            h: 100.0,
-            align: Default::default(),
-        }, Point {
+        self.0.layout_down(AlignedRect {
             x: 0.0,
-            y: 0.0
-        }, env, s);
-
-        self.1.layout_down(AlignedFrame {
+            y: 0.0,
             w: 100.0,
             h: 100.0,
             align: Default::default(),
-        }, Point {
-            x: *pos.x(),
-            y: *pos.y()
         }, env, s);
 
-        frame.full_rect()
+        self.1.layout_down(AlignedRect {
+            x: *pos.x(),
+            y: *pos.y(),
+            w: 100.0,
+            h: 100.0,
+            align: Default::default(),
+        }, env, s);
+
+        (frame.full_rect(), frame.full_rect())
     }
 }
 

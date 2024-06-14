@@ -190,7 +190,7 @@ mod window {
     use crate::native::{WindowHandle};
     use crate::state::{Signal};
     use crate::state::slock_cell::{MainSlockCell};
-    use crate::util::geo::{AlignedFrame, Alignment, Size};
+    use crate::util::geo::{AlignedOriginRect, AlignedRect, Alignment, Point, Size};
     use crate::view::{InnerViewBase};
     use crate::view::{ViewProvider};
 
@@ -349,7 +349,7 @@ mod window {
             content_borrow.try_layout_down(
                 &borrow.content_view,
                 stolen_env.deref_mut(),
-                Some(AlignedFrame::new_from_size(intrinsic, Alignment::Center)),
+                Some(AlignedRect::new_from_point_size(Point::default(), intrinsic, Alignment::Center)),
                 s
             ).unwrap();
 

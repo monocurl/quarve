@@ -5,7 +5,7 @@ use crate::core::{Environment, MSlock, Slock, WindowEnvironmentBase};
 use crate::native;
 use crate::native::view::{view_add_child_at, view_clear_children, view_remove_child, view_set_frame};
 use crate::state::slock_cell::{MainSlockCell};
-use crate::util::geo::{AlignedFrame, Point, Rect, Size};
+use crate::util::geo::{AlignedOriginRect, AlignedRect, Alignment, Point, Rect, Size};
 use crate::util::rust_util::PhantomUnsendUnsync;
 use crate::view::{EnvRef, Invalidator, View};
 use crate::view::util::SizeContainer;
@@ -38,7 +38,7 @@ pub(crate) trait InnerViewBase<E> where E: Environment {
     // or null if we are to use the last frame
     // this should only be done if we know for sure
     // the last frame is valid
-    fn try_layout_down(&mut self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, env: &mut E, frame: Option<AlignedFrame>, s: MSlock<'_>) -> Result<(), ()>;
+    fn try_layout_down(&mut self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, env: &mut E, frame: Option<AlignedRect>, s: MSlock<'_>) -> Result<(), ()>;
 
     fn intrinsic_size(&mut self, s: MSlock) -> Size;
     fn xsquished_size(&mut self, s: MSlock) -> Size;
@@ -84,10 +84,9 @@ pub(crate) struct InnerView<E, P> where E: Environment,
     needs_layout_down: bool,
 
     /* cached layout results */
-    last_point: Point,
-    last_frame: AlignedFrame,
-    // rectangle within the last_frame that was used
-    last_rect: Rect,
+    last_suggested: AlignedRect,
+    last_exclusion: Rect,
+    last_view_frame: Rect,
 
     /* provider */
     provider: P
@@ -112,8 +111,7 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
     pub(super) fn layout_down_with_context(
         &mut self,
         this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>,
-        frame: AlignedFrame,
-        at: Point,
+        suggested: AlignedRect,
         env: &mut E,
         context: &P::DownContext,
         s: MSlock<'_>
@@ -123,38 +121,41 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
         let mut actually_needs_layout = self.needs_layout_down;
         // if context isn't trivial, there may be updates
         // that were not taken into account
-        actually_needs_layout = actually_needs_layout || !self.is_trivial_context();
-        // if frame is different from last frame
+        actually_needs_layout = actually_needs_layout
+            || !self.is_trivial_context();
+        // if frame is different from last frame (except for just translation)
         // maybe different overall frame
-        actually_needs_layout = actually_needs_layout || frame != self.last_frame;
-        actually_needs_layout = true;
+        actually_needs_layout = actually_needs_layout
+            || suggested.size() != self.last_suggested.size() || suggested.align != self.last_suggested.align;
 
-        let untranslated = if actually_needs_layout {
+        let (view_frame, exclusion) = if actually_needs_layout {
             self.provider.push_environment(env.variable_env_mut(), s);
 
             let subtree = Subtree {
                 graph: &mut self.graph,
                 owner: this,
             };
-            let ret = self.provider.layout_down(&subtree, frame, context, &mut EnvRef(env), s);
+            let (actual_frame, exclusion) = self.provider.layout_down(&subtree, suggested.aligned_origin_rect(), context, &mut EnvRef(env), s);
             self.provider.pop_environment(env.variable_env_mut(), s);
 
-            ret
+            (actual_frame.translate(suggested.origin()), exclusion.translate(suggested.origin()))
         }
         else {
-            self.last_rect
+            let at = suggested.origin();
+            let delta = Point::new(at.x - self.last_suggested.x, at.y - self.last_suggested.y);
+
+            (self.last_view_frame.translate(delta), self.last_exclusion.translate(delta))
         };
 
-        self.last_point = at;
-        self.last_rect = untranslated;
-        self.last_frame = frame;
+        self.last_suggested = suggested;
+        self.last_exclusion = exclusion;
+        self.last_view_frame = view_frame;
 
         self.needs_layout_down = false;
 
-        let translated = untranslated.translate(at);
-        view_set_frame(self.backing(), translated, s);
+        view_set_frame(self.backing(), view_frame, s);
 
-        translated
+        exclusion
     }
 
     pub(super) fn take_backing(
@@ -247,12 +248,12 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         ret
     }
 
-    fn try_layout_down(&mut self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, env: &mut E, frame: Option<AlignedFrame>, s: MSlock<'_>) -> Result<(), ()> {
+    fn try_layout_down(&mut self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, env: &mut E, frame: Option<AlignedRect>, s: MSlock<'_>) -> Result<(), ()> {
         let context = ();
         let context_ref: &dyn Any = &context;
 
         if let Some(r) = context_ref.downcast_ref::<P::DownContext>() {
-            self.layout_down_with_context(this, frame.unwrap_or(self.last_frame), self.last_point, env, r, s);
+            self.layout_down_with_context(this, frame.unwrap_or(self.last_suggested), env, r, s);
 
             Ok(())
         }
@@ -548,9 +549,9 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
                 // this will be set to true
                 needs_layout_down: false,
                 needs_layout_up: false,
-                last_frame: AlignedFrame::default(),
-                last_point: Point::default(),
-                last_rect: Rect::default(),
+                last_suggested: AlignedRect::default(),
+                last_exclusion: Rect::default(),
+                last_view_frame: Rect::default(),
                 provider,
             }, s)
         )

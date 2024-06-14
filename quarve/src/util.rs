@@ -410,26 +410,84 @@ pub mod geo {
     }
 
     #[derive(Copy, Clone, Default, PartialEq, Debug)]
-    pub struct AlignedFrame {
+    pub struct AlignedRect {
+        pub x: ScreenUnit,
+        pub y: ScreenUnit,
         pub w: ScreenUnit,
         pub h: ScreenUnit,
         pub align: Alignment
     }
 
-    impl AlignedFrame {
+    impl AlignedRect {
+        pub fn new(x: ScreenUnit, y: ScreenUnit, w: ScreenUnit, h: ScreenUnit, alignment: Alignment) -> Self {
+            AlignedRect {
+                x, y, w, h, align: alignment
+            }
+        }
+
+        pub fn new_from_point_size(origin: Point, size: Size, alignment: Alignment) -> Self {
+            AlignedRect {
+                x: origin.x, y: origin.y, w: size.w, h: size.h, align: alignment
+            }
+        }
+
+        pub fn origin(&self) -> Point {
+            Point {
+                x: self.x, y: self.y
+            }
+        }
+
+        pub fn size(&self) -> Size {
+            Size {
+                w: self.w, h: self.h
+            }
+        }
+
+        pub fn full_rect(&self) -> Rect {
+            Rect {
+                x: self.x,
+                y: self.y,
+                w: self.w,
+                h: self.h,
+            }
+        }
+
+        pub fn aligned_origin_rect(self) -> AlignedOriginRect {
+            AlignedOriginRect {
+                w: self.w,
+                h: self.h,
+                align: self.align
+            }
+        }
+    }
+
+    #[derive(Copy, Clone, Default, PartialEq, Debug)]
+    pub struct AlignedOriginRect {
+        pub w: ScreenUnit,
+        pub h: ScreenUnit,
+        pub align: Alignment
+    }
+
+    impl AlignedOriginRect {
         pub fn new(w: ScreenUnit, h: ScreenUnit, alignment: Alignment) -> Self {
-            AlignedFrame {
+            AlignedOriginRect {
                 w, h, align: alignment
             }
         }
 
         pub fn new_from_size(size: Size, alignment: Alignment) -> Self {
-            AlignedFrame {
+            AlignedOriginRect {
                 w: size.w, h: size.h, align: alignment
             }
         }
 
-        pub fn full_rect(self) -> Rect {
+        pub fn size(&self) -> Size {
+            Size {
+                w: self.w, h: self.h
+            }
+        }
+
+        pub fn full_rect(&self) -> Rect {
             Rect {
                 x: 0.0,
                 y: 0.0,

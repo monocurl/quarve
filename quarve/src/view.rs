@@ -16,8 +16,8 @@ mod into_view_provider {
     // the capture rules anyways since ViewProvider references static data
     // (does require unsafe still though)
     pub trait IntoViewProvider<E: Environment>: Sized {
-        type UpContext;
-        type DownContext;
+        type UpContext: 'static;
+        type DownContext: 'static;
 
         fn into_view_provider(self, env: &E::Const, s: MSlock)
             -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext>;

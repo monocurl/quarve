@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 use crate::core::{Environment, MSlock};
 use crate::event::{Event, EventResult};
 use crate::state::slock_cell::MainSlockCell;
-use crate::util::geo::{AlignedFrame, Rect, Size};
+use crate::util::geo::{AlignedOriginRect, Rect, Size};
 use crate::view::{EnvRef, InnerView, IntoUpContext, Invalidator, NativeView, Subtree, View};
 use crate::view::util::SizeContainer;
 
@@ -83,11 +83,11 @@ pub trait ViewProvider<E>: Sized + 'static
     fn layout_down(
         &mut self,
         subtree: &Subtree<E>,
-        frame: AlignedFrame,
+        frame: AlignedOriginRect,
         layout_context: &Self::DownContext,
         env: &mut EnvRef<E>,
         s: MSlock
-    ) -> Rect;
+    ) -> (Rect, Rect);
 
     // callback methods
     #[allow(unused_variables)]
@@ -185,7 +185,7 @@ impl<E, P, U> ViewProvider<E> for UpContextAdapter<E, P, U>
             .into_up_context()
     }
 
-    fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView where Self: Sized {
+    fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
         let source = backing_source
             .map(|(n, p)| (n, p.0));
 
@@ -196,7 +196,7 @@ impl<E, P, U> ViewProvider<E> for UpContextAdapter<E, P, U>
         self.0.layout_up(subtree, env, s)
     }
 
-    fn layout_down(&mut self, subtree: &Subtree<E>, frame: AlignedFrame, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> Rect {
+    fn layout_down(&mut self, subtree: &Subtree<E>, frame: AlignedOriginRect, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
         self.0.layout_down(subtree, frame, layout_context, env, s)
     }
 
@@ -286,7 +286,7 @@ impl<E, U, D> ViewProvider<E> for DummyProvider<E, U, D>
         unreachable!()
     }
 
-    fn layout_down(&mut self, _subtree: &Subtree<E>, _frame: AlignedFrame, _layout_context: &D, _env: &mut EnvRef<E>, _s: MSlock<'_>) -> Rect {
+    fn layout_down(&mut self, _subtree: &Subtree<E>, _frame: AlignedOriginRect, _layout_context: &D, _env: &mut EnvRef<E>, _s: MSlock<'_>) -> (Rect, Rect) {
         unreachable!()
     }
 }

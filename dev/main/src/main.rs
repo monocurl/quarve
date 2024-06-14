@@ -6,6 +6,7 @@ use quarve::view::{IntoViewProvider, ViewProvider};
 use quarve::view::dev_views::{DebugView};
 use quarve::view::layout::*;
 use quarve::{hstack, vstack};
+use quarve::view::modifers::OffsetModifiable;
 
 struct Env(());
 
@@ -71,7 +72,7 @@ impl quarve::core::WindowProvider for WindowProvider {
             iteration(0.5);
             iteration(1.0);
             iteration(1.5);
-            DebugView;
+            DebugView.offset(0.0, 10.0);
             store.binding_vmap_options(|x, _s| {
                 DebugView
             }, |o| o.spacing(100.0));
