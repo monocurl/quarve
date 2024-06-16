@@ -6,6 +6,7 @@ pub use view::*;
 
 mod into_view_provider {
     use crate::core::{Environment, MSlock};
+    use crate::view::modifers::{ProviderIVPModifier, ProviderModifier};
     use crate::view::ViewProvider;
 
     // it may seem like we will have to wait a while for
@@ -21,27 +22,21 @@ mod into_view_provider {
 
         fn into_view_provider(self, env: &E::Const, s: MSlock)
             -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext>;
+
+        fn provider_modifier<M>(self, modifier: M) -> ProviderIVPModifier<E, Self, M>
+            where M: ProviderModifier<E, Self::UpContext, Self::DownContext>
+        {
+            ProviderIVPModifier::new(self, modifier)
+        }
+
+        // fn tree_modifier<P>(self, modifier: P) -> P
+        //     where P: TreeModifier<E, Self::UpContext, Self::DownContext>
+        // {
+        //     self
+        // }
     }
 }
 pub use into_view_provider::*;
-
-mod into_up_context {
-    // can't implement Into for our own context
-    pub trait IntoUpContext<T>: 'static
-        where T: 'static
-    {
-        fn into_up_context(self) -> T;
-    }
-
-    impl<T> IntoUpContext<T> for T
-        where T: 'static
-    {
-        fn into_up_context(self) -> T {
-            self
-        }
-    }
-}
-pub use into_up_context::*;
 
 mod view_provider;
 pub use view_provider::*;
@@ -69,6 +64,9 @@ mod signal_view;
 // fonts
 
 // modifiers
+// .hover
+// .click
+// when(
 // opacity
 // background
 // border

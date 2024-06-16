@@ -72,10 +72,12 @@ impl quarve::core::WindowProvider for WindowProvider {
             iteration(0.5);
             iteration(1.0);
             iteration(1.5);
-            DebugView.offset(0.0, 10.0);
+            DebugView
+                .offset(-200.0, 110.0)
+                .offset(200.0, -110.0);
             store.binding_vmap_options(|x, _s| {
                 DebugView
-            }, |o| o.spacing(100.0));
+            }, |o| o.spacing(100.0))
         }
         .options(|p| p.spacing(25.0))
         .into_view_provider(env, s)

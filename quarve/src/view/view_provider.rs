@@ -3,7 +3,7 @@ use crate::core::{Environment, MSlock};
 use crate::event::{Event, EventResult};
 use crate::state::slock_cell::MainSlockCell;
 use crate::util::geo::{AlignedOriginRect, Rect, Size};
-use crate::view::{EnvRef, InnerView, IntoUpContext, Invalidator, NativeView, Subtree, View};
+use crate::view::{EnvRef, InnerView, Invalidator, NativeView, Subtree, View};
 use crate::view::util::SizeContainer;
 
 pub trait ViewProvider<E>: Sized + 'static
@@ -141,12 +141,12 @@ pub struct UpContextAdapter<E, P, U>(P, PhantomData<MainSlockCell<(U, E)>>)
     where E: Environment,
           P: ViewProvider<E>,
           U: 'static,
-          P::UpContext: IntoUpContext<U>;
+          P::UpContext: Into<U>;
 impl<E, P, U> UpContextAdapter<E, P, U>
     where E: Environment,
           P: ViewProvider<E>,
           U: 'static,
-          P::UpContext: IntoUpContext<U> {
+          P::UpContext: Into<U> {
     pub fn new(p: P) -> Self {
         UpContextAdapter(p, PhantomData)
     }
@@ -156,7 +156,7 @@ impl<E, P, U> ViewProvider<E> for UpContextAdapter<E, P, U>
     where E: Environment,
           P: ViewProvider<E>,
           U: 'static,
-          P::UpContext: IntoUpContext<U> {
+          P::UpContext: Into<U> {
     type UpContext = U;
     type DownContext = P::DownContext;
 
@@ -182,7 +182,7 @@ impl<E, P, U> ViewProvider<E> for UpContextAdapter<E, P, U>
 
     fn up_context(&mut self, s: MSlock) -> Self::UpContext {
         self.0.up_context(s)
-            .into_up_context()
+            .into()
     }
 
     fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {

@@ -354,7 +354,7 @@ mod vec_layout {
         use std::marker::PhantomData;
         use crate::core::{Environment, MSlock};
         use crate::util::geo::{AlignedOriginRect, Rect, Size};
-        use crate::view::{EnvRef, IntoUpContext, IntoViewProvider, Invalidator, NativeView, Subtree, UpContextAdapter, View, ViewProvider, ViewRef};
+        use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, UpContextAdapter, View, ViewProvider, ViewRef};
         use crate::view::layout::{VecLayoutProvider};
 
         pub trait HeteroIVPNode<E, U, D> where E: Environment, U: 'static, D: 'static {
@@ -401,7 +401,7 @@ mod vec_layout {
         struct HeteroIVPActualNode<E, U, D, P, N>
             where E: Environment,
                   P: IntoViewProvider<E, DownContext=D>,
-                  P::UpContext: IntoUpContext<U>,
+                  P::UpContext: Into<U>,
                   N: HeteroIVPNode<E, U, D>,
                   U: 'static, D: 'static
         {
@@ -413,7 +413,7 @@ mod vec_layout {
         impl<E, U, D, P, N> HeteroIVPNode<E, U, D> for HeteroIVPActualNode<E, U, D, P, N>
             where E: Environment,
                   P: IntoViewProvider<E, DownContext=D>,
-                  P::UpContext: IntoUpContext<U>,
+                  P::UpContext: Into<U>,
                   N: HeteroIVPNode<E, U, D>,
                   U: 'static, D: 'static
         {
@@ -625,7 +625,7 @@ mod vec_layout {
         use crate::core::{Environment, MSlock};
         use crate::state::{Binding, Buffer, GroupAction, GroupBasis, StoreContainer, VecActionBasis, Word};
         use crate::util::geo::{AlignedOriginRect, Rect, Size};
-        use crate::view::{EnvRef, IntoUpContext, IntoViewProvider, Invalidator, NativeView, Subtree, UpContextAdapter, View, ViewProvider};
+        use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, UpContextAdapter, View, ViewProvider};
         use crate::view::layout::vec_layout::into_view_provider;
         use crate::view::layout::VecLayoutProvider;
 
@@ -634,7 +634,7 @@ mod vec_layout {
                   S: StoreContainer,
                   B: Binding<Vec<S>>,
                   M: FnMut(&S, MSlock) -> P + 'static,
-                  U: IntoUpContext<L::SubviewUpContext>,
+                  U: Into<L::SubviewUpContext>,
                   P: IntoViewProvider<E,
                       DownContext=L::SubviewDownContext,
                       UpContext=U
@@ -653,7 +653,7 @@ mod vec_layout {
                   S: StoreContainer,
                   B: Binding<Vec<S>>,
                   M: FnMut(&S, MSlock) -> P + 'static,
-                  U: IntoUpContext<L::SubviewUpContext>,
+                  U: Into<L::SubviewUpContext>,
                   P: IntoViewProvider<E,
                       DownContext=L::SubviewDownContext,
                       UpContext=U
@@ -666,12 +666,6 @@ mod vec_layout {
                     map,
                     phantom: Default::default(),
                 }
-            }
-
-            pub fn options(mut self, options: impl FnOnce(L::Options) -> L::Options) -> Self {
-                let current = std::mem::take(self.layout.options());
-                *self.layout.options() = options(current);
-                self
             }
         }
 
@@ -699,7 +693,7 @@ mod vec_layout {
                   S: StoreContainer,
                   B: Binding<Vec<S>>,
                   M: FnMut(&S, MSlock) -> P + 'static,
-                  U: IntoUpContext<L::SubviewUpContext>,
+                  U: Into<L::SubviewUpContext>,
                   P: IntoViewProvider<E,
                       DownContext=L::SubviewDownContext,
                       UpContext=U
@@ -866,7 +860,7 @@ mod vec_layout {
         use crate::core::{Environment, MSlock};
         use crate::state::Signal;
         use crate::util::geo::{AlignedOriginRect, Rect, Size};
-        use crate::view::{EnvRef, IntoUpContext, IntoViewProvider, Invalidator, NativeView, Subtree, UpContextAdapter, View, ViewProvider};
+        use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, UpContextAdapter, View, ViewProvider};
         use crate::view::layout::{VecLayoutProvider};
         use crate::view::layout::vec_layout::into_view_provider;
 
@@ -876,7 +870,7 @@ mod vec_layout {
                   S: Signal<Vec<T>>,
                   M: FnMut(&T, MSlock) -> P + 'static,
                   P: IntoViewProvider<E, DownContext=L::SubviewDownContext>,
-                  P::UpContext: IntoUpContext<L::SubviewUpContext>,
+                  P::UpContext: Into<L::SubviewUpContext>,
                   L: VecLayoutProvider<E>
         {
             source: S,
@@ -891,7 +885,7 @@ mod vec_layout {
                   S: Signal<Vec<T>>,
                   M: FnMut(&T, MSlock) -> P + 'static,
                   P: IntoViewProvider<E, DownContext=L::SubviewDownContext>,
-                  P::UpContext: IntoUpContext<L::SubviewUpContext>,
+                  P::UpContext: Into<L::SubviewUpContext>,
                   L: VecLayoutProvider<E>
         {
             pub fn new(source: S, map: M, layout: L) -> Self {
@@ -901,12 +895,6 @@ mod vec_layout {
                     layout,
                     phantom: Default::default(),
                 }
-            }
-
-            pub fn options(mut self, options: impl FnOnce(L::Options) -> L::Options) -> Self {
-                let current = std::mem::take(self.layout.options());
-                *self.layout.options() = options(current);
-                self
             }
         }
 
@@ -931,7 +919,7 @@ mod vec_layout {
                   S: Signal<Vec<T>>,
                   M: FnMut(&T, MSlock) -> P + 'static,
                   P: IntoViewProvider<E, DownContext=L::SubviewDownContext>,
-                  P::UpContext: IntoUpContext<L::SubviewUpContext>,
+                  P::UpContext: Into<L::SubviewUpContext>,
                   L: VecLayoutProvider<E>
         {
             type UpContext = L::UpContext;
