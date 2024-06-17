@@ -56,7 +56,7 @@ mod general_layout {
             layout_context: &Self::DownContext,
             env: &mut EnvRef<E>,
             s: MSlock
-        ) -> (Rect, Rect);
+        ) -> Rect;
     }
 
     pub struct LayoutViewProvider<E, L>(L, PhantomData<MainSlockCell<E>>) where E: Environment, L: LayoutProvider<E>;
@@ -107,7 +107,8 @@ mod general_layout {
         }
 
         fn layout_down(&mut self, subtree: &Subtree<E>, frame: AlignedOriginRect, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock<'_>) -> (Rect, Rect) {
-            self.0.layout_down(subtree, frame, layout_context, env, s)
+            let rect = self.0.layout_down(subtree, frame, layout_context, env, s);
+            (rect, rect)
         }
     }
 
@@ -127,7 +128,7 @@ pub use general_layout::*;
 mod vec_layout {
     use crate::core::{Environment, MSlock};
     use crate::util::geo::{AlignedOriginRect, Rect, Size};
-    use crate::view::{EnvRef, IntoViewProvider, ViewProvider, ViewRef};
+    use crate::view::{EnvRef, IntoViewProvider, Invalidator, Subtree, ViewProvider, ViewRef};
     // workaround for TAIT
     fn into_view_provider<E, I>(i: I, e: &E::Const, s: MSlock)
                                 -> impl ViewProvider<E, UpContext=I::UpContext, DownContext=I::DownContext> + 'static
@@ -158,6 +159,11 @@ mod vec_layout {
         type SubviewDownContext: 'static;
         type SubviewUpContext: 'static;
 
+        #[allow(unused_variables)]
+        fn init(&mut self, invalidator: Invalidator<E>, s: MSlock) {
+
+        }
+
         fn intrinsic_size(&mut self, s: MSlock) -> Size;
         fn xsquished_size(&mut self, s: MSlock) -> Size;
         fn ysquished_size(&mut self, s: MSlock) -> Size;
@@ -180,7 +186,7 @@ mod vec_layout {
             context: &Self::DownContext,
             env: &mut EnvRef<E>,
             s: MSlock
-        ) -> (Rect, Rect) where P: ViewRef<E, DownContext=Self::SubviewDownContext, UpContext=Self::SubviewUpContext> + ?Sized + 'a;
+        ) -> Rect where P: ViewRef<E, DownContext=Self::SubviewDownContext, UpContext=Self::SubviewUpContext> + ?Sized + 'a;
     }
 
     mod macros {
@@ -592,8 +598,9 @@ mod vec_layout {
                 self.layout.up_context(s)
             }
 
-            fn init_backing(&mut self, _invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+            fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
                 self.root.push_subviews(subtree, env, s);
+                self.layout.init(invalidator, s);
 
                 if let Some(source) = backing_source {
                     self.root.take_backing(source.1.root, env, s);
@@ -614,7 +621,8 @@ mod vec_layout {
             fn layout_down(&mut self, _subtree: &Subtree<E>, frame: AlignedOriginRect, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock<'_>) -> (Rect, Rect) {
                 let iterator: HeteroVPIterator<E, L> = HeteroVPIterator(&self.root);
 
-                self.layout.layout_down(iterator, frame, layout_context, env, s)
+                let used = self.layout.layout_down(iterator, frame, layout_context, env, s);
+                (used, used)
             }
         }
     }
@@ -754,6 +762,8 @@ mod vec_layout {
             }
 
             fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+                self.layout.init(invalidator.clone(), s);
+
                 // register invalidator for binding
                 let buffer = self.action_buffer.weak_buffer();
                 self.binding.action_listener(move |_, a, s| {
@@ -848,8 +858,9 @@ mod vec_layout {
             }
 
             fn layout_down(&mut self, _subtree: &Subtree<E>, frame: AlignedOriginRect, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
-                self.layout
-                    .layout_down(self.subviews.iter(), frame, layout_context, env, s)
+                let used = self.layout
+                    .layout_down(self.subviews.iter(), frame, layout_context, env, s);
+                (used, used)
             }
         }
     }
@@ -977,6 +988,8 @@ mod vec_layout {
             }
 
             fn init_backing(&mut self, invalidator: Invalidator<E>, _subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, s: MSlock<'_>) -> NativeView {
+                self.layout.init(invalidator.clone(), s);
+
                 /* register listeners and try to steal whatever backing we can */
                 self.source.listen(move |_, s| {
                     let Some(invalidator)  = invalidator.upgrade() else {
@@ -1028,13 +1041,15 @@ mod vec_layout {
             }
 
             fn layout_down(&mut self, _subtree: &Subtree<E>, frame: AlignedOriginRect, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock<'_>) -> (Rect, Rect) {
-                self.layout.layout_down(
+                let used = self.layout.layout_down(
                     self.subviews.iter(),
                     frame,
                     layout_context,
                     env,
                     s
-                )
+                );
+
+                (used, used)
             }
         }
     }
@@ -1134,7 +1149,7 @@ mod vec_layout {
                 }
             }
 
-            fn layout_down<'a, P>(&mut self, subviews: impl Iterator<Item=&'a P>, frame: AlignedOriginRect, _context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect)
+            fn layout_down<'a, P>(&mut self, subviews: impl Iterator<Item=&'a P>, frame: AlignedOriginRect, _context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> Rect
                 where P: ViewRef<E, DownContext=Self::SubviewDownContext, UpContext=Self::SubviewUpContext> + ?Sized + 'a {
                 let mut elapsed = 0.0;
                 for view in subviews {
@@ -1142,7 +1157,7 @@ mod vec_layout {
                     let used = view.layout_down(AlignedRect::new_from_point_size(Point::new(0.0, elapsed), intrinsic, Alignment::Center), env, s);
                     elapsed += used.h + self.1.spacing;
                 }
-                (frame.full_rect(), frame.full_rect())
+                frame.full_rect()
             }
         }
     }
@@ -1241,7 +1256,7 @@ mod vec_layout {
                 }
             }
 
-            fn layout_down<'a, P>(&mut self, subviews: impl Iterator<Item=&'a P>, frame: AlignedOriginRect, _context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect)
+            fn layout_down<'a, P>(&mut self, subviews: impl Iterator<Item=&'a P>, frame: AlignedOriginRect, _context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> Rect
                 where P: ViewRef<E, DownContext=Self::SubviewDownContext, UpContext=Self::SubviewUpContext> + ?Sized + 'a {
                 let mut elapsed = 0.0;
                 for view in subviews {
@@ -1250,7 +1265,7 @@ mod vec_layout {
                     elapsed += intrinsic.w + self.1.spacing;
                 }
 
-                (frame.full_rect(), frame.full_rect())
+                frame.full_rect()
             }
         }
     }

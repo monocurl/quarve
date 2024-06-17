@@ -176,6 +176,8 @@ mod provider_modifier {
     use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, ViewProvider};
     use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
 
+    // Note that you should generally not
+    // affect the subtree in any way
     pub trait ProviderModifier<E, U, D>: Sized + 'static
         where E: Environment, U: 'static, D: 'static {
 
@@ -727,298 +729,221 @@ mod layer_modifier {
 }
 pub use layer_modifier::*;
 
-mod tree_modifier {
-    use crate::core::Environment;
-    use crate::view::{IntoViewProvider};
+mod foreback_modifier {
+    use std::ffi::c_void;
+    use std::marker::PhantomData;
+    use crate::core::{Environment, MSlock};
+    use crate::native;
+    use crate::util::geo::{AlignedOriginRect, Point, Rect, ScreenUnit, Size};
+    use crate::view::util::Color;
+    use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, View, ViewProvider, ViewRef};
+    use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
 
-    trait TreeModifier<E, U, D>
-        where E: Environment, U: 'static, D: 'static
+    pub struct ForeBackIVP<E, I, J> where E: Environment,
+                                          I: IntoViewProvider<E>,
+                                          J: IntoViewProvider<E, DownContext=I::DownContext> {
+        is_foreground: bool,
+        ivp: I,
+        added_ivp: J,
+        phantom: PhantomData<E>
+    }
+
+    impl<E, I, J> IntoViewProvider<E> for ForeBackIVP<E, I, J>
+        where E: Environment,
+              I: IntoViewProvider<E>,
+              J: IntoViewProvider<E, DownContext=I::DownContext>
     {
-        fn embed(self, ivp: impl IntoViewProvider<E, UpContext=U, DownContext=D>)
-            -> impl IntoViewProvider<E, UpContext=U, DownContext=D>;
+        type UpContext = I::UpContext;
+        type DownContext = I::DownContext;
+
+        fn into_view_provider(self, env: &E::Const, s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
+            ForeBackVP {
+                prev_frame_enabled: false,
+                enabled: true,
+                is_foreground: self.is_foreground,
+                view: self.ivp
+                    .into_view_provider(env, s)
+                    .into_view(s),
+                attraction: self.added_ivp
+                    .into_view_provider(env, s)
+                    .into_view(s),
+            }
+        }
+    }
+
+    impl<E, I, J> ConditionalIVPModifier<E> for ForeBackIVP<E, I, J>
+        where E: Environment,
+              I: ConditionalIVPModifier<E>,
+              J: IntoViewProvider<E, DownContext=I::DownContext>
+    {
+        type Modifying = I::Modifying;
+
+        fn into_conditional_view_provider(self, e: &E::Const, s: MSlock) -> impl ConditionalVPModifier<E, UpContext=<Self::Modifying as IntoViewProvider<E>>::UpContext, DownContext=<Self::Modifying as IntoViewProvider<E>>::DownContext> {
+            ForeBackVP {
+                prev_frame_enabled: false,
+                enabled: true,
+                is_foreground: self.is_foreground,
+                view: self.ivp
+                    .into_conditional_view_provider(e, s)
+                    .into_view(s),
+                attraction: self.added_ivp
+                    .into_view_provider(e, s)
+                    .into_view(s),
+            }
+        }
+    }
+
+    struct ForeBackVP<E, P, Q>
+        where E: Environment,
+              P: ViewProvider<E>,
+              Q: ViewProvider<E, DownContext=P::DownContext>
+    {
+        prev_frame_enabled: bool,
+        enabled: bool,
+        is_foreground: bool,
+        view: View<E, P>,
+        attraction: View<E, Q>
+    }
+
+    impl<E, P, Q> ViewProvider<E> for ForeBackVP<E, P, Q>
+        where E: Environment,
+              P: ViewProvider<E>,
+              Q: ViewProvider<E, DownContext=P::DownContext>
+    {
+        type UpContext = P::UpContext;
+        type DownContext = P::DownContext;
+
+        fn intrinsic_size(&mut self, s: MSlock) -> Size {
+            self.view.intrinsic_size(s)
+        }
+
+        fn xsquished_size(&mut self, s: MSlock) -> Size {
+            self.view.xsquished_size(s)
+        }
+
+        fn xstretched_size(&mut self, s: MSlock) -> Size {
+            self.view.xstretched_size(s)
+        }
+
+        fn ysquished_size(&mut self, s: MSlock) -> Size {
+            self.view.ysquished_size(s)
+        }
+
+        fn ystretched_size(&mut self, s: MSlock) -> Size {
+            self.view.ystretched_size(s)
+        }
+
+        fn up_context(&mut self, s: MSlock) -> Self::UpContext {
+            self.view.up_context(s)
+        }
+
+        fn init_backing(&mut self, _invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+            if let Some((nv, source)) = backing_source {
+                self.view.take_backing(source.view, env, s);
+                self.attraction.take_backing(source.attraction, env, s);
+                subtree.push_subview(&self.view, env, s);
+
+                nv
+            }
+            else {
+                subtree.push_subview(&self.view, env, s);
+
+                NativeView::layout_view(s)
+            }
+        }
+
+        fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
+            if self.enabled != self.prev_frame_enabled {
+                subtree.clear_subviews(s);
+                subtree.push_subview(&self.view, env, s);
+
+                if self.enabled {
+                    let index = if self.is_foreground {
+                        1
+                    }
+                    else {
+                        0
+                    };
+
+                    subtree.insert_subview(&self.attraction, index, env, s);
+                }
+            }
+            self.prev_frame_enabled = self.enabled;
+
+            true
+        }
+
+        fn layout_down(&mut self, _subtree: &Subtree<E>, frame: AlignedOriginRect, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
+            let used = self.view.layout_down_with_context(frame.aligned_rect(Point::default()), layout_context, env, s);
+            if self.enabled {
+                // let pseudo_rect =
+                self.attraction.layout_down_with_context(frame.aligned_rect(Point::default()), layout_context, env, s);
+            }
+
+            (used, used)
+        }
+    }
+
+    impl<E, P, Q> ConditionalVPModifier<E> for ForeBackVP<E, P, Q>
+        where E: Environment,
+              P: ConditionalVPModifier<E>,
+              Q: ViewProvider<E, DownContext=P::DownContext>
+    {
+        fn enable(&mut self, s: MSlock) {
+            if !self.enabled {
+                self.enabled = true;
+
+                self.view.with_provider(|p| {
+                    p.enable(s)
+                }, s);
+                self.view.invalidate(s)
+            }
+        }
+
+        fn disable(&mut self, s: MSlock) {
+            if self.enabled {
+                self.enabled = false;
+
+                self.view.with_provider(|p| {
+                    p.disable(s)
+                }, s);
+                self.view.invalidate(s)
+            }
+        }
+    }
+
+    pub trait ForeBackModifiable<E>: IntoViewProvider<E> where E: Environment {
+        fn foreground<I: IntoViewProvider<E, DownContext=Self::DownContext>>(self, attraction: I)
+            -> ForeBackIVP<E, Self, I>;
+        fn background<I: IntoViewProvider<E, DownContext=Self::DownContext>>(self, attraction: I)
+            -> ForeBackIVP<E, Self, I>;
+    }
+
+    impl<E, J> ForeBackModifiable<E> for J where E: Environment, J: IntoViewProvider<E> {
+        fn foreground<I: IntoViewProvider<E, DownContext=Self::DownContext>>(self, attraction: I) -> ForeBackIVP<E, Self, I> {
+            ForeBackIVP {
+                is_foreground: true,
+                ivp: self,
+                added_ivp: attraction,
+                phantom: PhantomData
+            }
+        }
+
+        fn background<I: IntoViewProvider<E, DownContext=Self::DownContext>>(self, attraction: I) -> ForeBackIVP<E, Self, I> {
+            ForeBackIVP {
+                is_foreground: false,
+                ivp: self,
+                added_ivp: attraction,
+                phantom: PhantomData
+            }
+        }
     }
 }
+pub use foreback_modifier::*;
 
-// mod tree_modifier {
-//     use std::marker::PhantomData;
-//     use crate::core::{Environment, MSlock};
-//     use crate::util::geo::{AlignedOriginRect, AlignedRect, Point, Rect, ScreenUnit, Size};
-//     use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, TrivialContextViewRef, View, ViewProvider, ViewRef};
-//     use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier, ProviderModifier};
-//     use crate::view::util::Color;
-//
-//     // allocates a new backing
-//     pub trait TreeModifier<E, U, D>: Sized + 'static where E: Environment {
-//
-//         fn embed(self, ivp: impl IntoViewProvider<E>) -> impl IntoViewProvider<E>;
-//
-//         fn intrinsic_size(&mut self, src: &View<E, impl ViewProvider<E, UpContext=U, DownContext=D>>, s: MSlock) -> Size {
-//             src.intrinsic_size(s)
-//         }
-//
-//         fn xsquished_size(&mut self, src: &View<E, impl ViewProvider<E, UpContext=U, DownContext=D>>, s: MSlock) -> Size {
-//             src.xsquished_size(s)
-//         }
-//
-//         fn xstretched_size(&mut self, src: &View<E, impl ViewProvider<E, UpContext=U, DownContext=D>>, s: MSlock) -> Size {
-//             src.ysquished_size(s)
-//         }
-//
-//         fn ysquished_size(&mut self, src: &View<E, impl ViewProvider<E, UpContext=U, DownContext=D>>, s: MSlock) -> Size {
-//             src.ysquished_size(s)
-//         }
-//
-//         fn ystretched_size(&mut self, src: &View<E, impl ViewProvider<E, UpContext=U, DownContext=D>>, s: MSlock) -> Size {
-//             src.ystretched_size(s)
-//         }
-//
-//         #[allow(unused_variables)]
-//         fn layout_up(&mut self, src: &View<E, impl ViewProvider<E, UpContext=U, DownContext=D>>, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
-//             false
-//         }
-//
-//         #[allow(unused_variables)]
-//         fn layout_down(&mut self, src: &View<E, impl ViewProvider<E, UpContext=U, DownContext=D>>, subtree: &Subtree<E>, frame: AlignedOriginRect, layout_context: &D, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
-//             let rect = src.layout_down_with_context(AlignedRect::new_from_point_size(Point::default(), frame.size(), frame.align), layout_context, env, s);
-//             (rect, rect)
-//         }
-//
-//         #[allow(unused_variables)]
-//         fn focused(&mut self, s: MSlock)  {
-//
-//         }
-//
-//         #[allow(unused_variables)]
-//         fn unfocused(&mut self, s: MSlock)  {
-//
-//         }
-//
-//         #[allow(unused_variables)]
-//         fn push_environment(&mut self, env: &mut E::Variable, s: MSlock) {
-//
-//         }
-//
-//         #[allow(unused_variables)]
-//         fn pop_environment(&mut self, env: &mut E::Variable, s: MSlock) {
-//
-//         }
-//     }
-//
-//     pub struct TreeIVPModifier<E, P, M>
-//         where E: Environment,
-//               P: IntoViewProvider<E>,
-//               M: TreeModifier<E, P::UpContext, P::DownContext>
-//     {
-//         provider: P,
-//         modifier: M,
-//         phantom: PhantomData<E>
-//     }
-//
-//     impl<E, P, M> TreeIVPModifier<E, P, M>
-//         where E: Environment,
-//               P: IntoViewProvider<E>,
-//               M: TreeModifier<E, P::UpContext, P::DownContext>
-//     {
-//         pub fn new(provider: P, modifier: M) -> Self {
-//             TreeIVPModifier {
-//                 provider,
-//                 modifier,
-//                 phantom: PhantomData
-//             }
-//         }
-//     }
-//
-//     struct TreeVPModifier<E, P, M>
-//         where E: Environment,
-//               P: ViewProvider<E>,
-//               M: TreeModifier<E, P::UpContext, P::DownContext>
-//     {
-//         subview: View<E, P>,
-//         modifier: M,
-//         enabled: bool,
-//         last_env_push_was_enabled: bool,
-//         phantom: PhantomData<E>
-//     }
-//
-//     impl<E, P, M> IntoViewProvider<E> for TreeIVPModifier<E, P, M>
-//         where E: Environment,
-//               P: IntoViewProvider<E>,
-//               M: TreeModifier<E, P::UpContext, P::DownContext>
-//     {
-//         type UpContext = P::UpContext;
-//         type DownContext = P::DownContext;
-//
-//         fn into_view_provider(self, env: &E::Const, s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
-//             TreeVPModifier {
-//                 subview: self.provider
-//                     .into_view_provider(env, s)
-//                     .into_view(s),
-//                 modifier: self.modifier,
-//                 enabled: true,
-//                 last_env_push_was_enabled: true,
-//                 phantom: PhantomData
-//             }
-//         }
-//     }
-//
-//     impl<E, P, M> ViewProvider<E> for TreeVPModifier<E, P, M>
-//         where E: Environment,
-//               P: ViewProvider<E>,
-//               M: TreeModifier<E, P::UpContext, P::DownContext>
-//     {
-//         type UpContext = P::UpContext;
-//         type DownContext = P::DownContext;
-//
-//         fn intrinsic_size(&mut self, s: MSlock) -> Size {
-//             if self.enabled {
-//                 self.modifier.intrinsic_size(&self.subview, s)
-//             } else {
-//                 self.subview.intrinsic_size(s)
-//             }
-//         }
-//
-//         fn xsquished_size(&mut self, s: MSlock) -> Size {
-//             if self.enabled {
-//                 self.modifier.xsquished_size(&self.subview, s)
-//             } else {
-//                 self.subview.xsquished_size(s)
-//             }
-//         }
-//
-//         fn xstretched_size(&mut self, s: MSlock) -> Size {
-//             if self.enabled {
-//                 self.modifier.xstretched_size(&self.subview, s)
-//             } else {
-//                 self.subview.xstretched_size(s)
-//             }
-//         }
-//
-//         fn ysquished_size(&mut self, s: MSlock) -> Size {
-//             if self.enabled {
-//                 self.modifier.ysquished_size(&self.subview, s)
-//             } else {
-//                 self.subview.ysquished_size(s)
-//             }
-//         }
-//
-//         fn ystretched_size(&mut self, s: MSlock) -> Size {
-//             if self.enabled {
-//                 self.modifier.ystretched_size(&self.subview, s)
-//             } else {
-//                 self.subview.ystretched_size(s)
-//             }
-//         }
-//
-//         fn up_context(&mut self, s: MSlock) -> Self::UpContext {
-//             self.subview.up_context(s)
-//         }
-//
-//         fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
-//             let mod_source = backing_source
-//                 .map(|(nv, bs) | {
-//                     self.subview.take_backing(bs.subview, env, s);
-//                     (nv, bs.modifier)
-//                 });
-//
-//             self.modifier.init_backing(&self.subview, invalidator, subtree, mod_source, env, s)
-//         }
-//
-//         fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
-//             self.modifier.layout_up(&self.subview, subtree, env, s)
-//         }
-//
-//         fn layout_down(&mut self, subtree: &Subtree<E>, frame: AlignedOriginRect, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
-//             self.modifier.layout_down(&self.subview, subtree, frame, layout_context, env, s)
-//         }
-//
-//         fn focused(&mut self, s: MSlock) {
-//             self.modifier.focused(s);
-//         }
-//
-//         fn unfocused(&mut self, s: MSlock) {
-//             self.modifier.unfocused(s);
-//         }
-//
-//         fn push_environment(&mut self, env: &mut E::Variable, s: MSlock) {
-//             if self.enabled {
-//                 self.modifier.push_environment(env, s);
-//             }
-//
-//             self.last_env_push_was_enabled = self.enabled;
-//         }
-//
-//         fn pop_environment(&mut self, env: &mut E::Variable, s: MSlock) {
-//             if self.last_env_push_was_enabled {
-//                 self.modifier.pop_environment(env, s);
-//             }
-//         }
-//     }
-//
-//     impl<E, P, M> ConditionalIVPModifier<E> for TreeIVPModifier<E, P, M>
-//         where E: Environment,
-//               P: ConditionalIVPModifier<E>,
-//               M: TreeModifier<E, P::UpContext, P::DownContext>
-//     {
-//         type Modifying = P::Modifying;
-//
-//         fn into_conditional_view_provider(self, e: &E::Const, s: MSlock)
-//                                           -> impl ConditionalVPModifier<E, UpContext=P::UpContext, DownContext=P::DownContext> {
-//             TreeVPModifier {
-//                 subview: self.provider
-//                     .into_conditional_view_provider(e, s)
-//                     .into_view(s),
-//                 modifier: self.modifier,
-//                 enabled: true,
-//                 last_env_push_was_enabled: true,
-//                 phantom: PhantomData,
-//             }
-//         }
-//     }
-//
-//     impl<E, P, M> ConditionalVPModifier<E> for TreeVPModifier<E, P, M>
-//         where E: Environment,
-//               P: ConditionalVPModifier<E>,
-//               M: TreeModifier<E, P::UpContext, P::DownContext>
-//     {
-//         fn enable(&mut self, s: MSlock) {
-//             self.enabled = true;
-//             self.subview.with_provider(|p| {
-//                 p.enable(s)
-//             }, s);
-//             self.subview.invalidate(s);
-//         }
-//
-//         fn disable(&mut self, s: MSlock) {
-//             self.subview.with_provider(|p| {
-//                 p.enable(s)
-//             }, s);
-//             self.subview.invalidate(s);
-//             self.enabled = false;
-//         }
-//     }
-//
-//     pub struct Layer {
-//         background_color: Color,
-//         corner_radius: ScreenUnit,
-//         border_color: Color,
-//         border_width: ScreenUnit,
-//     }
-//
-//     // impl<E, U, D> TreeModifier<E, U, D> for Layer where U: 'static, D: 'static {
-//     //     fn init_backing(&mut self, src: &View<E, impl ViewProvider<E, UpContext=U, DownContext=D>>, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
-//     //         subtree.push_subview(src, env, s);
-//     //     }
-//     //
-//     //     fn enable(&mut self, s: MSlock) {
-//     //         todo!()
-//     //     }
-//     //
-//     //     fn disable(&mut self, s: MSlock) {
-//     //         todo!()
-//     //     }
-//     // }
-// }
-// pub use tree_modifier::*;
+mod tree_modifier {
+    // TODO once portals are done
+}
 
 mod when_modifier {
     use std::marker::PhantomData;

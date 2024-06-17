@@ -38,6 +38,10 @@ impl<E, P> View<E, P> where E: Environment, P: ViewProvider<E> {
         let weak = Arc::downgrade(&self.0) as Weak<MainSlockCell<dyn InnerViewBase<E>>>;
         self.0.borrow_mut_main(s).invalidate(weak, s.as_general_slock());
     }
+
+    pub(crate) fn clone(&self) -> View<E, P> {
+        View(self.0.clone())
+    }
 }
 mod view_ref {
     use std::sync::Arc;
