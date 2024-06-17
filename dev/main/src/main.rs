@@ -6,7 +6,7 @@ use quarve::view::{IntoViewProvider, ViewProvider};
 use quarve::view::dev_views::{DebugView};
 use quarve::view::layout::*;
 use quarve::{hstack, vstack};
-use quarve::view::modifers::OffsetModifiable;
+use quarve::view::modifers::{OffsetModifiable, WhenModifiable};
 
 struct Env(());
 
@@ -55,31 +55,35 @@ impl quarve::core::WindowProvider for WindowProvider {
     }
 
     fn root(&self, env: &<Env as Environment>::Const, s: MSlock<'_>) -> impl ViewProvider<Env, DownContext=()> {
-        let iteration = |i: f64| {
-            s.clock_signal()
-                .map(move |s| {
-                    let range = 0 .. (1 + (5.0 * (i + s).sin().abs()) as i32);
-                    range.into_iter().collect()
-                }, s)
-                .signal_vmap_options(|_i, _s| {
-                    DebugView
-                }, |o| o.spacing(10.0))
-        };
+        // let iteration = |i: f64| {
+        //     s.clock_signal()
+        //         .map(move |s| {
+        //             let range = 0 .. (1 + (5.0 * (i + s).sin().abs()) as i32);
+        //             range.into_iter().collect()
+        //         }, s)
+        //         .signal_vmap_options(|_i, _s| {
+        //             DebugView
+        //         }, |o| o.spacing(10.0))
+        // };
         let store = Store::new(vec![Store::new(1), Store::new(2)]);
 
+        let offset_y = s
+            .clock_signal()
+            .map(|u| ((4.0 * u).sin() * 100.0) as f32, s);
+        let positive_y = offset_y
+            .map(|val| *val > 0.0, s);
+
         hstack! {
-            iteration(0.0);
-            iteration(0.5);
-            iteration(1.0);
-            iteration(1.5);
             DebugView
-                .offset(-200.0, 110.0)
-                .offset(200.0, -110.0);
-            store.binding_vmap_options(|x, _s| {
+                .offset(200.0, 110.0)
+                .when(positive_y, |u|
+                   u.offset_signal(offset_y, s.fixed_signal(0.0))
+                );
+
+            store.binding_vmap(|x, _s| {
                 DebugView
-            }, |o| o.spacing(100.0))
+            })
         }
-        .options(|p| p.spacing(25.0))
         .into_view_provider(env, s)
     }
 }

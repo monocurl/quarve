@@ -177,6 +177,10 @@ debug_back_view_init() {
     NSView* t = [[NSView alloc] initWithFrame:NSMakeRect(0,0,100,100)];
     [t setWantsLayer: YES];
     [t.layer setBackgroundColor: [[[NSColor whiteColor] colorWithAlphaComponent: 0.5] CGColor]];
+    t.layer.borderWidth = 2.0;
+    t.layer.cornerRadius = 10.0;
+    t.layer.borderColor = [NSColor systemBlueColor].CGColor;
+
     return t;
 }
 

@@ -1,7 +1,6 @@
 use std::sync::{Arc, Weak};
 use crate::core::{Environment, MSlock, Slock};
 use crate::state::slock_cell::{MainSlockCell};
-use crate::util::geo::{AlignedOriginRect, Point, Rect};
 use crate::util::rust_util::EnsureSend;
 use crate::view::inner_view::{InnerView, InnerViewBase};
 use crate::view::view_provider::ViewProvider;
@@ -25,12 +24,26 @@ impl<E, P> View<E, P> where E: Environment, P: ViewProvider<E> {
             .take_backing(&arc, source, env, s)
     }
 
+    // there are some circumstances where it's nice to have
+    // provider access (mainly in conditional modifiers)
+    // but this method generally should be avoided)
+    pub(crate) fn with_provider(&self, f: impl FnOnce(&mut P), s: MSlock) {
+        f(self.0.borrow_mut_main(s).provider())
+    }
+
+    // again, generally should avoid super invalidating child
+    // but it does become a bit hard to avoid with conditional modifiers
+    // without significant overhead
+    pub(crate) fn invalidate(&self, s: MSlock) {
+        let weak = Arc::downgrade(&self.0) as Weak<MainSlockCell<dyn InnerViewBase<E>>>;
+        self.0.borrow_mut_main(s).invalidate(weak, s.as_general_slock());
+    }
 }
 mod view_ref {
     use std::sync::Arc;
     use crate::core::{Environment, MSlock};
     use crate::state::slock_cell::MainSlockCell;
-    use crate::util::geo::{AlignedOriginRect, AlignedRect, Rect, Size};
+    use crate::util::geo::{AlignedRect, Rect, Size};
     use crate::view::{EnvRef, InnerViewBase, View, ViewProvider};
     use crate::view::util::SizeContainer;
 
@@ -138,6 +151,14 @@ impl<E> Invalidator<E> where E: Environment {
                     view
                 }
             })
+    }
+}
+
+impl<E> Clone for Invalidator<E> where E: Environment {
+    fn clone(&self) -> Self {
+        Invalidator {
+            view: self.view.clone(),
+        }
     }
 }
 

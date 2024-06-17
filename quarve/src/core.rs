@@ -21,7 +21,7 @@ mod debug_stats {
     }
 
     #[cfg(not(debug_assertions))]
-    struct DebugInfo {
+    pub(crate) struct DebugInfo {
 
     }
 
@@ -49,7 +49,7 @@ mod debug_stats {
 
     #[cfg(not(debug_assertions))]
     impl DebugInfo {
-        fn new() -> Self {
+        pub fn new() -> Self {
             DebugInfo {
 
             }
@@ -621,12 +621,12 @@ mod slock {
     use std::thread;
     use std::time::Duration;
     use crate::core::{timed_worker};
-    use crate::core::debug_stats::DebugInfo;
     use crate::native;
     use crate::state::{ActionFilter, Binding, FixedSignal, IntoAction, JoinedSignal, CapacitatedSignal, Signal, Stateful};
     use crate::state::capacitor::IncreasingCapacitor;
     use crate::util::markers::{AnyThreadMarker, MainThreadMarker, ThreadMarker};
     use crate::util::rust_util::PhantomUnsendUnsync;
+    use crate::core::debug_stats::DebugInfo;
 
     static GLOBAL_STATE_LOCK: Mutex<()> = Mutex::new(());
     #[cfg(debug_assertions)]

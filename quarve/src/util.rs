@@ -21,7 +21,6 @@ pub(crate) mod rust_util {
 }
 
 
-#[cfg(debug_assertions)]
 pub(crate) mod test_util {
     use std::marker::PhantomData;
     use std::sync::Mutex;

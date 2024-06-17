@@ -5,7 +5,7 @@ use crate::core::{Environment, MSlock, Slock, WindowEnvironmentBase};
 use crate::native;
 use crate::native::view::{view_add_child_at, view_clear_children, view_remove_child, view_set_frame};
 use crate::state::slock_cell::{MainSlockCell};
-use crate::util::geo::{AlignedOriginRect, AlignedRect, Alignment, Point, Rect, Size};
+use crate::util::geo::{AlignedRect, Point, Rect, Size};
 use crate::util::rust_util::PhantomUnsendUnsync;
 use crate::view::{EnvRef, Invalidator, View};
 use crate::view::util::SizeContainer;

@@ -181,8 +181,7 @@ impl<E, P, U> ViewProvider<E> for UpContextAdapter<E, P, U>
     }
 
     fn up_context(&mut self, s: MSlock) -> Self::UpContext {
-        self.0.up_context(s)
-            .into()
+        self.0.up_context(s).into()
     }
 
     fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {

@@ -2506,7 +2506,6 @@ mod signal {
         fn map<S, F>(&self, map: F, s: Slock<'_, impl ThreadMarker>) -> Self::MappedOutput<S>
             where S: Send + 'static,
                   F: Send + 'static + Fn(&T) -> S;
-
     }
 
     trait InnerSignal<T: Send> {
