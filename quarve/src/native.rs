@@ -213,6 +213,7 @@ pub mod view {
     use std::ffi::{c_ulonglong, c_void};
     use crate::core::MSlock;
     use crate::util::geo::Rect;
+    use crate::view::util::Color;
 
     extern "C" {
         fn debug_back_view_init() -> *mut c_void;
@@ -223,17 +224,15 @@ pub mod view {
         fn back_view_insert_child(view: *mut c_void, subview: *mut c_void, index: std::ffi::c_ulonglong);
         fn back_view_set_frame(view: *mut c_void, left: f64, top: f64, width: f64, height: f64);
         fn back_free_view(view: *mut c_void);
+
+        /* layer view methods */
+        fn back_view_layer_init() -> *mut c_void;
+        fn back_view_layer_update(view: *mut c_void, bg_color: Color, border_color: Color, corner_radius: f64, border_width: f64, opacity: f32) -> *mut c_void;
     }
 
     pub fn debug_view_init(_s: MSlock) -> *mut c_void {
         unsafe {
             debug_back_view_init()
-        }
-    }
-
-    pub fn init_layout_view(_s: MSlock) -> *mut c_void {
-        unsafe {
-            back_view_layout_init()
         }
     }
 
@@ -268,10 +267,51 @@ pub mod view {
         // and we cant have race conditions anyways
         // due to the slock)
         // nevertheless a safety check doesn't hurt
+        // (and check is performed on mslock)
         debug_assert!(super::global::is_main());
 
         unsafe {
             back_free_view(view);
+        }
+    }
+
+    pub fn init_layout_view(_s: MSlock) -> *mut c_void {
+        unsafe {
+            back_view_layout_init()
+        }
+    }
+
+    pub mod layer {
+        use std::ffi::c_void;
+        use crate::core::MSlock;
+        use crate::native::view::{back_view_layer_init, back_view_layer_update};
+        use crate::view::util::Color;
+
+        pub fn init_layer_view(_s: MSlock) -> *mut c_void {
+            unsafe {
+                back_view_layer_init()
+            }
+        }
+
+        pub fn update_layout_view(
+            view: *mut c_void,
+            bg_color: Color,
+            border_color: Color,
+            corner_radius: f64,
+            border_width: f64,
+            opacity: f32,
+            _s: MSlock
+        ) {
+            unsafe {
+                back_view_layer_update(
+                    view,
+                    bg_color,
+                    border_color,
+                    corner_radius,
+                    border_width,
+                    opacity
+                );
+            }
         }
     }
 }

@@ -431,6 +431,12 @@ impl NativeView {
         }
     }
 
+    pub fn layer_view(s: MSlock) -> NativeView {
+        unsafe {
+            NativeView::new(native::view::layer::init_layer_view(s))
+        }
+    }
+
     pub fn view(&self) -> *mut c_void {
         self.0
     }

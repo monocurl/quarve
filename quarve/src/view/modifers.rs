@@ -516,6 +516,229 @@ mod provider_modifier {
 }
 pub use provider_modifier::*;
 
+mod layer_modifier {
+    use std::ffi::c_void;
+    use std::marker::PhantomData;
+    use crate::core::{Environment, MSlock};
+    use crate::native;
+    use crate::util::geo::{AlignedOriginRect, Point, Rect, ScreenUnit, Size};
+    use crate::view::util::Color;
+    use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, View, ViewProvider, ViewRef};
+    use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
+
+    pub struct Layer {
+        background_color: Color,
+        corner_radius: ScreenUnit,
+        border_color: Color,
+        border_width: ScreenUnit,
+        opacity: f32
+    }
+
+    impl Default for Layer {
+        fn default() -> Self {
+            Layer {
+                background_color: Default::default(),
+                corner_radius: 0.0,
+                border_color: Default::default(),
+                border_width: 0.0,
+                opacity: 1.0,
+            }
+        }
+    }
+
+    impl Layer {
+        pub fn bg_color(mut self, color: Color) -> Layer {
+            self.background_color = color;
+            self
+        }
+
+        pub fn border_color(mut self, color: Color) -> Layer {
+            self.border_color = color;
+            self
+        }
+
+        pub fn radius(mut self, radius: ScreenUnit) -> Layer {
+            self.corner_radius = radius;
+            self
+        }
+
+        pub fn border_width(mut self, width: ScreenUnit) -> Layer {
+            self.border_width = width;
+            self
+        }
+
+        pub fn opacity(mut self, opacity: f32) -> Layer {
+            self.opacity = opacity;
+            self
+        }
+    }
+
+    pub struct LayerIVP<E, I> where E: Environment, I: IntoViewProvider<E> {
+        layer: Layer,
+        ivp: I,
+        phantom: PhantomData<E>
+    }
+
+    impl<E, I> IntoViewProvider<E> for LayerIVP<E, I>
+        where E: Environment, I: IntoViewProvider<E>
+    {
+        type UpContext = I::UpContext;
+        type DownContext = I::DownContext;
+
+        fn into_view_provider(self, env: &E::Const, s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
+            LayerVP {
+                layer: self.layer,
+                backing: 0 as *mut c_void,
+                enabled: true,
+                view: self.ivp.into_view_provider(env, s)
+                    .into_view(s)
+            }
+        }
+    }
+
+    impl<E, I> ConditionalIVPModifier<E> for LayerIVP<E, I>
+        where E: Environment, I: ConditionalIVPModifier<E>
+    {
+        type Modifying = I::Modifying;
+
+        fn into_conditional_view_provider(self, e: &E::Const, s: MSlock) -> impl ConditionalVPModifier<E, UpContext=<Self::Modifying as IntoViewProvider<E>>::UpContext, DownContext=<Self::Modifying as IntoViewProvider<E>>::DownContext> {
+            LayerVP {
+                layer: self.layer,
+                backing: 0 as *mut c_void,
+                enabled: true,
+                view: self.ivp
+                    .into_conditional_view_provider(e, s)
+                    .into_view(s)
+            }
+        }
+    }
+
+    struct LayerVP<E, P> where E: Environment, P: ViewProvider<E> {
+        layer: Layer,
+        backing: *mut c_void,
+        enabled: bool,
+        view: View<E, P>
+    }
+
+    impl<E, P> ViewProvider<E> for LayerVP<E, P> where E: Environment, P: ViewProvider<E> {
+        type UpContext = P::UpContext;
+        type DownContext = P::DownContext;
+
+        fn intrinsic_size(&mut self, s: MSlock) -> Size {
+            self.view.intrinsic_size(s)
+        }
+
+        fn xsquished_size(&mut self, s: MSlock) -> Size {
+            self.view.xsquished_size(s)
+        }
+
+        fn xstretched_size(&mut self, s: MSlock) -> Size {
+            self.view.xstretched_size(s)
+        }
+
+        fn ysquished_size(&mut self, s: MSlock) -> Size {
+            self.view.ysquished_size(s)
+        }
+
+        fn ystretched_size(&mut self, s: MSlock) -> Size {
+            self.view.ystretched_size(s)
+        }
+
+        fn up_context(&mut self, s: MSlock) -> Self::UpContext {
+            self.view.up_context(s)
+        }
+
+        fn init_backing(&mut self, _invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+            subtree.push_subview(&self.view, env, s);
+
+            if let Some((nv, layer)) = backing_source {
+                self.view.take_backing(layer.view, env, s);
+                self.backing = nv.view();
+                nv
+            }
+            else {
+                let nv = NativeView::layer_view(s);
+                self.backing = nv.view();
+                nv
+            }
+        }
+
+        fn layout_up(&mut self, _subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, s: MSlock) -> bool {
+            if self.enabled {
+                native::view::layer::update_layout_view(self.backing, self.layer.background_color, self.layer.border_color, self.layer.corner_radius as f64, self.layer.border_width as f64, self.layer.opacity, s);
+            }
+            else {
+                native::view::layer::update_layout_view(self.backing, Color::transparent(), Color::transparent(), 0.0, 0.0, 1.0, s);
+            }
+            // generally only called if subview propagated to here
+            true
+        }
+
+        fn layout_down(&mut self, _subtree: &Subtree<E>, frame: AlignedOriginRect, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
+            let used = self.view.layout_down_with_context(frame.aligned_rect(Point::default()), layout_context, env, s);
+            (used, used)
+        }
+    }
+
+    impl<E, P> ConditionalVPModifier<E> for LayerVP<E, P>
+        where E: Environment, P: ConditionalVPModifier<E>
+    {
+        fn enable(&mut self, s: MSlock) {
+            if !self.enabled {
+                self.enabled = true;
+
+                // FIXME way to do without this hack in the future?
+                // would rather not invalidate entire subtree
+                self.view.with_provider(|p| {
+                    p.enable(s)
+                }, s);
+                self.view.invalidate(s)
+            }
+        }
+
+        fn disable(&mut self, s: MSlock) {
+            if self.enabled {
+                self.enabled = false;
+
+                self.view.with_provider(|p| {
+                    p.disable(s)
+                }, s);
+                self.view.invalidate(s)
+            }
+        }
+    }
+
+    pub trait LayerModifiable<E>: IntoViewProvider<E>
+        where E: Environment
+    {
+        fn layer(self, layer: impl FnOnce(Layer) -> Layer) -> LayerIVP<E, Self>;
+    }
+
+    impl<E, I> LayerModifiable<E> for I where E: Environment, I: IntoViewProvider<E>
+    {
+        fn layer(self, layer: impl FnOnce(Layer) -> Layer) -> LayerIVP<E, Self> {
+            LayerIVP {
+                layer: layer(Layer::default()),
+                ivp: self,
+                phantom: PhantomData
+            }
+        }
+    }
+}
+pub use layer_modifier::*;
+
+mod tree_modifier {
+    use crate::core::Environment;
+    use crate::view::{IntoViewProvider};
+
+    trait TreeModifier<E, U, D>
+        where E: Environment, U: 'static, D: 'static
+    {
+        fn embed(self, ivp: impl IntoViewProvider<E, UpContext=U, DownContext=D>)
+            -> impl IntoViewProvider<E, UpContext=U, DownContext=D>;
+    }
+}
+
 // mod tree_modifier {
 //     use std::marker::PhantomData;
 //     use crate::core::{Environment, MSlock};

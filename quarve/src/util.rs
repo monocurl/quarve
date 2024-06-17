@@ -486,6 +486,16 @@ pub mod geo {
             }
         }
 
+        pub fn aligned_rect(self, at: Point) -> AlignedRect {
+            AlignedRect {
+                x: at.x,
+                y: at.y,
+                w: self.w,
+                h: self.h,
+                align: self.align
+            }
+        }
+
         pub fn full_rect(&self) -> Rect {
             Rect {
                 x: 0.0,

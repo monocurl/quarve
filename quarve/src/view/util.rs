@@ -58,7 +58,8 @@ mod size_container {
 pub use size_container::*;
 
 mod color {
-    #[derive(Default)]
+    #[derive(Default, Copy, Clone)]
+    #[repr(C)]
     pub struct Color {
         r: u8, g: u8, b: u8, a: u8
     }
@@ -70,19 +71,43 @@ mod color {
             }
         }
 
-        pub fn red(&self) -> u8 {
+        pub fn new_alpha(r: u8, g: u8, b: u8, a: u8) -> Color {
+            Color {
+                r, g, b, a
+            }
+        }
+
+        pub fn transparent() -> Color {
+            Color {
+                r: 0, g: 0, b: 0, a: 0
+            }
+        }
+
+        pub fn black() -> Color {
+            Color {
+                r: 0, g: 0, b: 0, a: u8::MAX
+            }
+        }
+
+        pub fn white() -> Color {
+            Color {
+                r: u8::MAX, g: u8::MAX, b: u8::MAX, a: u8::MAX
+            }
+        }
+
+        pub fn r(&self) -> u8 {
             self.r
         }
 
-        pub fn green(&self) -> u8 {
+        pub fn g(&self) -> u8 {
             self.g
         }
 
-        pub fn blue(&self) -> u8 {
+        pub fn b(&self) -> u8 {
             self.b
         }
 
-        pub fn alpha(&self) -> u8 {
+        pub fn a(&self) -> u8 {
             self.a
         }
     }

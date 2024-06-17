@@ -6,7 +6,8 @@ use quarve::view::{IntoViewProvider, ViewProvider};
 use quarve::view::dev_views::{DebugView};
 use quarve::view::layout::*;
 use quarve::{hstack, vstack};
-use quarve::view::modifers::{OffsetModifiable, WhenModifiable};
+use quarve::view::modifers::{LayerModifiable, OffsetModifiable, WhenModifiable};
+use quarve::view::util::Color;
 
 struct Env(());
 
@@ -69,16 +70,23 @@ impl quarve::core::WindowProvider for WindowProvider {
 
         let offset_y = s
             .clock_signal()
-            .map(|u| ((4.0 * u).sin() * 100.0) as f32, s);
+            .map(|u| ((4.0 * u).sin().abs() * 100.0) as f32, s);
         let positive_y = offset_y
-            .map(|val| *val > 0.0, s);
+            .map(|val| *val > 10.0, s);
 
         hstack! {
             DebugView
-                .offset(200.0, 110.0)
                 .when(positive_y, |u|
-                   u.offset_signal(offset_y, s.fixed_signal(0.0))
-                );
+                   u.layer(|l| {
+                        l.bg_color(Color::new(100, 0, 0))
+                         .border_color(Color::black())
+                         .radius(40.0)
+                         .border_width(3.0)
+                         .opacity(0.5)
+                    })
+                    .offset_signal(s.fixed_signal(0.0), offset_y)
+                )
+                .offset(200.0, 110.0);
 
             store.binding_vmap(|x, _s| {
                 DebugView
