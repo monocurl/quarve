@@ -31,7 +31,7 @@ mod identity_modifier {
     use std::marker::PhantomData;
     use crate::core::{Environment, MSlock};
     use crate::event::{Event, EventResult};
-    use crate::util::geo::{AlignedOriginRect, Rect, Size};
+    use crate::util::geo::{Rect, Size};
     use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, ViewProvider};
     use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
 
@@ -125,7 +125,7 @@ mod identity_modifier {
             self.source.layout_up(subtree, env, s)
         }
 
-        fn layout_down(&mut self, subtree: &Subtree<E>, frame: AlignedOriginRect, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
+        fn layout_down(&mut self, subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
             self.source.layout_down(subtree, frame, layout_context, env, s)
         }
 
@@ -169,10 +169,12 @@ mod identity_modifier {
 
 mod provider_modifier {
     use std::marker::PhantomData;
-    use crate::core::{Environment, MSlock};
+    use crate::core::{Environment, MSlock, Slock};
     use crate::event::{Event, EventResult};
     use crate::state::{FixedSignal, Signal, SignalOrValue};
-    use crate::util::geo::{AlignedOriginRect, Point, Rect, ScreenUnit, Size};
+    use crate::util::geo;
+    use crate::util::geo::{Point, Rect, ScreenUnit, Size};
+    use crate::util::markers::ThreadMarker;
     use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, ViewProvider};
     use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
 
@@ -210,7 +212,7 @@ mod provider_modifier {
             src.layout_up(subtree, env, s)
         }
 
-        fn layout_down(&mut self, src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, subtree: &Subtree<E>, frame: AlignedOriginRect, layout_context: &D, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
+        fn layout_down(&mut self, src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, subtree: &Subtree<E>, frame: Size, layout_context: &D, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
             src.layout_down(subtree, frame, layout_context, env, s)
         }
 
@@ -355,7 +357,7 @@ mod provider_modifier {
             }
         }
 
-        fn layout_down(&mut self, subtree: &Subtree<E>, frame: AlignedOriginRect, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
+        fn layout_down(&mut self, subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
             if self.enabled {
                 self.modifier.layout_down(&mut self.provider, subtree, frame, layout_context, env, s)
             } else {
@@ -456,6 +458,8 @@ mod provider_modifier {
     pub struct Offset<U, V> where U: Signal<ScreenUnit>, V: Signal<ScreenUnit> {
         dx: SignalOrValue<ScreenUnit, U>,
         dy: SignalOrValue<ScreenUnit, V>,
+        last_dx: ScreenUnit,
+        last_dy: ScreenUnit,
     }
 
     impl<E, U, D, S, T> ProviderModifier<E, U, D> for Offset<S, T>
@@ -466,7 +470,14 @@ mod provider_modifier {
             self.dy.add_invalidator(invalidator, s);
         }
 
-        fn layout_down(&mut self, src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, subtree: &Subtree<E>, frame: AlignedOriginRect, layout_context: &D, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
+        fn layout_up(&mut self, src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
+            let ret = src.layout_up(subtree, env, s) || self.dx.inner(s) != self.last_dx || self.dy.inner(s) != self.last_dy;
+            self.last_dx = self.dx.inner(s);
+            self.last_dy = self.dy.inner(s);
+            ret
+        }
+
+        fn layout_down(&mut self, src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, subtree: &Subtree<E>, frame: Size, layout_context: &D, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
             let (mut frame, exclusion) = src.layout_down(subtree, frame, layout_context, env, s);
             let delta = Point::new(self.dx.inner(s), self.dy.inner(s));
 
@@ -491,6 +502,8 @@ mod provider_modifier {
             let o = Offset {
                 dx: SignalOrValue::value(dx),
                 dy: SignalOrValue::value(dy),
+                last_dx: ScreenUnit::NAN,
+                last_dy: ScreenUnit::NAN
             };
 
             self.provider_modifier(o)
@@ -499,7 +512,9 @@ mod provider_modifier {
         fn offset_signal(self, dx: impl Signal<ScreenUnit>, dy: impl Signal<ScreenUnit>) -> ProviderIVPModifier<E, Self, impl ProviderModifier<E, Self::UpContext, Self::DownContext>> {
             let o = Offset {
                 dx: SignalOrValue::Signal(dx),
-                dy: SignalOrValue::Signal(dy)
+                dy: SignalOrValue::Signal(dy),
+                last_dx: ScreenUnit::NAN,
+                last_dy: ScreenUnit::NAN
             };
 
             self.provider_modifier(o)
@@ -507,15 +522,149 @@ mod provider_modifier {
     }
 
     pub struct Padding<S: Signal<ScreenUnit>> {
-        amount: S,
-        // sides:
+        amount: SignalOrValue<ScreenUnit, S>,
+        edges: u8,
+        last_amount: ScreenUnit
     }
 
-    // pub trait PaddingModifiable {
-    //     fn padding(self, amount: ScreenUnit) -> ProviderIVPModifier<E, Self, Padding>
-    //     fn padding_signal();
-    //     fn padding_e
-    // }
+    impl<S: Signal<ScreenUnit>> Padding<S> {
+        fn apply_general(&self, to: Size, invert: bool, s: Slock<impl ThreadMarker>) -> Size {
+            let amount = if invert {
+                -self.amount.inner(s)
+            } else {
+                self.amount.inner(s)
+            };
+            let mut w = to.w;
+            let mut h = to.h;
+            if self.edges | geo::edge::LEFT != 0 {
+                w += amount;
+            }
+            if self.edges | geo::edge::RIGHT != 0 {
+                w += amount;
+            }
+            if self.edges | geo::edge::UP != 0 {
+                h += amount;
+            }
+            if self.edges | geo::edge::DOWN != 0 {
+                h += amount;
+            }
+
+            Size::new(w, h)
+        }
+
+        fn apply(&self, to: Size, s: Slock<impl ThreadMarker>) -> Size {
+            self.apply_general(to, false, s)
+        }
+    }
+    
+    impl<E: Environment, U: 'static, D: 'static, S: Signal<ScreenUnit>> ProviderModifier<E, U, D> for Padding<S> {
+        fn init(&mut self, invalidator: &Invalidator<E>, _env: &E::Const, s: MSlock) {
+            self.amount.add_invalidator(invalidator, s);
+        }
+
+        fn xsquished_size(&mut self, src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, s: MSlock) -> Size {
+            self.apply(src.xsquished_size(s), s)
+        }
+
+        fn xstretched_size(&mut self, src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, s: MSlock) -> Size {
+            self.apply(src.xstretched_size(s), s)
+        }
+
+        fn ysquished_size(&mut self, src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, s: MSlock) -> Size {
+            self.apply(src.ysquished_size(s), s)
+        }
+
+        fn ystretched_size(&mut self, src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, s: MSlock) -> Size {
+            self.apply(src.ystretched_size(s), s)
+        }
+
+        fn layout_up(&mut self, src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
+            let ret = src.layout_up(subtree, env, s) || self.amount.inner(s) != self.last_amount;
+            self.last_amount = self.amount.inner(s);
+            ret
+        }
+
+        fn layout_down(&mut self, src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, subtree: &Subtree<E>, frame: Size, layout_context: &D, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
+            let amnt = self.amount.inner(s);
+            let inner_size = self.apply_general(frame, true, s);
+            let (mut ours, mut total) = src.layout_down(subtree, inner_size, layout_context, env, s);
+
+            let mut subtree_translation = Point::new(0.0, 0.0);
+            if self.edges | geo::edge::LEFT != 0 {
+                subtree_translation.x += amnt;
+                total.w += amnt;
+            }
+
+            if self.edges | geo::edge::RIGHT != 0 {
+                total.w += amnt;
+            }
+
+            if self.edges | geo::edge::UP != 0 {
+                total.h += amnt;
+            }
+
+            if self.edges | geo::edge::DOWN != 0 {
+                subtree_translation.y += amnt;
+                total.h += amnt;
+            }
+
+            ours = ours.translate(subtree_translation);
+            subtree.translate_post_layout_down(subtree_translation, s);
+
+            (ours, total)
+        }
+    }
+
+    pub trait PaddingModifiable<E>: IntoViewProvider<E>
+        where E: Environment
+    {
+        fn padding(self, amount: ScreenUnit) -> ProviderIVPModifier<E, Self, Padding<FixedSignal<ScreenUnit>>>;
+        fn padding_signal<S: Signal<ScreenUnit>>(self, amount: S) -> ProviderIVPModifier<E, Self, Padding<S>>;
+        fn padding_edges(self, amount: ScreenUnit, edges: u8) -> ProviderIVPModifier<E, Self, Padding<FixedSignal<ScreenUnit>>>;
+        fn padding_edges_signal<S: Signal<ScreenUnit>>(self, amount: S, edges: u8) -> ProviderIVPModifier<E, Self, Padding<S>>;
+    }
+    
+    impl<E, I> PaddingModifiable<E> for I where E: Environment, I: IntoViewProvider<E> {
+        fn padding(self, amount: ScreenUnit) -> ProviderIVPModifier<E, Self, Padding<FixedSignal<ScreenUnit>>> {
+            let padding = Padding {
+                amount: SignalOrValue::value(amount),
+                edges: geo::edge::ALL,
+                last_amount: ScreenUnit::NAN
+            };
+
+            self.provider_modifier(padding)
+        }
+
+        fn padding_signal<S: Signal<ScreenUnit>>(self, amount: S) -> ProviderIVPModifier<E, Self, Padding<S>> {
+            let padding = Padding {
+                amount: SignalOrValue::Signal(amount),
+                edges: geo::edge::ALL,
+                last_amount: ScreenUnit::NAN
+            };
+
+            self.provider_modifier(padding)
+        }
+
+        fn padding_edges(self, amount: ScreenUnit, edges: u8) -> ProviderIVPModifier<E, Self, Padding<FixedSignal<ScreenUnit>>> {
+            let padding = Padding {
+                amount: SignalOrValue::value(amount),
+                edges,
+                last_amount: ScreenUnit::NAN
+            };
+
+            self.provider_modifier(padding)
+        }
+
+        fn padding_edges_signal<S: Signal<ScreenUnit>>(self, amount: S, edges: u8) -> ProviderIVPModifier<E, Self, Padding<S>> {
+            let padding = Padding {
+                amount: SignalOrValue::Signal(amount),
+                edges,
+                last_amount: ScreenUnit::NAN
+            };
+
+            self.provider_modifier(padding)
+        }
+    }
 }
 pub use provider_modifier::*;
 
@@ -525,7 +674,7 @@ mod layer_modifier {
     use crate::core::{Environment, MSlock};
     use crate::native;
     use crate::state::{FixedSignal, Signal, SignalOrValue};
-    use crate::util::geo::{AlignedOriginRect, Point, Rect, ScreenUnit, Size};
+    use crate::util::geo::{Rect, ScreenUnit, Size};
     use crate::view::util::Color;
     use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, View, ViewProvider, ViewRef};
     use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
@@ -559,7 +708,7 @@ mod layer_modifier {
             }
         }
 
-        pub fn border_color(mut self, color: Color) -> Layer<S1, S2, FixedSignal<Color>, S4, S5> {
+        pub fn border_color(self, color: Color) -> Layer<S1, S2, FixedSignal<Color>, S4, S5> {
             Layer {
                 background_color: self.background_color,
                 corner_radius: self.corner_radius,
@@ -579,7 +728,7 @@ mod layer_modifier {
             }
         }
 
-        pub fn radius(mut self, radius: ScreenUnit) -> Layer<S1, FixedSignal<ScreenUnit>, S3, S4, S5> {
+        pub fn radius(self, radius: ScreenUnit) -> Layer<S1, FixedSignal<ScreenUnit>, S3, S4, S5> {
             Layer {
                 background_color: self.background_color,
                 corner_radius: SignalOrValue::value(radius),
@@ -599,7 +748,7 @@ mod layer_modifier {
             }
         }
 
-        pub fn border_width(mut self, width: ScreenUnit) -> Layer<S1, S2, S3, FixedSignal<ScreenUnit>, S5> {
+        pub fn border_width(self, width: ScreenUnit) -> Layer<S1, S2, S3, FixedSignal<ScreenUnit>, S5> {
             Layer {
                 background_color: self.background_color,
                 corner_radius: self.corner_radius,
@@ -619,7 +768,7 @@ mod layer_modifier {
             }
         }
 
-        pub fn opacity(mut self, opacity: f32) -> Layer<S1, S2, S3, S4, FixedSignal<f32>> {
+        pub fn opacity(self, opacity: f32) -> Layer<S1, S2, S3, S4, FixedSignal<f32>> {
             Layer {
                 background_color: self.background_color,
                 corner_radius: self.corner_radius,
@@ -789,8 +938,8 @@ mod layer_modifier {
             true
         }
 
-        fn layout_down(&mut self, _subtree: &Subtree<E>, frame: AlignedOriginRect, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
-            let used = self.view.layout_down_with_context(frame.aligned_rect(Point::default()), layout_context, env, s);
+        fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
+            let used = self.view.layout_down_with_context(frame.full_rect(), layout_context, env, s);
             (used, used)
         }
     }
@@ -808,7 +957,7 @@ mod layer_modifier {
                 self.enabled = true;
 
                 // FIXME way to do without this hack in the future?
-                // would rather not invalidate entire subtree
+                // typically invalidation should be done by the view, not the superview
                 self.view.with_provider(|p| {
                     p.enable(s)
                 }, s);
@@ -871,7 +1020,7 @@ pub use layer_modifier::*;
 mod foreback_modifier {
     use std::marker::PhantomData;
     use crate::core::{Environment, MSlock};
-    use crate::util::geo::{AlignedOriginRect, Point, Rect, Size};
+    use crate::util::geo::{Rect, Size};
     use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, View, ViewProvider, ViewRef};
     use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
 
@@ -1009,11 +1158,11 @@ mod foreback_modifier {
             true
         }
 
-        fn layout_down(&mut self, _subtree: &Subtree<E>, frame: AlignedOriginRect, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
-            let used = self.view.layout_down_with_context(frame.aligned_rect(Point::default()), layout_context, env, s);
+        fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
+            let used = self.view.layout_down_with_context(frame.full_rect(), layout_context, env, s);
             if self.enabled {
                 // let pseudo_rect =
-                self.attraction.layout_down_with_context(frame.aligned_rect(Point::default()), layout_context, env, s);
+                self.attraction.layout_down_with_context(used, layout_context, env, s);
             }
 
             (used, used)
@@ -1086,9 +1235,9 @@ mod when_modifier {
     use crate::core::{Environment, MSlock};
     use crate::event::{Event, EventResult};
     use crate::state::Signal;
-    use crate::util::geo::{AlignedOriginRect, Rect, Size};
+    use crate::util::geo::{Rect, Size};
     use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, ViewProvider};
-    use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier, ProviderModifier};
+    use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
     use crate::view::modifers::identity_modifier::UnmodifiedIVP;
 
     // FIXME, if Associated impl trait was allowed
@@ -1207,7 +1356,7 @@ mod when_modifier {
             self.provider.layout_up(subtree, env, s)
         }
 
-        fn layout_down(&mut self, subtree: &Subtree<E>, frame: AlignedOriginRect, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
+        fn layout_down(&mut self, subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
             self.provider.layout_down(subtree, frame, layout_context, env, s)
         }
 

@@ -47,7 +47,7 @@ mod view_ref {
     use std::sync::Arc;
     use crate::core::{Environment, MSlock};
     use crate::state::slock_cell::MainSlockCell;
-    use crate::util::geo::{AlignedRect, Point, Rect, Size};
+    use crate::util::geo::{Point, Rect, Size};
     use crate::view::{EnvRef, InnerViewBase, View, ViewProvider};
     use crate::view::util::SizeContainer;
 
@@ -68,7 +68,7 @@ mod view_ref {
 
         fn layout_down_with_context(
             &self,
-            at: AlignedRect,
+            at: Rect,
             layout_context: &Self::DownContext,
             parent_environment: &mut EnvRef<E>,
             s: MSlock
@@ -85,7 +85,7 @@ mod view_ref {
     pub trait TrivialContextViewRef<E> where E: Environment {
         fn layout_down(
             &self,
-            aligned_frame: AlignedRect,
+            aligned_frame: Rect,
             parent_environment: &mut EnvRef<E>,
             s: MSlock
         ) -> Rect;
@@ -94,7 +94,7 @@ mod view_ref {
     impl<E, V> TrivialContextViewRef<E> for V
         where E: Environment, V: ViewRef<E, DownContext=()> + ?Sized {
         #[inline]
-        fn layout_down(&self, at: AlignedRect, parent_environment: &mut EnvRef<E>, s: MSlock) -> Rect {
+        fn layout_down(&self, at: Rect, parent_environment: &mut EnvRef<E>, s: MSlock) -> Rect {
             self.layout_down_with_context(at, &(), parent_environment, s)
         }
     }
@@ -140,11 +140,11 @@ mod view_ref {
                 .up_context(s)
         }
 
-        fn layout_down_with_context(&self, aligned_frame: AlignedRect, context: &P::DownContext, parent_environment: &mut EnvRef<E>, s: MSlock) -> Rect {
+        fn layout_down_with_context(&self, rect: Rect, context: &P::DownContext, parent_environment: &mut EnvRef<E>, s: MSlock) -> Rect {
             let arc = self.0.clone() as Arc<MainSlockCell<dyn InnerViewBase<E>>>;
 
             self.0.borrow_mut_main(s)
-                .layout_down_with_context(&arc, aligned_frame, parent_environment.0, context, s)
+                .layout_down_with_context(&arc, rect, parent_environment.0, context, s)
         }
 
         fn translate_post_layout_down(&self, by: Point, s: MSlock) {

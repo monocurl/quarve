@@ -190,7 +190,7 @@ mod window {
     use crate::native::{WindowHandle};
     use crate::state::{Signal};
     use crate::state::slock_cell::{MainSlockCell};
-    use crate::util::geo::{AlignedOriginRect, AlignedRect, Alignment, Point, Size};
+    use crate::util::geo::{Rect, Size};
     use crate::view::{InnerViewBase};
     use crate::view::{ViewProvider};
 
@@ -358,11 +358,11 @@ mod window {
             content_borrow.try_layout_down(
                 &borrow.content_view,
                 stolen_env.deref_mut(),
-                Some(AlignedRect::new_from_point_size(Point::default(), intrinsic, Alignment::Center)),
+                Some(Rect::new(0.0, 0.0, intrinsic.w, intrinsic.h)),
                 s
             ).unwrap();
 
-            // set window size (not no recursive layout call can happen since handle not mounted yet)
+            // set window size (note no recursive layout call can happen since handle not mounted yet)
             native::window::window_set_size(borrow.handle, intrinsic.w as f64, intrinsic.h as f64, s);
             borrow.set_dimensions_of_window(content_borrow.deref_mut(), s);
 

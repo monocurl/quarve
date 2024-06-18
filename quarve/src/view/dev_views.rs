@@ -1,7 +1,7 @@
 use crate::core::{Environment, MSlock};
 use crate::native;
 use crate::state::Signal;
-use crate::util::geo::{AlignedOriginRect, AlignedRect, Rect, Size};
+use crate::util::geo::{Rect, Size};
 use crate::util::Vector;
 use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, TrivialContextViewRef, View, ViewProvider};
 
@@ -61,7 +61,7 @@ impl<E: Environment> ViewProvider<E> for DebugView {
         false
     }
 
-    fn layout_down(&mut self, subtree: &Subtree<E>, frame: AlignedOriginRect, _layout_context: &Self::DownContext, _env: &mut EnvRef<E>, s: MSlock<'_>) -> (Rect, Rect) {
+    fn layout_down(&mut self, subtree: &Subtree<E>, frame: Size, _layout_context: &Self::DownContext, _env: &mut EnvRef<E>, s: MSlock<'_>) -> (Rect, Rect) {
         (frame.full_rect(), frame.full_rect())
     }
 }
@@ -116,22 +116,20 @@ impl<E: Environment, S: Signal<Vector<f32, 2>>> ViewProvider<E> for Layout<E, S>
         false
     }
 
-    fn layout_down(&mut self, subtree: &Subtree<E>, frame: AlignedOriginRect, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
+    fn layout_down(&mut self, subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
         let pos = self.2.borrow(s);
-        self.0.layout_down(AlignedRect {
+        self.0.layout_down(Rect {
             x: 0.0,
             y: 0.0,
             w: 100.0,
             h: 100.0,
-            align: Default::default(),
         }, env, s);
 
-        self.1.layout_down(AlignedRect {
+        self.1.layout_down(Rect {
             x: *pos.x(),
             y: *pos.y(),
             w: 100.0,
             h: 100.0,
-            align: Default::default(),
         }, env, s);
 
         (frame.full_rect(), frame.full_rect())

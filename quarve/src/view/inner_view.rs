@@ -5,9 +5,9 @@ use crate::core::{Environment, MSlock, Slock, WindowEnvironmentBase};
 use crate::native;
 use crate::native::view::{view_add_child_at, view_clear_children, view_remove_child, view_set_frame};
 use crate::state::slock_cell::{MainSlockCell};
-use crate::util::geo::{AlignedRect, Point, Rect, Size};
+use crate::util::geo::{Point, Rect, Size};
 use crate::util::rust_util::PhantomUnsendUnsync;
-use crate::view::{EnvRef, Invalidator, View, ViewRef};
+use crate::view::{EnvRef, Invalidator, View};
 use crate::view::util::SizeContainer;
 use crate::view::view_provider::ViewProvider;
 
@@ -38,7 +38,7 @@ pub(crate) trait InnerViewBase<E> where E: Environment {
     // or null if we are to use the last frame
     // this should only be done if we know for sure
     // the last frame is valid
-    fn try_layout_down(&mut self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, env: &mut E, frame: Option<AlignedRect>, s: MSlock<'_>) -> Result<(), ()>;
+    fn try_layout_down(&mut self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, env: &mut E, frame: Option<Rect>, s: MSlock<'_>) -> Result<(), ()>;
     fn translate(&mut self, by: Point, s: MSlock);
 
     fn intrinsic_size(&mut self, s: MSlock) -> Size;
@@ -85,7 +85,7 @@ pub(crate) struct InnerView<E, P> where E: Environment,
     needs_layout_down: bool,
 
     /* cached layout results */
-    last_suggested: AlignedRect,
+    last_suggested: Rect,
     last_exclusion: Rect,
     last_view_frame: Rect,
 
@@ -112,7 +112,7 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
     pub(super) fn layout_down_with_context(
         &mut self,
         this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>,
-        suggested: AlignedRect,
+        suggested: Rect,
         env: &mut E,
         context: &P::DownContext,
         s: MSlock<'_>
@@ -127,8 +127,7 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
         // if frame is different from last frame (except for just translation)
         // maybe different overall frame
         actually_needs_layout = actually_needs_layout
-            || suggested.size() != self.last_suggested.size() || suggested.align != self.last_suggested.align;
-        actually_needs_layout = true;
+            || suggested.size() != self.last_suggested.size();
 
         let (view_frame, exclusion) = if actually_needs_layout {
             self.provider.push_environment(env.variable_env_mut(), s);
@@ -137,7 +136,8 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
                 graph: &mut self.graph,
                 owner: this,
             };
-            let (actual_frame, exclusion) = self.provider.layout_down(&subtree, suggested.aligned_origin_rect(), context, &mut EnvRef(env), s);
+            let (actual_frame, exclusion) = self.provider.layout_down(&subtree, suggested.size(), context, &mut EnvRef(env), s);
+
             self.provider.pop_environment(env.variable_env_mut(), s);
 
             /* children were mounted with respect to the origin, but the used may translate
@@ -261,7 +261,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         ret
     }
 
-    fn try_layout_down(&mut self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, env: &mut E, frame: Option<AlignedRect>, s: MSlock<'_>) -> Result<(), ()> {
+    fn try_layout_down(&mut self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, env: &mut E, frame: Option<Rect>, s: MSlock<'_>) -> Result<(), ()> {
         let context = ();
         let context_ref: &dyn Any = &context;
 
@@ -563,6 +563,10 @@ impl<'a, E> Subtree<'a, E> where E: Environment {
     // precondition: all subviews explicitly had their layout_down method
     // called
     pub fn translate_post_layout_down(&self, by: Point, s: MSlock) {
+        if by.x == 0.0 && by.y == 0.0 {
+            return;
+        }
+
         for view in &self.graph.subviews {
             view.borrow_mut_main(s)
                 .translate(by, s);
@@ -587,7 +591,7 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
                 // this will be set to true
                 needs_layout_down: false,
                 needs_layout_up: false,
-                last_suggested: AlignedRect::default(),
+                last_suggested: Rect::default(),
                 last_exclusion: Rect::default(),
                 last_view_frame: Rect::default(),
                 provider,

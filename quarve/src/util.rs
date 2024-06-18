@@ -1,6 +1,7 @@
 pub(crate) mod rust_util {
     use std::marker::PhantomData;
 
+    #[allow(unused)]
     pub trait Captures<'a> {
 
     }
@@ -355,6 +356,12 @@ pub mod geo {
     }
 
     impl Rect {
+        pub fn new(x: ScreenUnit, y: ScreenUnit, w: ScreenUnit, h: ScreenUnit) -> Rect {
+            Rect {
+                x, y, w, h
+            }
+        }
+
         pub fn translate(self, by: Point) -> Rect {
             Rect {
                 x: self.x + by.x,
@@ -362,6 +369,13 @@ pub mod geo {
                 w: self.w,
                 h: self.h,
             }
+        }
+        pub fn origin(self) -> Point {
+            Point::new(self.x, self.y)
+        }
+
+        pub fn size(self) -> Size {
+            Size::new(self.w, self.h)
         }
     }
 
@@ -387,6 +401,15 @@ pub mod geo {
         pub fn new(w: ScreenUnit, h: ScreenUnit) -> Self {
             Size { w, h }
         }
+
+        pub fn full_rect(self) -> Rect {
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: self.w,
+                h: self.h,
+            }
+        }
     }
 
     #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -408,112 +431,13 @@ pub mod geo {
         }
     }
 
-    #[derive(Copy, Clone, Default, PartialEq, Debug)]
-    pub struct AlignedRect {
-        pub x: ScreenUnit,
-        pub y: ScreenUnit,
-        pub w: ScreenUnit,
-        pub h: ScreenUnit,
-        pub align: Alignment
-    }
-
-    impl AlignedRect {
-        pub fn new(x: ScreenUnit, y: ScreenUnit, w: ScreenUnit, h: ScreenUnit, alignment: Alignment) -> Self {
-            AlignedRect {
-                x, y, w, h, align: alignment
-            }
-        }
-
-        pub fn new_from_point_size(origin: Point, size: Size, alignment: Alignment) -> Self {
-            AlignedRect {
-                x: origin.x, y: origin.y, w: size.w, h: size.h, align: alignment
-            }
-        }
-
-        pub fn origin(&self) -> Point {
-            Point {
-                x: self.x, y: self.y
-            }
-        }
-
-        pub fn size(&self) -> Size {
-            Size {
-                w: self.w, h: self.h
-            }
-        }
-
-        pub fn full_rect(&self) -> Rect {
-            Rect {
-                x: self.x,
-                y: self.y,
-                w: self.w,
-                h: self.h,
-            }
-        }
-
-        pub fn translate(self, by: Point) -> AlignedRect {
-            AlignedRect {
-                x: self.x + by.x,
-                y: self.y + by.y,
-                w: self.w,
-                h: self.h,
-                align: self.align
-            }
-        }
-
-        pub fn aligned_origin_rect(self) -> AlignedOriginRect {
-            AlignedOriginRect {
-                w: self.w,
-                h: self.h,
-                align: self.align
-            }
-        }
-    }
-
-    #[derive(Copy, Clone, Default, PartialEq, Debug)]
-    pub struct AlignedOriginRect {
-        pub w: ScreenUnit,
-        pub h: ScreenUnit,
-        pub align: Alignment
-    }
-
-    impl AlignedOriginRect {
-        pub fn new(w: ScreenUnit, h: ScreenUnit, alignment: Alignment) -> Self {
-            AlignedOriginRect {
-                w, h, align: alignment
-            }
-        }
-
-        pub fn new_from_size(size: Size, alignment: Alignment) -> Self {
-            AlignedOriginRect {
-                w: size.w, h: size.h, align: alignment
-            }
-        }
-
-        pub fn size(&self) -> Size {
-            Size {
-                w: self.w, h: self.h
-            }
-        }
-
-        pub fn aligned_rect(self, at: Point) -> AlignedRect {
-            AlignedRect {
-                x: at.x,
-                y: at.y,
-                w: self.w,
-                h: self.h,
-                align: self.align
-            }
-        }
-
-        pub fn full_rect(&self) -> Rect {
-            Rect {
-                x: 0.0,
-                y: 0.0,
-                w: self.w,
-                h: self.h,
-            }
-        }
+    pub mod edge {
+        pub const NONE: u8 = 0b0000;
+        pub const ALL: u8 = 0b1111;
+        pub const LEFT: u8 = 0b0001;
+        pub const RIGHT: u8 = 0b0010;
+        pub const UP: u8 = 0b0100;
+        pub const DOWN: u8 = 0b1000;
     }
 }
 

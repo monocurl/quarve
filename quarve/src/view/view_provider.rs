@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 use crate::core::{Environment, MSlock};
 use crate::event::{Event, EventResult};
 use crate::state::slock_cell::MainSlockCell;
-use crate::util::geo::{AlignedOriginRect, Rect, Size};
+use crate::util::geo::{Rect, Size};
 use crate::view::{EnvRef, InnerView, Invalidator, NativeView, Subtree, View};
 use crate::view::util::SizeContainer;
 
@@ -79,11 +79,11 @@ pub trait ViewProvider<E>: Sized + 'static
     /// minimum, intrinsic, and maximum sizes
     /// (and so have we)
     /// Now, we must position them according to the given frame
-    /// Return value is used value within the frame
+    /// Return value (our_frame, total_exclusion)
     fn layout_down(
         &mut self,
         subtree: &Subtree<E>,
-        frame: AlignedOriginRect,
+        frame: Size,
         layout_context: &Self::DownContext,
         env: &mut EnvRef<E>,
         s: MSlock
@@ -195,7 +195,7 @@ impl<E, P, U> ViewProvider<E> for UpContextAdapter<E, P, U>
         self.0.layout_up(subtree, env, s)
     }
 
-    fn layout_down(&mut self, subtree: &Subtree<E>, frame: AlignedOriginRect, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
+    fn layout_down(&mut self, subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
         self.0.layout_down(subtree, frame, layout_context, env, s)
     }
 
@@ -285,7 +285,7 @@ impl<E, U, D> ViewProvider<E> for DummyProvider<E, U, D>
         unreachable!()
     }
 
-    fn layout_down(&mut self, _subtree: &Subtree<E>, _frame: AlignedOriginRect, _layout_context: &D, _env: &mut EnvRef<E>, _s: MSlock<'_>) -> (Rect, Rect) {
+    fn layout_down(&mut self, _subtree: &Subtree<E>, _frame: Size, _layout_context: &D, _env: &mut EnvRef<E>, _s: MSlock<'_>) -> (Rect, Rect) {
         unreachable!()
     }
 }

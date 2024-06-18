@@ -1,12 +1,10 @@
-use std::thread;
-use std::time::Duration;
-use quarve::core::{Application, Environment, launch, MSlock, slock_owner, timed_worker};
-use quarve::state::{Bindable, FixedSignal, Signal, Store};
+use quarve::core::{Application, Environment, launch, MSlock};
+use quarve::state::{FixedSignal, Signal, Store};
 use quarve::view::{IntoViewProvider, ViewProvider};
 use quarve::view::dev_views::{DebugView};
 use quarve::view::layout::*;
-use quarve::{hstack, vstack};
-use quarve::view::modifers::{ForeBackModifiable, LayerModifiable, OffsetModifiable, WhenModifiable};
+use quarve::{hstack};
+use quarve::view::modifers::{ForeBackModifiable, LayerModifiable, OffsetModifiable, PaddingModifiable, WhenModifiable};
 use quarve::view::util::Color;
 
 struct Env(());
@@ -83,6 +81,7 @@ impl quarve::core::WindowProvider for WindowProvider {
         }, s);
         hstack! {
             DebugView
+                .padding(10.0)
                 .when(positive_y, |u|
                    u.layer(|l| {
                         l.bg_color(Color::new(100, 0, 0))
@@ -91,15 +90,11 @@ impl quarve::core::WindowProvider for WindowProvider {
                          .border_width(3.0)
                          .opacity(0.5)
                     })
-                    .foreground(
-                        DebugView
-                            .layer(|l| l.bg_color(Color::black()))
-                    )
-                    .offset_signal(s.fixed_signal(0.0), offset_y)
-                )
-                .offset(200.0, 110.0);
+                    // .offset_signal(s.fixed_signal(0.0), offset_y)
+                );
+                // .offset(200.0, 110.0);
 
-            store.binding_vmap(move |x, _s| {
+            store.binding_vmap(move |_x, _s| {
                 DebugView
                     .layer(|l| l.bg_color_signal(positive_y_ind.clone()))
             })
