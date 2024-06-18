@@ -73,7 +73,14 @@ impl quarve::core::WindowProvider for WindowProvider {
             .map(|u| ((4.0 * u).sin().abs() * 100.0) as f32, s);
         let positive_y = offset_y
             .map(|val| *val > 40.0, s);
-
+        let positive_y_ind = positive_y.map(|val| {
+            if *val {
+                Color::new(100, 0, 0)
+            }
+            else {
+                Color::transparent()
+            }
+        }, s);
         hstack! {
             DebugView
                 .when(positive_y, |u|
@@ -84,7 +91,7 @@ impl quarve::core::WindowProvider for WindowProvider {
                          .border_width(3.0)
                          .opacity(0.5)
                     })
-                    .background(
+                    .foreground(
                         DebugView
                             .layer(|l| l.bg_color(Color::black()))
                     )
@@ -92,8 +99,9 @@ impl quarve::core::WindowProvider for WindowProvider {
                 )
                 .offset(200.0, 110.0);
 
-            store.binding_vmap(|x, _s| {
+            store.binding_vmap(move |x, _s| {
                 DebugView
+                    .layer(|l| l.bg_color_signal(positive_y_ind.clone()))
             })
         }
         .into_view_provider(env, s)

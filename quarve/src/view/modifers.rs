@@ -171,8 +171,8 @@ mod provider_modifier {
     use std::marker::PhantomData;
     use crate::core::{Environment, MSlock};
     use crate::event::{Event, EventResult};
-    use crate::state::{FixedSignal, Signal};
-    use crate::util::geo::{AlignedOriginRect, Rect, ScreenUnit, Size};
+    use crate::state::{FixedSignal, Signal, SignalOrValue};
+    use crate::util::geo::{AlignedOriginRect, Point, Rect, ScreenUnit, Size};
     use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, ViewProvider};
     use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
 
@@ -453,40 +453,27 @@ mod provider_modifier {
         }
     }
 
-    struct Offset<U, V> where U: Signal<ScreenUnit>, V: Signal<ScreenUnit> {
-        dx: U,
-        dy: V
+    pub struct Offset<U, V> where U: Signal<ScreenUnit>, V: Signal<ScreenUnit> {
+        dx: SignalOrValue<ScreenUnit, U>,
+        dy: SignalOrValue<ScreenUnit, V>,
     }
 
     impl<E, U, D, S, T> ProviderModifier<E, U, D> for Offset<S, T>
         where E: Environment, U: 'static, D: 'static, S: Signal<ScreenUnit>, T: Signal<ScreenUnit>
     {
         fn init(&mut self, invalidator: &Invalidator<E>, _env: &E::Const, s: MSlock) {
-            let weak_inv = invalidator.clone();
-            self.dx.listen(move |val, s| {
-                let Some(inv) = weak_inv.upgrade() else {
-                    return false;
-                };
-
-                inv.invalidate(s);
-                true
-            }, s);
-
-            let weak_inv = invalidator.clone();
-            self.dy.listen(move |val, s| {
-                let Some(inv) = weak_inv.upgrade() else {
-                    return false;
-                };
-
-                inv.invalidate(s);
-                true
-            }, s);
+            self.dx.add_invalidator(invalidator, s);
+            self.dy.add_invalidator(invalidator, s);
         }
 
         fn layout_down(&mut self, src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, subtree: &Subtree<E>, frame: AlignedOriginRect, layout_context: &D, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
             let (mut frame, exclusion) = src.layout_down(subtree, frame, layout_context, env, s);
-            frame.x += *self.dx.borrow(s);
-            frame.y += *self.dy.borrow(s);
+            let delta = Point::new(self.dx.inner(s), self.dy.inner(s));
+
+            // translate current view
+            frame = frame.translate(delta);
+            // translate entire view subtree
+            subtree.translate_post_layout_down(delta, s);
 
             (frame, exclusion)
         }
@@ -502,19 +489,33 @@ mod provider_modifier {
     {
         fn offset(self, dx: ScreenUnit, dy: ScreenUnit) -> ProviderIVPModifier<E, Self, impl ProviderModifier<E, Self::UpContext, Self::DownContext>> {
             let o = Offset {
-                dx: FixedSignal::new(dx),
-                dy: FixedSignal::new(dy),
+                dx: SignalOrValue::value(dx),
+                dy: SignalOrValue::value(dy),
             };
 
             self.provider_modifier(o)
         }
 
         fn offset_signal(self, dx: impl Signal<ScreenUnit>, dy: impl Signal<ScreenUnit>) -> ProviderIVPModifier<E, Self, impl ProviderModifier<E, Self::UpContext, Self::DownContext>> {
-            let o = Offset { dx, dy };
+            let o = Offset {
+                dx: SignalOrValue::Signal(dx),
+                dy: SignalOrValue::Signal(dy)
+            };
 
             self.provider_modifier(o)
         }
     }
+
+    pub struct Padding<S: Signal<ScreenUnit>> {
+        amount: S,
+        // sides:
+    }
+
+    // pub trait PaddingModifiable {
+    //     fn padding(self, amount: ScreenUnit) -> ProviderIVPModifier<E, Self, Padding>
+    //     fn padding_signal();
+    //     fn padding_e
+    // }
 }
 pub use provider_modifier::*;
 
@@ -523,66 +524,144 @@ mod layer_modifier {
     use std::marker::PhantomData;
     use crate::core::{Environment, MSlock};
     use crate::native;
+    use crate::state::{FixedSignal, Signal, SignalOrValue};
     use crate::util::geo::{AlignedOriginRect, Point, Rect, ScreenUnit, Size};
     use crate::view::util::Color;
     use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, View, ViewProvider, ViewRef};
     use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
 
-    pub struct Layer {
-        background_color: Color,
-        corner_radius: ScreenUnit,
-        border_color: Color,
-        border_width: ScreenUnit,
-        opacity: f32
+    pub struct Layer<S1, S2, S3, S4, S5> where S1: Signal<Color>, S2: Signal<ScreenUnit>, S3: Signal<Color>, S4: Signal<ScreenUnit>, S5: Signal<f32> {
+        background_color: SignalOrValue<Color, S1>,
+        corner_radius: SignalOrValue<ScreenUnit, S2>,
+        border_color: SignalOrValue<Color, S3>,
+        border_width: SignalOrValue<ScreenUnit, S4>,
+        opacity: SignalOrValue<f32, S5>
     }
 
-    impl Default for Layer {
-        fn default() -> Self {
+    impl<S1, S2, S3, S4, S5> Layer<S1, S2, S3, S4, S5> where S1: Signal<Color>, S2: Signal<ScreenUnit>, S3: Signal<Color>, S4: Signal<ScreenUnit>, S5: Signal<f32> {
+        pub fn bg_color(self, color: Color) -> Layer<FixedSignal<Color>, S2, S3, S4, S5> {
             Layer {
-                background_color: Default::default(),
-                corner_radius: 0.0,
-                border_color: Default::default(),
-                border_width: 0.0,
-                opacity: 1.0,
+                background_color: SignalOrValue::value(color),
+                corner_radius: self.corner_radius,
+                border_color: self.border_color,
+                border_width: self.border_width,
+                opacity: self.opacity,
             }
         }
+
+        pub fn bg_color_signal<S: Signal<Color>>(self, color: S) -> Layer<S, S2, S3, S4, S5> {
+            Layer {
+                background_color: SignalOrValue::Signal(color),
+                corner_radius: self.corner_radius,
+                border_color: self.border_color,
+                border_width: self.border_width,
+                opacity: self.opacity,
+            }
+        }
+
+        pub fn border_color(mut self, color: Color) -> Layer<S1, S2, FixedSignal<Color>, S4, S5> {
+            Layer {
+                background_color: self.background_color,
+                corner_radius: self.corner_radius,
+                border_color: SignalOrValue::value(color),
+                border_width: self.border_width,
+                opacity: self.opacity,
+            }
+        }
+
+        pub fn border_color_signal<S: Signal<Color>>(self, color: S) -> Layer<S1, S2, S, S4, S5> {
+            Layer {
+                background_color: self.background_color,
+                corner_radius: self.corner_radius,
+                border_color: SignalOrValue::Signal(color),
+                border_width: self.border_width,
+                opacity: self.opacity,
+            }
+        }
+
+        pub fn radius(mut self, radius: ScreenUnit) -> Layer<S1, FixedSignal<ScreenUnit>, S3, S4, S5> {
+            Layer {
+                background_color: self.background_color,
+                corner_radius: SignalOrValue::value(radius),
+                border_color: self.border_color,
+                border_width: self.border_width,
+                opacity: self.opacity,
+            }
+        }
+
+        pub fn radius_signal<S: Signal<ScreenUnit>>(self, radius: S) -> Layer<S1, S, S3, S4, S5> {
+            Layer {
+                background_color: self.background_color,
+                corner_radius: SignalOrValue::Signal(radius),
+                border_color: self.border_color,
+                border_width: self.border_width,
+                opacity: self.opacity,
+            }
+        }
+
+        pub fn border_width(mut self, width: ScreenUnit) -> Layer<S1, S2, S3, FixedSignal<ScreenUnit>, S5> {
+            Layer {
+                background_color: self.background_color,
+                corner_radius: self.corner_radius,
+                border_color: self.border_color,
+                border_width: SignalOrValue::value(width),
+                opacity: self.opacity,
+            }
+        }
+
+        pub fn border_width_signal<S: Signal<ScreenUnit>>(self, width: S) -> Layer<S1, S2, S3, S, S5> {
+            Layer {
+                background_color: self.background_color,
+                corner_radius: self.corner_radius,
+                border_color: self.border_color,
+                border_width: SignalOrValue::Signal(width),
+                opacity: self.opacity,
+            }
+        }
+
+        pub fn opacity(mut self, opacity: f32) -> Layer<S1, S2, S3, S4, FixedSignal<f32>> {
+            Layer {
+                background_color: self.background_color,
+                corner_radius: self.corner_radius,
+                border_color: self.border_color,
+                border_width: self.border_width,
+                opacity: SignalOrValue::value(opacity),
+            }
+        }
+
+        pub fn opacity_signal<S: Signal<f32>>(self, opacity: S) -> Layer<S1, S2, S3, S4, S> {
+            Layer {
+                background_color: self.background_color,
+                corner_radius: self.corner_radius,
+                border_color: self.border_color,
+                border_width: self.border_width,
+                opacity: SignalOrValue::Signal(opacity)
+            }
+        }
+
     }
 
-    impl Layer {
-        pub fn bg_color(mut self, color: Color) -> Layer {
-            self.background_color = color;
-            self
-        }
-
-        pub fn border_color(mut self, color: Color) -> Layer {
-            self.border_color = color;
-            self
-        }
-
-        pub fn radius(mut self, radius: ScreenUnit) -> Layer {
-            self.corner_radius = radius;
-            self
-        }
-
-        pub fn border_width(mut self, width: ScreenUnit) -> Layer {
-            self.border_width = width;
-            self
-        }
-
-        pub fn opacity(mut self, opacity: f32) -> Layer {
-            self.opacity = opacity;
-            self
-        }
-    }
-
-    pub struct LayerIVP<E, I> where E: Environment, I: IntoViewProvider<E> {
-        layer: Layer,
+    pub struct LayerIVP<E, I, S1, S2, S3, S4, S5>
+        where E: Environment,
+              I: IntoViewProvider<E>,
+              S1: Signal<Color>,
+              S2: Signal<ScreenUnit>,
+              S3: Signal<Color>,
+              S4: Signal<ScreenUnit>,
+              S5: Signal<f32>
+    {
+        layer: Layer<S1, S2, S3, S4, S5>,
         ivp: I,
         phantom: PhantomData<E>
     }
 
-    impl<E, I> IntoViewProvider<E> for LayerIVP<E, I>
-        where E: Environment, I: IntoViewProvider<E>
+    impl<E, I, S1, S2, S3, S4, S5> IntoViewProvider<E> for LayerIVP<E, I, S1, S2, S3, S4, S5>
+        where E: Environment, I: IntoViewProvider<E>,
+              S1: Signal<Color>,
+              S2: Signal<ScreenUnit>,
+              S3: Signal<Color>,
+              S4: Signal<ScreenUnit>,
+              S5: Signal<f32>
     {
         type UpContext = I::UpContext;
         type DownContext = I::DownContext;
@@ -598,8 +677,13 @@ mod layer_modifier {
         }
     }
 
-    impl<E, I> ConditionalIVPModifier<E> for LayerIVP<E, I>
-        where E: Environment, I: ConditionalIVPModifier<E>
+    impl<E, I, S1, S2, S3, S4, S5> ConditionalIVPModifier<E> for LayerIVP<E, I, S1, S2, S3, S4, S5>
+        where E: Environment, I: ConditionalIVPModifier<E>,
+              S1: Signal<Color>,
+              S2: Signal<ScreenUnit>,
+              S3: Signal<Color>,
+              S4: Signal<ScreenUnit>,
+              S5: Signal<f32>
     {
         type Modifying = I::Modifying;
 
@@ -615,14 +699,29 @@ mod layer_modifier {
         }
     }
 
-    struct LayerVP<E, P> where E: Environment, P: ViewProvider<E> {
-        layer: Layer,
+    struct LayerVP<E, P, S1, S2, S3, S4, S5>
+        where E: Environment, P: ViewProvider<E>,
+              S1: Signal<Color>,
+              S2: Signal<ScreenUnit>,
+              S3: Signal<Color>,
+              S4: Signal<ScreenUnit>,
+              S5: Signal<f32>
+    {
+        layer: Layer<S1, S2, S3, S4, S5>,
         backing: *mut c_void,
         enabled: bool,
         view: View<E, P>
     }
 
-    impl<E, P> ViewProvider<E> for LayerVP<E, P> where E: Environment, P: ViewProvider<E> {
+    impl<E, P, S1, S2, S3, S4, S5> ViewProvider<E> for LayerVP<E, P, S1, S2, S3, S4, S5>
+        where E: Environment,
+              P: ViewProvider<E>,
+              S1: Signal<Color>,
+              S2: Signal<ScreenUnit>,
+              S3: Signal<Color>,
+              S4: Signal<ScreenUnit>,
+              S5: Signal<f32>
+    {
         type UpContext = P::UpContext;
         type DownContext = P::DownContext;
 
@@ -650,8 +749,14 @@ mod layer_modifier {
             self.view.up_context(s)
         }
 
-        fn init_backing(&mut self, _invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+        fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
             subtree.push_subview(&self.view, env, s);
+
+            self.layer.opacity.add_invalidator(&invalidator, s);
+            self.layer.border_width.add_invalidator(&invalidator, s);
+            self.layer.border_color.add_invalidator(&invalidator, s);
+            self.layer.corner_radius.add_invalidator(&invalidator, s);
+            self.layer.background_color.add_invalidator(&invalidator, s);
 
             if let Some((nv, layer)) = backing_source {
                 self.view.take_backing(layer.view, env, s);
@@ -667,7 +772,15 @@ mod layer_modifier {
 
         fn layout_up(&mut self, _subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, s: MSlock) -> bool {
             if self.enabled {
-                native::view::layer::update_layout_view(self.backing, self.layer.background_color, self.layer.border_color, self.layer.corner_radius as f64, self.layer.border_width as f64, self.layer.opacity, s);
+                native::view::layer::update_layout_view(
+                    self.backing,
+                    self.layer.background_color.inner(s),
+                    self.layer.border_color.inner(s),
+                    self.layer.corner_radius.inner(s) as f64,
+                    self.layer.border_width.inner(s) as f64,
+                    self.layer.opacity.inner(s),
+                    s
+                );
             }
             else {
                 native::view::layer::update_layout_view(self.backing, Color::transparent(), Color::transparent(), 0.0, 0.0, 1.0, s);
@@ -682,8 +795,13 @@ mod layer_modifier {
         }
     }
 
-    impl<E, P> ConditionalVPModifier<E> for LayerVP<E, P>
-        where E: Environment, P: ConditionalVPModifier<E>
+    impl<E, P, S1, S2, S3, S4, S5> ConditionalVPModifier<E> for LayerVP<E, P, S1, S2, S3, S4, S5>
+        where E: Environment, P: ConditionalVPModifier<E>,
+              S1: Signal<Color>,
+              S2: Signal<ScreenUnit>,
+              S3: Signal<Color>,
+              S4: Signal<ScreenUnit>,
+              S5: Signal<f32>
     {
         fn enable(&mut self, s: MSlock) {
             if !self.enabled {
@@ -713,14 +831,35 @@ mod layer_modifier {
     pub trait LayerModifiable<E>: IntoViewProvider<E>
         where E: Environment
     {
-        fn layer(self, layer: impl FnOnce(Layer) -> Layer) -> LayerIVP<E, Self>;
+        fn layer<S1, S2, S3, S4, S5>(
+            self,
+            layer: impl FnOnce(Layer<FixedSignal<Color>, FixedSignal<ScreenUnit>, FixedSignal<Color>, FixedSignal<ScreenUnit>, FixedSignal<f32>>)
+                -> Layer<S1, S2, S3, S4, S5>
+        ) -> LayerIVP<E, Self, S1, S2, S3, S4, S5>
+            where S1: Signal<Color>,
+                  S2: Signal<ScreenUnit>,
+                  S3: Signal<Color>,
+                  S4: Signal<ScreenUnit>,
+                  S5: Signal<f32>;
     }
 
     impl<E, I> LayerModifiable<E> for I where E: Environment, I: IntoViewProvider<E>
     {
-        fn layer(self, layer: impl FnOnce(Layer) -> Layer) -> LayerIVP<E, Self> {
+        fn layer<S1, S2, S3, S4, S5>(self, layer: impl FnOnce(Layer<FixedSignal<Color>, FixedSignal<ScreenUnit>, FixedSignal<Color>, FixedSignal<ScreenUnit>, FixedSignal<f32>>) -> Layer<S1, S2, S3, S4, S5>) -> LayerIVP<E, Self, S1, S2, S3, S4, S5>
+            where S1: Signal<Color>,
+                  S2: Signal<ScreenUnit>,
+                  S3: Signal<Color>,
+                  S4: Signal<ScreenUnit>,
+                  S5: Signal<f32>
+        {
             LayerIVP {
-                layer: layer(Layer::default()),
+                layer: layer(Layer {
+                    background_color: SignalOrValue::value(Color::transparent()),
+                    corner_radius: SignalOrValue::value(0.0),
+                    border_color: SignalOrValue::value(Color::black()),
+                    border_width: SignalOrValue::value(0.0),
+                    opacity: SignalOrValue::value(1.0),
+                }),
                 ivp: self,
                 phantom: PhantomData
             }
@@ -730,12 +869,9 @@ mod layer_modifier {
 pub use layer_modifier::*;
 
 mod foreback_modifier {
-    use std::ffi::c_void;
     use std::marker::PhantomData;
     use crate::core::{Environment, MSlock};
-    use crate::native;
-    use crate::util::geo::{AlignedOriginRect, Point, Rect, ScreenUnit, Size};
-    use crate::view::util::Color;
+    use crate::util::geo::{AlignedOriginRect, Point, Rect, Size};
     use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, View, ViewProvider, ViewRef};
     use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
 

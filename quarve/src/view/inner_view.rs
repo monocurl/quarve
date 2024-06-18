@@ -7,7 +7,7 @@ use crate::native::view::{view_add_child_at, view_clear_children, view_remove_ch
 use crate::state::slock_cell::{MainSlockCell};
 use crate::util::geo::{AlignedRect, Point, Rect, Size};
 use crate::util::rust_util::PhantomUnsendUnsync;
-use crate::view::{EnvRef, Invalidator, View};
+use crate::view::{EnvRef, Invalidator, View, ViewRef};
 use crate::view::util::SizeContainer;
 use crate::view::view_provider::ViewProvider;
 
@@ -39,6 +39,7 @@ pub(crate) trait InnerViewBase<E> where E: Environment {
     // this should only be done if we know for sure
     // the last frame is valid
     fn try_layout_down(&mut self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, env: &mut E, frame: Option<AlignedRect>, s: MSlock<'_>) -> Result<(), ()>;
+    fn translate(&mut self, by: Point, s: MSlock);
 
     fn intrinsic_size(&mut self, s: MSlock) -> Size;
     fn xsquished_size(&mut self, s: MSlock) -> Size;
@@ -127,6 +128,7 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
         // maybe different overall frame
         actually_needs_layout = actually_needs_layout
             || suggested.size() != self.last_suggested.size() || suggested.align != self.last_suggested.align;
+        actually_needs_layout = true;
 
         let (view_frame, exclusion) = if actually_needs_layout {
             self.provider.push_environment(env.variable_env_mut(), s);
@@ -137,6 +139,17 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
             };
             let (actual_frame, exclusion) = self.provider.layout_down(&subtree, suggested.aligned_origin_rect(), context, &mut EnvRef(env), s);
             self.provider.pop_environment(env.variable_env_mut(), s);
+
+            /* children were mounted with respect to the origin, but the used may translate
+               that somewhat, so we must negate this account
+             */
+            if actual_frame.x != 0.0 || actual_frame.y != 0.0 {
+                let inverse_children_transform = Point::new(-actual_frame.x, -actual_frame.y);
+                for child in self.graph().subviews() {
+                    child.borrow_mut_main(s)
+                        .translate(inverse_children_transform, s);
+                }
+            }
 
             (actual_frame.translate(suggested.origin()), exclusion.translate(suggested.origin()))
         }
@@ -260,6 +273,14 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         else {
             Err(())
         }
+    }
+
+    // basically for correction when parent frame rect is not actually grand parent suggested rect
+    fn translate(&mut self, by: Point, s: MSlock) {
+        self.last_suggested = self.last_suggested.translate(by);
+        self.last_exclusion = self.last_exclusion.translate(by);
+        self.last_view_frame = self.last_view_frame.translate(by);
+        view_set_frame(self.backing(), self.last_view_frame, s);
     }
 
     fn intrinsic_size(&mut self, s: MSlock) -> Size {
@@ -535,6 +556,17 @@ impl<'a, E> Subtree<'a, E> where E: Environment {
 
     pub fn push_subview<P>(&mut self, subview: &View<E, P>, env: &mut EnvRef<E>, s: MSlock<'_>) where P: ViewProvider<E> {
         self.insert_subview(subview, self.graph.subviews.len(), env, s);
+    }
+
+    /* positional operations */
+
+    // precondition: all subviews explicitly had their layout_down method
+    // called
+    pub fn translate_post_layout_down(&self, by: Point, s: MSlock) {
+        for view in &self.graph.subviews {
+            view.borrow_mut_main(s)
+                .translate(by, s);
+        }
     }
 }
 

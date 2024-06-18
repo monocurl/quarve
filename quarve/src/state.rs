@@ -3095,6 +3095,49 @@ mod signal {
         }
     }
     pub use timed_signal::*;
+
+    mod signal_or_value {
+        use crate::core::{Environment, Slock};
+        use crate::state::{FixedSignal, Signal};
+        use crate::util::markers::ThreadMarker;
+        use crate::view::Invalidator;
+
+        pub enum SignalOrValue<T, S> where T: Send + 'static, S: Signal<T> {
+            Value(T),
+            Signal(S)
+        }
+
+        impl<T> SignalOrValue<T, FixedSignal<T>> where T: Send + 'static {
+            pub fn value(t: T) -> Self {
+                SignalOrValue::Value(t)
+            }
+        }
+
+        impl<T, S> SignalOrValue<T, S> where T: Send + 'static, S: Signal<T> {
+            pub fn add_invalidator<E: Environment>(&self, inv: &Invalidator<E>, s: Slock<impl ThreadMarker>) {
+                if let SignalOrValue::Signal(sig) = self  {
+                    let weak_inv = inv.clone();
+                    sig.listen(move |_, s| {
+                        let Some(inv) = weak_inv.upgrade() else {
+                            return false;
+                        };
+
+                        inv.invalidate(s);
+                        true
+                    }, s)
+                }
+            }
+        }
+        impl<T, S> SignalOrValue<T, S> where T: Send + 'static + Copy, S: Signal<T> {
+            pub fn inner(&self, s: Slock<impl ThreadMarker>) -> T {
+                match self {
+                    SignalOrValue::Signal(sig) => *sig.borrow(s),
+                    SignalOrValue::Value(val) => *val
+                }
+            }
+        }
+    }
+    pub use signal_or_value::*;
 }
 pub use signal::*;
 

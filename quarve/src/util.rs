@@ -451,6 +451,16 @@ pub mod geo {
             }
         }
 
+        pub fn translate(self, by: Point) -> AlignedRect {
+            AlignedRect {
+                x: self.x + by.x,
+                y: self.y + by.y,
+                w: self.w,
+                h: self.h,
+                align: self.align
+            }
+        }
+
         pub fn aligned_origin_rect(self) -> AlignedOriginRect {
             AlignedOriginRect {
                 w: self.w,

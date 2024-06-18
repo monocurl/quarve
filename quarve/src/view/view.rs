@@ -47,7 +47,7 @@ mod view_ref {
     use std::sync::Arc;
     use crate::core::{Environment, MSlock};
     use crate::state::slock_cell::MainSlockCell;
-    use crate::util::geo::{AlignedRect, Rect, Size};
+    use crate::util::geo::{AlignedRect, Point, Rect, Size};
     use crate::view::{EnvRef, InnerViewBase, View, ViewProvider};
     use crate::view::util::SizeContainer;
 
@@ -73,6 +73,13 @@ mod view_ref {
             parent_environment: &mut EnvRef<E>,
             s: MSlock
         ) -> Rect;
+
+        // Translates the entire view subtree
+        // Should only be called directly (possibly more than once)
+        // after layout_down was called on this subview,
+        // but before the parent
+        // has finished its own layout_down call
+        fn translate_post_layout_down(&self, by: Point, s: MSlock);
     }
 
     pub trait TrivialContextViewRef<E> where E: Environment {
@@ -138,6 +145,11 @@ mod view_ref {
 
             self.0.borrow_mut_main(s)
                 .layout_down_with_context(&arc, aligned_frame, parent_environment.0, context, s)
+        }
+
+        fn translate_post_layout_down(&self, by: Point, s: MSlock) {
+            self.0.borrow_mut_main(s)
+                .translate(by, s)
         }
     }
 }

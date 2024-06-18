@@ -215,7 +215,8 @@ mod window {
 
         fn get_handle(&self) -> WindowHandle;
 
-        fn layout(&self, s: MSlock);
+        // on initial mounting, only ups are handled
+        fn layout(&self, up_only: bool, s: MSlock);
     }
 
     pub(crate) trait WindowEnvironmentBase<E>: WindowBase where E: Environment {
@@ -344,7 +345,15 @@ mod window {
             let mut content_borrow = content_copy.borrow_mut_main(s);
             content_borrow.show(&borrow.content_view, &weak_window, stolen_env.deref_mut(), 0u32, s);
 
-            // show did layout up, now we must finish the layout down
+            // show did layout up, but for e.g. portals
+            // may still be some dangling layout ups needed
+            borrow.environment.set(Some(stolen_env));
+            drop(content_borrow);
+            borrow.layout(true, s);
+            let mut content_borrow = content_copy.borrow_mut_main(s);
+            let mut stolen_env = borrow.environment.take().unwrap();
+
+            // now we must finish the layout down
             let intrinsic = content_borrow.intrinsic_size(s);
             content_borrow.try_layout_down(
                 &borrow.content_view,
@@ -469,7 +478,7 @@ mod window {
             self.handle
         }
 
-        fn layout(&self, s: MSlock) {
+        fn layout(&self, up_only: bool, s: MSlock) {
             // layout down queue
             // layout up queue is stored in self
             // and may change by invalidations
@@ -483,7 +492,7 @@ mod window {
                 let has_up = if !self.invalidated_views.borrow().is_empty() {
                     true
                 }
-                else if !layout_down.is_empty() {
+                else if !up_only && !layout_down.is_empty() {
                     false
                 }
                 else {
@@ -580,7 +589,10 @@ mod window {
             self.environment.set(Some(env));
 
             // maybe init dimensions of view
-            self.set_dimensions_of_window(self.content_view.borrow_mut_main(s).deref_mut(), s);
+            // (not done on initial pass, since that will be handled in mount_content_view)
+            if !up_only {
+                self.set_dimensions_of_window(self.content_view.borrow_mut_main(s).deref_mut(), s);
+            }
         }
     }
 
