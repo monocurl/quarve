@@ -48,7 +48,9 @@ pub mod util;
 // #[cfg(debug_assertions)]
 #[allow(unused_variables)]
 pub mod dev_views;
-mod signal_view;
+pub mod color_view;
+pub mod signal_view;
+pub mod portal;
 
 // vstack, hstack, zstack, hflex, vflex
 // scrollview

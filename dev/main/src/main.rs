@@ -4,7 +4,8 @@ use quarve::view::{IntoViewProvider, ViewProvider};
 use quarve::view::dev_views::{DebugView};
 use quarve::view::layout::*;
 use quarve::{hstack};
-use quarve::view::modifers::{ForeBackModifiable, LayerModifiable, OffsetModifiable, PaddingModifiable, WhenModifiable};
+use quarve::util::geo;
+use quarve::view::modifers::{ForeBackModifiable, FrameModifiable, LayerModifiable, OffsetModifiable, PaddingModifiable, WhenModifiable};
 use quarve::view::util::Color;
 
 struct Env(());
@@ -80,23 +81,30 @@ impl quarve::core::WindowProvider for WindowProvider {
             }
         }, s);
         hstack! {
-            DebugView
-                .padding(10.0)
-                .when(positive_y, |u|
-                   u.layer(|l| {
-                        l.bg_color(Color::new(100, 0, 0))
-                         .border_color(Color::black())
-                         .radius(40.0)
-                         .border_width(3.0)
-                         .opacity(0.5)
-                    })
-                    // .offset_signal(s.fixed_signal(0.0), offset_y)
-                );
-                // .offset(200.0, 110.0);
-
+            // DebugView
+            //     .padding(10.0)
+            //     .when(positive_y, |u|
+            //        u.layer(|l| {
+            //             l.bg_color(Color::new(100, 0, 0))
+            //              .border_color(Color::black())
+            //              .radius(40.0)
+            //              .border_width(3.0)
+            //              .opacity(0.5)
+            //         })
+            //         // .offset_signal(s.fixed_signal(0.0), offset_y)
+            //     );
+            //     // .offset(200.0, 110.0);
+            //
             store.binding_vmap(move |_x, _s| {
                 DebugView
-                    .layer(|l| l.bg_color_signal(positive_y_ind.clone()))
+                    .padding(20.0)
+                    .frame(|f| f.intrinsic(200.0, 200.0))
+                    .padding_edge(100.0, geo::edge::LEFT)
+                    .layer(|l|
+                        l.border(Color::black(), 1.0)
+                    )
+                    .padding(10.0)
+                    .layer(|l| l.border_color(Color::black()).border_width(1.0))
             })
         }
         .into_view_provider(env, s)

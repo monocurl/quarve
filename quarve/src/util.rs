@@ -425,9 +425,37 @@ pub mod geo {
         BotTrailing,
     }
 
+    #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+    pub enum VerticalAlignment {
+        Bottom, Center, Top
+    }
+
+    #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+    pub enum HorizontalAlignment {
+        Leading, Center, Trailing
+    }
+
     impl Default for Alignment {
         fn default() -> Self {
             Self::Center
+        }
+    }
+
+    impl Alignment {
+        pub fn horizontal(self) -> HorizontalAlignment {
+            match self {
+                Alignment::Top | Alignment::Center | Alignment::Bot => HorizontalAlignment::Center,
+                Alignment::TopLeading | Alignment::Leading | Alignment::BotLeading => HorizontalAlignment::Leading,
+                _ => HorizontalAlignment::Trailing
+            }
+        }
+
+        pub fn vertical(self) -> VerticalAlignment {
+            match self {
+                Alignment::Top | Alignment::TopLeading | Alignment::TopTrailing => VerticalAlignment::Top,
+                Alignment::Center | Alignment::Leading | Alignment::Trailing => VerticalAlignment::Center,
+                _ => VerticalAlignment::Bottom
+            }
         }
     }
 

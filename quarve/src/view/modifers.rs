@@ -173,7 +173,7 @@ mod provider_modifier {
     use crate::event::{Event, EventResult};
     use crate::state::{FixedSignal, Signal, SignalOrValue};
     use crate::util::geo;
-    use crate::util::geo::{Point, Rect, ScreenUnit, Size};
+    use crate::util::geo::{Alignment, HorizontalAlignment, Point, Rect, ScreenUnit, Size, VerticalAlignment};
     use crate::util::markers::ThreadMarker;
     use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, ViewProvider};
     use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
@@ -491,17 +491,17 @@ mod provider_modifier {
     }
 
     pub trait OffsetModifiable<E>: IntoViewProvider<E> where E: Environment {
-        fn offset(self, dx: ScreenUnit, dy: ScreenUnit) -> ProviderIVPModifier<E, Self, impl ProviderModifier<E, Self::UpContext, Self::DownContext>>;
+        fn offset(self, dx: impl Into<ScreenUnit>, dy: impl Into<ScreenUnit>) -> ProviderIVPModifier<E, Self, impl ProviderModifier<E, Self::UpContext, Self::DownContext>>;
         fn offset_signal(self, dx: impl Signal<ScreenUnit>, dy: impl Signal<ScreenUnit>) -> ProviderIVPModifier<E, Self, impl ProviderModifier<E, Self::UpContext, Self::DownContext>>;
     }
 
     impl<E, I> OffsetModifiable<E> for I
         where E: Environment, I: IntoViewProvider<E>
     {
-        fn offset(self, dx: ScreenUnit, dy: ScreenUnit) -> ProviderIVPModifier<E, Self, impl ProviderModifier<E, Self::UpContext, Self::DownContext>> {
+        fn offset(self, dx: impl Into<ScreenUnit>, dy: impl Into<ScreenUnit>) -> ProviderIVPModifier<E, Self, impl ProviderModifier<E, Self::UpContext, Self::DownContext>> {
             let o = Offset {
-                dx: SignalOrValue::value(dx),
-                dy: SignalOrValue::value(dy),
+                dx: SignalOrValue::value(dx.into()),
+                dy: SignalOrValue::value(dy.into()),
                 last_dx: ScreenUnit::NAN,
                 last_dy: ScreenUnit::NAN
             };
@@ -536,16 +536,16 @@ mod provider_modifier {
             };
             let mut w = to.w;
             let mut h = to.h;
-            if self.edges | geo::edge::LEFT != 0 {
+            if self.edges & geo::edge::LEFT != 0 {
                 w += amount;
             }
-            if self.edges | geo::edge::RIGHT != 0 {
+            if self.edges & geo::edge::RIGHT != 0 {
                 w += amount;
             }
-            if self.edges | geo::edge::UP != 0 {
+            if self.edges & geo::edge::UP != 0 {
                 h += amount;
             }
-            if self.edges | geo::edge::DOWN != 0 {
+            if self.edges & geo::edge::DOWN != 0 {
                 h += amount;
             }
 
@@ -590,20 +590,20 @@ mod provider_modifier {
             let (mut ours, mut total) = src.layout_down(subtree, inner_size, layout_context, env, s);
 
             let mut subtree_translation = Point::new(0.0, 0.0);
-            if self.edges | geo::edge::LEFT != 0 {
+            if self.edges & geo::edge::LEFT != 0 {
                 subtree_translation.x += amnt;
                 total.w += amnt;
             }
 
-            if self.edges | geo::edge::RIGHT != 0 {
+            if self.edges & geo::edge::RIGHT != 0 {
                 total.w += amnt;
             }
 
-            if self.edges | geo::edge::UP != 0 {
+            if self.edges & geo::edge::UP != 0 {
                 total.h += amnt;
             }
 
-            if self.edges | geo::edge::DOWN != 0 {
+            if self.edges & geo::edge::DOWN != 0 {
                 subtree_translation.y += amnt;
                 total.h += amnt;
             }
@@ -618,16 +618,16 @@ mod provider_modifier {
     pub trait PaddingModifiable<E>: IntoViewProvider<E>
         where E: Environment
     {
-        fn padding(self, amount: ScreenUnit) -> ProviderIVPModifier<E, Self, Padding<FixedSignal<ScreenUnit>>>;
+        fn padding(self, amount: impl Into<ScreenUnit>) -> ProviderIVPModifier<E, Self, Padding<FixedSignal<ScreenUnit>>>;
         fn padding_signal<S: Signal<ScreenUnit>>(self, amount: S) -> ProviderIVPModifier<E, Self, Padding<S>>;
-        fn padding_edges(self, amount: ScreenUnit, edges: u8) -> ProviderIVPModifier<E, Self, Padding<FixedSignal<ScreenUnit>>>;
-        fn padding_edges_signal<S: Signal<ScreenUnit>>(self, amount: S, edges: u8) -> ProviderIVPModifier<E, Self, Padding<S>>;
+        fn padding_edge(self, amount: impl Into<ScreenUnit>, edges: u8) -> ProviderIVPModifier<E, Self, Padding<FixedSignal<ScreenUnit>>>;
+        fn padding_edge_signal<S: Signal<ScreenUnit>>(self, amount: S, edges: u8) -> ProviderIVPModifier<E, Self, Padding<S>>;
     }
     
     impl<E, I> PaddingModifiable<E> for I where E: Environment, I: IntoViewProvider<E> {
-        fn padding(self, amount: ScreenUnit) -> ProviderIVPModifier<E, Self, Padding<FixedSignal<ScreenUnit>>> {
+        fn padding(self, amount: impl Into<ScreenUnit>) -> ProviderIVPModifier<E, Self, Padding<FixedSignal<ScreenUnit>>> {
             let padding = Padding {
-                amount: SignalOrValue::value(amount),
+                amount: SignalOrValue::value(amount.into()),
                 edges: geo::edge::ALL,
                 last_amount: ScreenUnit::NAN
             };
@@ -645,9 +645,9 @@ mod provider_modifier {
             self.provider_modifier(padding)
         }
 
-        fn padding_edges(self, amount: ScreenUnit, edges: u8) -> ProviderIVPModifier<E, Self, Padding<FixedSignal<ScreenUnit>>> {
+        fn padding_edge(self, amount: impl Into<ScreenUnit>, edges: u8) -> ProviderIVPModifier<E, Self, Padding<FixedSignal<ScreenUnit>>> {
             let padding = Padding {
-                amount: SignalOrValue::value(amount),
+                amount: SignalOrValue::value(amount.into()),
                 edges,
                 last_amount: ScreenUnit::NAN
             };
@@ -655,7 +655,7 @@ mod provider_modifier {
             self.provider_modifier(padding)
         }
 
-        fn padding_edges_signal<S: Signal<ScreenUnit>>(self, amount: S, edges: u8) -> ProviderIVPModifier<E, Self, Padding<S>> {
+        fn padding_edge_signal<S: Signal<ScreenUnit>>(self, amount: S, edges: u8) -> ProviderIVPModifier<E, Self, Padding<S>> {
             let padding = Padding {
                 amount: SignalOrValue::Signal(amount),
                 edges,
@@ -663,6 +663,126 @@ mod provider_modifier {
             };
 
             self.provider_modifier(padding)
+        }
+    }
+
+    #[derive(Default, Copy, Clone)]
+    pub struct Frame {
+        squished: Option<Size>,
+        intrinsic: Option<Size>,
+        stretched: Option<Size>,
+        alignment: Alignment
+    }
+
+    impl Frame {
+        pub fn alignment(mut self, alignment: Alignment) -> Frame {
+            self.alignment = alignment;
+            self
+        }
+
+        pub fn intrinsic(mut self, w: impl Into<ScreenUnit>, h: impl Into<ScreenUnit>) -> Frame {
+            self.intrinsic = Some(Size::new(w.into(), h.into()));
+            self
+        }
+
+        pub fn squished(mut self, w: impl Into<ScreenUnit>, h: impl Into<ScreenUnit>) -> Frame {
+            self.squished = Some(Size::new(w.into(), h.into()));
+            self
+        }
+
+        pub fn stretched(mut self, w: impl Into<ScreenUnit>, h: impl Into<ScreenUnit>) -> Frame {
+            self.stretched = Some(Size::new(w.into(), h.into()));
+            self
+        }
+
+        pub fn unlimited_stretch(mut self) -> Frame {
+            self.stretched(ScreenUnit::INFINITY, ScreenUnit::INFINITY)
+        }
+    }
+
+    impl<E, U, D> ProviderModifier<E, U, D> for Frame where E: Environment, U: 'static, D: 'static {
+        fn intrinsic_size(&mut self, _src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, _s: MSlock) -> Size {
+            self.intrinsic.unwrap()
+        }
+
+        fn xsquished_size(&mut self, _src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, _s: MSlock) -> Size {
+            self.squished.or(self.intrinsic).unwrap()
+        }
+
+        fn xstretched_size(&mut self, _src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, _s: MSlock) -> Size {
+            self.stretched.or(self.intrinsic).unwrap()
+        }
+
+        fn ysquished_size(&mut self, _src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, _s: MSlock) -> Size {
+            self.squished.or(self.intrinsic).unwrap()
+        }
+
+        fn ystretched_size(&mut self, _src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, _s: MSlock) -> Size {
+            self.stretched.or(self.intrinsic).unwrap()
+        }
+
+        fn layout_down(&mut self, src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, subtree: &Subtree<E>, frame: Size, layout_context: &D, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
+            let min = self.squished.or(self.intrinsic).unwrap();
+            let max = self.stretched.or(self.intrinsic).unwrap();
+
+            let chosen = Size::new(
+                frame.w.clamp(min.w, max.w),
+                frame.h.clamp(min.h, max.h)
+            );
+
+            // reposition
+            let (view, used) = src.layout_down(subtree, chosen, layout_context, env, s);
+            let mut translation = Point::new(0.0,0.0);
+            match self.alignment.horizontal() {
+                HorizontalAlignment::Leading => {
+                    translation.x = -used.x;
+                }
+                HorizontalAlignment::Center => {
+                    translation.x = chosen.w / 2.0 - (used.x + used.w) / 2.0;
+                }
+                HorizontalAlignment::Trailing => {
+                    translation.x = chosen.w - (used.x + used.w);
+                }
+            }
+
+            match self.alignment.vertical() {
+                VerticalAlignment::Bottom => {
+                    translation.y = -used.y;
+                }
+                VerticalAlignment::Center => {
+                    translation.y = chosen.h / 2.0 - (used.y + used.h) / 2.0;
+                }
+                VerticalAlignment::Top => {
+                    translation.y = chosen.h - (used.y + used.h);
+                }
+            }
+
+            subtree.translate_post_layout_down(translation, s);
+            (view.translate(translation), used.translate(translation))
+        }
+    }
+
+    pub trait FrameModifiable<E>: IntoViewProvider<E>
+        where E: Environment
+    {
+        fn frame(self, f: impl FnOnce(Frame) -> Frame) -> ProviderIVPModifier<E, Self, Frame>;
+    }
+
+    impl<E, I> FrameModifiable<E> for I where E: Environment, I: IntoViewProvider<E>
+    {
+        fn frame(self, f: impl FnOnce(Frame) -> Frame) -> ProviderIVPModifier<E, Self, Frame> {
+            let frame = f(Frame {
+                squished: None,
+                intrinsic: None,
+                stretched: None,
+                alignment: Alignment::Center
+            });
+            assert!(frame.intrinsic.is_some(), "Must set intrinsic size of the frame!");
+            ProviderIVPModifier {
+                provider: self,
+                modifier: frame,
+                phantom: Default::default(),
+            }
         }
     }
 }
@@ -708,6 +828,17 @@ mod layer_modifier {
             }
         }
 
+        pub fn border(self, color: Color, width: impl Into<ScreenUnit>) -> Layer<S1, S2, FixedSignal<Color>, FixedSignal<ScreenUnit>, S5>
+        {
+            Layer {
+                background_color: self.background_color,
+                corner_radius: self.corner_radius,
+                border_color: SignalOrValue::value(color),
+                border_width: SignalOrValue::value(width.into()),
+                opacity: self.opacity,
+            }
+        }
+
         pub fn border_color(self, color: Color) -> Layer<S1, S2, FixedSignal<Color>, S4, S5> {
             Layer {
                 background_color: self.background_color,
@@ -728,10 +859,10 @@ mod layer_modifier {
             }
         }
 
-        pub fn radius(self, radius: ScreenUnit) -> Layer<S1, FixedSignal<ScreenUnit>, S3, S4, S5> {
+        pub fn radius(self, radius: impl Into<ScreenUnit>) -> Layer<S1, FixedSignal<ScreenUnit>, S3, S4, S5> {
             Layer {
                 background_color: self.background_color,
-                corner_radius: SignalOrValue::value(radius),
+                corner_radius: SignalOrValue::value(radius.into()),
                 border_color: self.border_color,
                 border_width: self.border_width,
                 opacity: self.opacity,
@@ -748,12 +879,12 @@ mod layer_modifier {
             }
         }
 
-        pub fn border_width(self, width: ScreenUnit) -> Layer<S1, S2, S3, FixedSignal<ScreenUnit>, S5> {
+        pub fn border_width(self, width: impl Into<ScreenUnit>) -> Layer<S1, S2, S3, FixedSignal<ScreenUnit>, S5> {
             Layer {
                 background_color: self.background_color,
                 corner_radius: self.corner_radius,
                 border_color: self.border_color,
-                border_width: SignalOrValue::value(width),
+                border_width: SignalOrValue::value(width.into()),
                 opacity: self.opacity,
             }
         }
