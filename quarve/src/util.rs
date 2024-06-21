@@ -345,7 +345,7 @@ pub mod markers {
 }
 
 pub mod geo {
-    pub type ScreenUnit = f32;
+    pub type ScreenUnit = f64;
 
     #[derive(Copy, Clone, Default, Debug, PartialEq)]
     pub struct Rect {

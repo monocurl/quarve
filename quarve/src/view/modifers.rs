@@ -184,7 +184,7 @@ mod provider_modifier {
         where E: Environment, U: 'static, D: 'static {
 
         #[allow(unused_variables)]
-        fn init(&mut self, invalidator: &Invalidator<E>, env: &E::Const, s: MSlock) {
+        fn init(&mut self, invalidator: &Invalidator<E>, env: &E::Const, source: Option<Self>, s: MSlock) {
 
         }
 
@@ -225,16 +225,6 @@ mod provider_modifier {
         fn unfocused(&mut self, s: MSlock)  {
 
         }
-
-        #[allow(unused_variables)]
-        fn push_environment(&mut self, env: &mut E::Variable, s: MSlock) {
-
-        }
-
-        #[allow(unused_variables)]
-        fn pop_environment(&mut self, env: &mut E::Variable, s: MSlock) {
-
-        }
     }
 
     pub struct ProviderIVPModifier<E, P, M>
@@ -269,7 +259,6 @@ mod provider_modifier {
         provider: P,
         modifier: M,
         enabled: bool,
-        last_env_push_was_enabled: bool,
         phantom: PhantomData<E>
     }
 
@@ -286,7 +275,6 @@ mod provider_modifier {
                 provider: self.provider.into_view_provider(env, s),
                 modifier: self.modifier,
                 enabled: true,
-                last_env_push_was_enabled: true,
                 phantom: PhantomData
             }
         }
@@ -345,8 +333,15 @@ mod provider_modifier {
         }
 
         fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
-            self.modifier.init(&invalidator, env.const_env(), s);
-            self.provider.init_backing(invalidator, subtree, backing_source.map(|(nv, bs)| (nv, bs.provider)), env, s)
+            if let Some((nv, m)) = backing_source {
+                self.modifier.init(&invalidator, env.const_env(), Some(m.modifier), s);
+                self.provider.init_backing(invalidator, subtree, Some((nv, m.provider)), env, s)
+            }
+            else {
+                self.modifier.init(&invalidator, env.const_env(), None, s);
+                self.provider.init_backing(invalidator, subtree, None, env, s)
+            }
+
         }
 
         fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
@@ -394,20 +389,11 @@ mod provider_modifier {
         }
 
         fn push_environment(&mut self, env: &mut E::Variable, s: MSlock) {
-            if self.enabled {
-                self.modifier.push_environment(env, s);
-            }
             self.provider.push_environment(env, s);
-
-            self.last_env_push_was_enabled = self.enabled;
         }
 
         fn pop_environment(&mut self, env: &mut E::Variable, s: MSlock) {
             self.provider.pop_environment(env, s);
-            // enabled may change throughout an environment push
-            if self.last_env_push_was_enabled {
-                self.modifier.pop_environment(env, s);
-            }
         }
 
         fn handle_event(&mut self, e: Event, s: MSlock) -> EventResult {
@@ -429,7 +415,6 @@ mod provider_modifier {
                 provider: self.provider.into_conditional_view_provider(e, s),
                 modifier: self.modifier,
                 enabled: true,
-                last_env_push_was_enabled: true,
                 phantom: PhantomData,
             }
         }
@@ -465,7 +450,7 @@ mod provider_modifier {
     impl<E, U, D, S, T> ProviderModifier<E, U, D> for Offset<S, T>
         where E: Environment, U: 'static, D: 'static, S: Signal<ScreenUnit>, T: Signal<ScreenUnit>
     {
-        fn init(&mut self, invalidator: &Invalidator<E>, _env: &E::Const, s: MSlock) {
+        fn init(&mut self, invalidator: &Invalidator<E>, _env: &E::Const, _source: Option<Self>, s: MSlock) {
             self.dx.add_invalidator(invalidator, s);
             self.dy.add_invalidator(invalidator, s);
         }
@@ -558,7 +543,7 @@ mod provider_modifier {
     }
     
     impl<E: Environment, U: 'static, D: 'static, S: Signal<ScreenUnit>> ProviderModifier<E, U, D> for Padding<S> {
-        fn init(&mut self, invalidator: &Invalidator<E>, _env: &E::Const, s: MSlock) {
+        fn init(&mut self, invalidator: &Invalidator<E>, _env: &E::Const, _source: Option<Self>, s: MSlock) {
             self.amount.add_invalidator(invalidator, s);
         }
 
@@ -695,7 +680,7 @@ mod provider_modifier {
             self
         }
 
-        pub fn unlimited_stretch(mut self) -> Frame {
+        pub fn unlimited_stretch(self) -> Frame {
             self.stretched(ScreenUnit::INFINITY, ScreenUnit::INFINITY)
         }
     }
@@ -765,11 +750,16 @@ mod provider_modifier {
     pub trait FrameModifiable<E>: IntoViewProvider<E>
         where E: Environment
     {
+        fn intrinsic(self, w: impl Into<ScreenUnit>, h: impl Into<ScreenUnit>) -> ProviderIVPModifier<E, Self, Frame>;
         fn frame(self, f: impl FnOnce(Frame) -> Frame) -> ProviderIVPModifier<E, Self, Frame>;
     }
 
     impl<E, I> FrameModifiable<E> for I where E: Environment, I: IntoViewProvider<E>
     {
+        fn intrinsic(self, w: impl Into<ScreenUnit>, h: impl Into<ScreenUnit>) -> ProviderIVPModifier<E, Self, Frame> {
+            self.frame(|f| f.intrinsic(w, h))
+        }
+
         fn frame(self, f: impl FnOnce(Frame) -> Frame) -> ProviderIVPModifier<E, Self, Frame> {
             let frame = f(Frame {
                 squished: None,
@@ -1390,6 +1380,7 @@ mod when_modifier {
         fn into_view_provider(self, env: &E::Const, s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
             WhenVP {
                 enabled: self.enabled,
+                last_enabled: true,
                 parent_enabled: true,
                 provider: self.provider.into_conditional_view_provider(env, s),
                 phantom: PhantomData,
@@ -1406,6 +1397,7 @@ mod when_modifier {
             -> impl ConditionalVPModifier<E, UpContext=<Self::Modifying as IntoViewProvider<E>>::UpContext, DownContext=<Self::Modifying as IntoViewProvider<E>>::DownContext> {
             WhenVP {
                 enabled: self.enabled,
+                last_enabled: true,
                 parent_enabled: true,
                 provider: self.provider.into_conditional_view_provider(env, s),
                 phantom: PhantomData,
@@ -1416,6 +1408,7 @@ mod when_modifier {
     struct WhenVP<E, S, P> where E: Environment, S: Signal<bool>, P: ConditionalVPModifier<E> {
         enabled: S,
         parent_enabled: bool,
+        last_enabled: bool,
         provider: P,
         phantom: PhantomData<E>
     }
@@ -1467,6 +1460,9 @@ mod when_modifier {
                     return false;
                 };
 
+                // might have disabled an environment handler
+                // FIXME, we should make it so that only environment
+                // providers actually invalidate the environment
                 inv.invalidate(s);
                 true
             }, s);
@@ -1475,13 +1471,14 @@ mod when_modifier {
         }
 
         fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
-            // might be redundant in some cases
-            // though i don't think it should be a major issue
-            if self.fully_enabled(s) {
-                self.provider.enable(s);
-            }
-            else {
-                self.provider.disable(s);
+            if self.last_enabled != self.fully_enabled(s) {
+                if self.fully_enabled(s) {
+                    self.provider.enable(s);
+                } else {
+                    self.provider.disable(s);
+                }
+
+                self.last_enabled = self.fully_enabled(s);
             }
 
             self.provider.layout_up(subtree, env, s)
@@ -1531,23 +1528,13 @@ mod when_modifier {
     impl<E, S, P> ConditionalVPModifier<E> for WhenVP<E, S, P>
         where E: Environment, S: Signal<bool>, P: ConditionalVPModifier<E>
     {
-        fn enable(&mut self, s: MSlock) {
-            let old = self.fully_enabled(s);
+        fn enable(&mut self, _s: MSlock) {
             self.parent_enabled = true;
-            let new = self.fully_enabled(s);
-            if !old && new {
-                self.provider.enable(s);
-            }
         }
 
-        fn disable(&mut self, s: MSlock) {
-            let old = self.fully_enabled(s);
+        fn disable(&mut self, _s: MSlock) {
             self.parent_enabled = false;
-            let new = self.fully_enabled(s);
-
-            if old && !new {
-                self.provider.disable(s);
-            }
+            // will not call layout up and relay change
         }
     }
 
@@ -1571,3 +1558,7 @@ mod when_modifier {
     }
 }
 pub use when_modifier::*;
+
+mod env_modifier {
+
+}

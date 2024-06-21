@@ -1,11 +1,12 @@
 use quarve::core::{Application, Environment, launch, MSlock};
-use quarve::state::{FixedSignal, Signal, Store};
-use quarve::view::{IntoViewProvider, ViewProvider};
-use quarve::view::dev_views::{DebugView};
+use quarve::state::{FixedSignal, Signal};
+use quarve::view::{ViewProvider, IntoViewProvider};
 use quarve::view::layout::*;
+use quarve::view::portal::*;
 use quarve::{hstack};
-use quarve::util::geo;
-use quarve::view::modifers::{ForeBackModifiable, FrameModifiable, LayerModifiable, OffsetModifiable, PaddingModifiable, WhenModifiable};
+use quarve::view::color_view::{EmptyView};
+use quarve::view::modifers::{FrameModifiable, WhenModifiable};
+use quarve::view::portal::Portal;
 use quarve::view::util::Color;
 
 struct Env(());
@@ -55,57 +56,42 @@ impl quarve::core::WindowProvider for WindowProvider {
     }
 
     fn root(&self, env: &<Env as Environment>::Const, s: MSlock<'_>) -> impl ViewProvider<Env, DownContext=()> {
-        // let iteration = |i: f64| {
-        //     s.clock_signal()
-        //         .map(move |s| {
-        //             let range = 0 .. (1 + (5.0 * (i + s).sin().abs()) as i32);
-        //             range.into_iter().collect()
-        //         }, s)
-        //         .signal_vmap_options(|_i, _s| {
-        //             DebugView
-        //         }, |o| o.spacing(10.0))
-        // };
-        let store = Store::new(vec![Store::new(1), Store::new(2)]);
+        let enabled = s.clock_signal()
+            .map(|val| *val % 2.0 > 1.0, s);
+        let enabled_int = enabled.map(|u| if *u {vec![1]} else {vec![]}, s);
+        let not_enabled = enabled.map(|u| !*u, s);
+        let not_enabled_int = not_enabled.map(|u| if *u {vec![1]} else {vec![]}, s);
+        let p = Portal::new();
+        let p2 = p.clone();
+        let p3 = p.clone();
 
-        let offset_y = s
-            .clock_signal()
-            .map(|u| ((4.0 * u).sin().abs() * 100.0) as f32, s);
-        let positive_y = offset_y
-            .map(|val| *val > 40.0, s);
-        let positive_y_ind = positive_y.map(|val| {
-            if *val {
-                Color::new(100, 0, 0)
-            }
-            else {
-                Color::transparent()
-            }
-        }, s);
+        let black_box =
+            Color::black().intrinsic(100, 100);
+
         hstack! {
-            // DebugView
-            //     .padding(10.0)
-            //     .when(positive_y, |u|
-            //        u.layer(|l| {
-            //             l.bg_color(Color::new(100, 0, 0))
-            //              .border_color(Color::black())
-            //              .radius(40.0)
-            //              .border_width(3.0)
-            //              .opacity(0.5)
-            //         })
-            //         // .offset_signal(s.fixed_signal(0.0), offset_y)
-            //     );
-            //     // .offset(200.0, 110.0);
-            //
-            store.binding_vmap(move |_x, _s| {
-                DebugView
-                    .padding(20.0)
-                    .frame(|f| f.intrinsic(200.0, 200.0))
-                    .padding_edge(100.0, geo::edge::LEFT)
-                    .layer(|l|
-                        l.border(Color::black(), 1.0)
-                    )
-                    .padding(10.0)
-                    .layer(|l| l.border_color(Color::black()).border_width(1.0))
-            })
+            EmptyView;
+
+            EmptyView
+                .when(not_enabled, |v| {
+                    v.portal_sender(&p, Color::black().intrinsic(200, 100))
+                });
+
+            not_enabled_int
+                .signal_vmap(move |_, s| {
+                    PortalReceiver::new(&p3)
+                });
+            // PortalReceiver::new(&p);
+            enabled_int
+                .signal_vmap(move |_, s| {
+                    PortalReceiver::new(&p2)
+                });
+
+            EmptyView
+                .when(enabled, |v| {
+                    v.portal_sender(&p, black_box)
+                });
+
+
         }
         .into_view_provider(env, s)
     }

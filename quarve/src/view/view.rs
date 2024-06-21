@@ -4,6 +4,7 @@ use crate::state::slock_cell::{MainSlockCell};
 use crate::util::rust_util::EnsureSend;
 use crate::view::inner_view::{InnerView, InnerViewBase};
 use crate::view::view_provider::ViewProvider;
+use crate::util::markers::ThreadMarker;
 
 pub struct View<E, P>(pub(crate) Arc<MainSlockCell<InnerView<E, P>>>)
     where E: Environment, P: ViewProvider<E> + ?Sized;
@@ -50,6 +51,7 @@ mod view_ref {
     use crate::util::geo::{Point, Rect, Size};
     use crate::view::{EnvRef, InnerViewBase, View, ViewProvider};
     use crate::view::util::SizeContainer;
+
 
     /* hides provider type */
     // FIXME lots of repeated code
@@ -135,21 +137,40 @@ mod view_ref {
         }
 
         fn up_context(&self, s: MSlock) -> P::UpContext {
-            self.0.borrow_mut_main(s)
-                .provider()
+            let mut inner = self.0.borrow_mut_main(s);
+
+            debug_assert!(!inner.needs_layout_up() && inner.depth() != u32::MAX,
+                          "This method must only be called after the subview \
+                           has been mounted to the parent. Also, this view cannot be in an invalidated/dirty state");
+
+            inner.provider()
                 .up_context(s)
         }
 
         fn layout_down_with_context(&self, rect: Rect, context: &P::DownContext, parent_environment: &mut EnvRef<E>, s: MSlock) -> Rect {
             let arc = self.0.clone() as Arc<MainSlockCell<dyn InnerViewBase<E>>>;
-
-            self.0.borrow_mut_main(s)
-                .layout_down_with_context(&arc, rect, parent_environment.0, context, s)
+            let mut borrow = self.0.borrow_mut_main(s);
+            borrow.push_environment(parent_environment.0, s);
+            let ret = borrow.layout_down_with_context(&arc, rect, parent_environment.0, context, s);
+            borrow.pop_environment(parent_environment.0, s);
+            ret
         }
 
         fn translate_post_layout_down(&self, by: Point, s: MSlock) {
             self.0.borrow_mut_main(s)
                 .translate(by, s)
+        }
+    }
+
+
+    // For portals
+    pub(crate) trait ToArcViewBase<E>: ViewRef<E> where E: Environment {
+        fn to_view_base(&self) -> Arc<MainSlockCell<dyn InnerViewBase<E>>>;
+    }
+
+    impl<E, P> ToArcViewBase<E> for View<E, P> where E: Environment, P: ViewProvider<E> {
+        fn to_view_base(&self) -> Arc<MainSlockCell<dyn InnerViewBase<E>>> {
+            self.0.clone()
         }
     }
 }
@@ -170,6 +191,15 @@ impl<E> Invalidator<E> where E: Environment {
     }
 }
 
+impl<E> PartialEq for Invalidator<E> where E: Environment {
+    fn eq(&self, other: &Self) -> bool {
+        Weak::ptr_eq(&self.view, &other.view)
+    }
+}
+
+impl<E> Eq for Invalidator<E> where E: Environment {
+}
+
 impl<E> Clone for Invalidator<E> where E: Environment {
     fn clone(&self) -> Self {
         Invalidator {
@@ -183,7 +213,7 @@ pub struct StrongInvalidator<E> where E: Environment {
 }
 
 impl<E> StrongInvalidator<E> where E: Environment {
-    pub fn invalidate(&self, s: Slock) {
+    pub fn invalidate(&self, s: Slock<impl ThreadMarker>) {
         // invalidate just this
         // safety:
         // the only part of window and view that we're
@@ -193,25 +223,25 @@ impl<E> StrongInvalidator<E> where E: Environment {
         // it's just the list of invalidated views)
         // FIXME add better descriptions of safety
         unsafe {
-            self.view.borrow_mut_non_main_non_send(s)
-                .invalidate(Arc::downgrade(&self.view), s);
+            self.view.borrow_mut_non_main_non_send(s.as_general_slock())
+                .invalidate(Arc::downgrade(&self.view), s.as_general_slock());
         }
     }
 
-    fn dfs(curr: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, s: Slock) {
+    fn dfs(curr: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, s: Slock<impl ThreadMarker>) {
         // safety is same reason invalidate above is safe
         // (only touching send parts)
         unsafe {
-            let mut borrow = curr.borrow_mut_non_main_non_send(s);
-            borrow.invalidate(Arc::downgrade(curr), s);
+            let mut borrow = curr.borrow_mut_non_main_non_send(s.as_general_slock());
+            borrow.invalidate(Arc::downgrade(curr), s.as_general_slock());
 
             for subview in borrow.graph().subviews() {
-                StrongInvalidator::dfs(subview, s);
+                StrongInvalidator::dfs(subview, s.as_general_slock());
             }
         }
     }
 
-    pub fn invalidate_environment(&self, s: Slock) {
+    pub fn invalidate_environment(&self, s: Slock<impl ThreadMarker>) {
         StrongInvalidator::dfs(&self.view, s);
     }
 }

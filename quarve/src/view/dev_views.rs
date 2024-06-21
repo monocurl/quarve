@@ -7,7 +7,7 @@ use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, Tr
 
 
 pub struct DebugView;
-pub struct Layout<E: Environment, S: Signal<Vector<f32, 2>>>(pub View<E, DebugView>, pub View<E, DebugView>, pub S);
+pub struct Layout<E: Environment, S: Signal<Vector<f64, 2>>>(pub View<E, DebugView>, pub View<E, DebugView>, pub S);
 impl<E: Environment> ViewProvider<E> for DebugView {
     type UpContext = ();
     type DownContext = ();
@@ -66,7 +66,7 @@ impl<E: Environment> ViewProvider<E> for DebugView {
     }
 }
 
-impl<E: Environment, S: Signal<Vector<f32, 2>>> ViewProvider<E> for Layout<E, S> {
+impl<E: Environment, S: Signal<Vector<f64, 2>>> ViewProvider<E> for Layout<E, S> {
     type UpContext = ();
     type DownContext = ();
 
@@ -145,7 +145,7 @@ impl<E: Environment> IntoViewProvider<E> for DebugView {
     }
 }
 
-impl<E: Environment, S: Signal<Vector<f32, 2>>> IntoViewProvider<E> for Layout<E, S> {
+impl<E: Environment, S: Signal<Vector<f64, 2>>> IntoViewProvider<E> for Layout<E, S> {
     type UpContext = ();
     type DownContext = ();
 

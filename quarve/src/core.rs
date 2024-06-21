@@ -194,6 +194,7 @@ mod window {
     use crate::view::{InnerViewBase};
     use crate::view::{ViewProvider};
 
+    // TODO window sizing is a bit iffy right now
     pub trait WindowProvider: 'static {
         type Env: Environment;
 
@@ -215,11 +216,13 @@ mod window {
 
         fn get_handle(&self) -> WindowHandle;
 
-        // on initial mounting, only ups are handled
-        fn layout(&self, up_only: bool, s: MSlock);
+        fn layout_full(&self, s: MSlock);
     }
 
     pub(crate) trait WindowEnvironmentBase<E>: WindowBase where E: Environment {
+        // depth = only consider nodes with strictly greater depth (use -1 for all)
+        fn layout_up(&self, env: &mut E, right_below: Option<Arc<MainSlockCell<dyn InnerViewBase<E>>>>, depth: i32, s: MSlock);
+
         // this method is guaranteed to only touch
         // Send parts of self
         // handle is because of some async operations
@@ -228,7 +231,7 @@ mod window {
 
     struct InvalidatedEntry<E> where E: Environment {
         view: Weak<MainSlockCell<dyn InnerViewBase<E>>>,
-        // use negative depth to flip ordering
+        // use negative depth to flip ordering in some cases
         depth: i32
     }
 
@@ -252,7 +255,8 @@ mod window {
                 self.depth.cmp(&other.depth)
             }
             else {
-                self.view.as_ptr().cmp(&other.view.as_ptr())
+                self.view.as_ptr().cast::<()>()
+                    .cmp(&other.view.as_ptr().cast::<()>())
             }
         }
     }
@@ -266,7 +270,9 @@ mod window {
         environment: Cell<Option<Box<P::Env>>>,
         // avoid having to borrow window mutably
         // when invalidating
-        invalidated_views: RefCell<BinaryHeap<InvalidatedEntry<P::Env>>>,
+        up_views: RefCell<BinaryHeap<InvalidatedEntry<P::Env>>>,
+        down_views: RefCell<BinaryHeap<InvalidatedEntry<P::Env>>>,
+        performing_layout_down: RefCell<bool>,
 
         /* native */
         handle: WindowHandle,
@@ -286,7 +292,9 @@ mod window {
             let window = Window {
                 provider,
                 environment: Cell::new(Some(Box::new(root_env))),
-                invalidated_views: RefCell::new(BinaryHeap::new()),
+                up_views: RefCell::new(BinaryHeap::new()),
+                down_views: RefCell::new(BinaryHeap::new()),
+                performing_layout_down: RefCell::new(false),
                 handle,
                 content_view
             };
@@ -345,13 +353,9 @@ mod window {
             let mut content_borrow = content_copy.borrow_mut_main(s);
             content_borrow.show(&borrow.content_view, &weak_window, stolen_env.deref_mut(), 0u32, s);
 
-            // show did layout up, but for e.g. portals
-            // may still be some dangling layout ups needed
-            borrow.environment.set(Some(stolen_env));
             drop(content_borrow);
-            borrow.layout(true, s);
+            borrow.layout_up(stolen_env.deref_mut(), None, -1, s);
             let mut content_borrow = content_copy.borrow_mut_main(s);
-            let mut stolen_env = borrow.environment.take().unwrap();
 
             // now we must finish the layout down
             let intrinsic = content_borrow.intrinsic_size(s);
@@ -395,46 +399,67 @@ mod window {
             native::window::window_set_title(borrow.handle, &current, s);
         }
 
-        // env is currently right above from
-        // and has to be moved right above to
+        // env is currently right below from
+        // and has to be moved right below to
+        // if it must cross the min_depth, it will return false
+        // (and the env will be left at the "subtree root")
         fn walk_env(
             env: &mut P::Env,
-            from: Arc<MainSlockCell<dyn InnerViewBase<P::Env>>>,
-            to: Arc<MainSlockCell<dyn InnerViewBase<P::Env>>>,
+            curr: &mut Option<Arc<MainSlockCell<dyn InnerViewBase<P::Env>>>>,
+            to: Option<Arc<MainSlockCell<dyn InnerViewBase<P::Env>>>>,
+            curr_depth: &mut i32,
+            min_depth: i32,
             s: MSlock
-        ) {
+        ) -> bool {
             // equalize level
             let mut targ_stack = vec![];
 
-            let mut curr_depth = from.borrow_main(s).depth();
-            let mut targ_depth = to.borrow_main(s).depth();
+            let mut targ_depth = to.as_ref().map(|t| t.borrow_main(s).depth() as i32).unwrap_or(-1);
 
             // FIXME, some borrows can be elided into one
-            let mut curr = from;
             let mut targ = to;
-            while curr_depth > targ_depth {
-                let next = curr.borrow_main(s).superview().unwrap();
-                curr = next;
-                curr.borrow_mut_main(s)
-                    .pop_environment(env, s);
-                curr_depth -= 1;
-            }
-
-            while !std::ptr::addr_eq(curr.as_ptr(), targ.as_ptr()) {
-                if curr_depth == targ_depth {
-                    // need to advance curr as well
-                    let next = curr.borrow_main(s).superview().unwrap();
-                    curr = next;
-                    curr.borrow_mut_main(s)
-                        .pop_environment(env, s);
-                    curr_depth -= 1;
+            while *curr_depth > targ_depth {
+                if *curr_depth == min_depth {
+                    // about to perform double borrow, abort
+                    return false;
                 }
 
-                // remember that we want to be one above the target
-                // so we push to stack only afterwards
-                let next = targ.borrow_main(s).superview().unwrap();
-                targ = next;
-                targ_stack.push(targ.clone());
+                *curr = {
+                    let mut borrow = curr.as_mut().unwrap().borrow_mut_main(s);
+                    borrow.pop_environment(env, s);
+                    borrow.superview()
+                };
+                *curr_depth -= 1;
+            }
+
+            // (while not equal)
+            while !(
+                (curr.is_none() && targ.is_none()) ||
+                    (curr.is_some() && targ.is_some() &&
+                        std::ptr::addr_eq(curr.as_ref().unwrap().as_ptr(), targ.as_ref().unwrap().as_ptr())
+                    )
+            )
+            {
+                if *curr_depth == targ_depth {
+                    if *curr_depth == min_depth {
+                        return false;
+                    }
+
+                    // need to advance curr as well
+                    *curr = {
+                        let mut borrow = curr.as_mut().unwrap().borrow_mut_main(s);
+                        borrow.pop_environment(env, s);
+                        borrow.superview()
+                    };
+                    *curr_depth -= 1;
+                }
+
+                targ = {
+                    let targ_ref = targ.as_mut().unwrap();
+                    targ_stack.push(targ_ref.clone());
+                    let res = targ_ref.borrow_main(s).superview();
+                    res
+                };
                 targ_depth -= 1;
             }
 
@@ -443,6 +468,8 @@ mod window {
                 node.borrow_mut_main(s)
                     .push_environment(env, s);
             }
+
+            true
         }
 
         fn remove_from_app(&self, s: MSlock) {
@@ -478,128 +505,147 @@ mod window {
             self.handle
         }
 
-        fn layout(&self, up_only: bool, s: MSlock) {
-            // layout down queue
-            // layout up queue is stored in self
-            // and may change by invalidations
-            let mut layout_down: BinaryHeap<InvalidatedEntry<P::Env>> = BinaryHeap::new();
+        fn layout_full(&self, s: MSlock) {
             let mut env = self.environment.take().unwrap();
-            // the environment is right above this node
-            let mut env_spot = self.content_view.clone();
+            self.layout_up(env.deref_mut(), None, -1, s);
 
-            loop {
-                /* decide what to do next */
-                let has_up = if !self.invalidated_views.borrow().is_empty() {
-                    true
-                }
-                else if !up_only && !layout_down.is_empty() {
-                    false
-                }
-                else {
-                    break;
+            // handle layout down
+            *self.performing_layout_down.borrow_mut() = true;
+            let mut env_spot = None;
+            let mut env_depth: i32 = -1;
+            while let Some(curr) = self.down_views.borrow_mut().pop() {
+                /* ensure that view is still valid */
+                let Some(view) = curr.view.upgrade() else {
+                    continue;
                 };
 
-                if has_up {
-                    let curr = self.invalidated_views
-                        .borrow_mut().pop().unwrap();
-
-                    let Some(view) = curr.view.upgrade() else {
-                        continue;
-                    };
-
-                    let borrow = view.borrow_main(s);
-
-                    /* make sure it doesn't have a newer entry */
-                    if borrow.depth() as i32 != curr.depth || !borrow.needs_layout_up() {
-                        continue;
-                    }
-
-                    // move environment to target
-                    Self::walk_env(env.deref_mut(), env_spot.clone(), view.clone(), s);
-
-                    drop(borrow);
-                    let mut borrow = view.borrow_mut_main(s);
-
-                    let superview = borrow.superview();
-                    if borrow.layout_up(&view, env.deref_mut(), s) && superview.is_some() {
-                        // we have to schedule parent
-                        let unwrapped = superview.unwrap();
-                        unwrapped.borrow_mut_main(s)
-                            .set_needs_layout_up();
-
-                        self.invalidated_views.borrow_mut()
-                            .push(InvalidatedEntry {
-                                view: Arc::downgrade(&unwrapped),
-                                depth: curr.depth - 1
-                            });
-                    }
-                    else {
-                        // schedule down layout of self
-                        layout_down.push(InvalidatedEntry {
-                            view: Arc::downgrade(&view),
-                            // invert ordering
-                            depth: -curr.depth
-                        });
-                    }
+                let borrow = view.borrow_main(s);
+                /* make sure it doesn't have a newer entry */
+                if borrow.depth() as i32 != -curr.depth || !borrow.needs_layout_down() {
+                    continue;
                 }
-                else {
-                    let curr = layout_down.pop().unwrap();
 
-                    /* ensure that view is still valid */
-                    let Some(view) = curr.view.upgrade() else {
-                        continue;
-                    };
+                drop(borrow);
+                debug_assert!(Self::walk_env(env.deref_mut(), &mut env_spot, Some(view.clone()), &mut env_depth, -1, s));
+                let mut borrow = view.borrow_mut_main(s);
 
-                    let borrow = view.borrow_main(s);
-                    /* make sure it doesn't have a newer entry */
-                    if borrow.depth() as i32 != -curr.depth || !borrow.needs_layout_down() {
-                        continue;
-                    }
+                // try to layout down
+                // if fail must mean we need to schedule a new layout of the parent
+                // as this node requires context
+                if let Err(_) = borrow.try_layout_down(&view, env.deref_mut(), None, s) {
+                    // superview must exist since otherwise layout
+                    // wouldn't have failed
+                    let superview = borrow.superview().unwrap();
+                    superview.borrow_mut_main(s).set_needs_layout_down();
 
-                    // move environment to (right above) target
-                    Self::walk_env(env.deref_mut(), env_spot.clone(), view.clone(), s);
-
-                    drop(borrow);
-                    let mut borrow = view.borrow_mut_main(s);
-
-                    // try to layout down
-                    // if fail must mean we need to schedule a new layout of the parent
-                    // as this node requires context
-                    if let Err(_) = borrow.try_layout_down(&view, env.deref_mut(), None, s) {
-                        // superview must exist since otherwise layout
-                        // wouldn't have failed
-                        let superview = borrow.superview().unwrap();
-                        superview.borrow_mut_main(s).set_needs_layout_down();
-
-                        layout_down.push(InvalidatedEntry {
+                    self.down_views.borrow_mut()
+                        .push(InvalidatedEntry {
                             view: Arc::downgrade(&superview),
                             // note the negative ops for reverse ordering of depth
                             depth: curr.depth + 1
                         });
-                    }
-
-                    drop(borrow);
-                    // move the env pointer to the current view
-                    env_spot = view;
                 }
             }
 
-            // put back env to root
-            Self::walk_env(env.deref_mut(), env_spot, self.content_view.clone(), s);
+            Self::walk_env(env.deref_mut(), &mut env_spot, None, &mut env_depth, -1, s);
             self.environment.set(Some(env));
+            *self.performing_layout_down.borrow_mut() = false;
 
-            // maybe init dimensions of view
-            // (not done on initial pass, since that will be handled in mount_content_view)
-            if !up_only {
-                self.set_dimensions_of_window(self.content_view.borrow_mut_main(s).deref_mut(), s);
-            }
+            self.set_dimensions_of_window(self.content_view.borrow_mut_main(s).deref_mut(), s);
         }
     }
 
     impl<P> WindowEnvironmentBase<P::Env> for Window<P> where P: WindowProvider {
+        fn layout_up(&self, env: &mut P::Env, right_below: Option<Arc<MainSlockCell<dyn InnerViewBase<P::Env>>>>, depth: i32, s: MSlock) {
+            // the environment is right above this node
+            let mut env_spot = right_below.clone();
+            let mut env_depth = depth;
+
+            // generally very rare (some portals outside of subtree)
+            let mut unhandled = vec![];
+            while !self.up_views.borrow().is_empty() {
+                let curr = {
+                    let mut borrow = self.up_views.borrow_mut();
+                    // finished subtree
+                    if borrow.peek().unwrap().depth <= depth {
+                        break;
+                    }
+
+                    borrow.pop().unwrap()
+                };
+
+                let Some(view) = curr.view.upgrade() else {
+                    continue;
+                };
+
+                let view_borrow = view.borrow_main(s);
+
+                /* make sure it doesn't have a newer entry */
+                if view_borrow.depth() as i32 != curr.depth || !view_borrow.needs_layout_up() {
+                    continue;
+                }
+
+                // move environment to target
+                drop(view_borrow);
+                if !Self::walk_env(env, &mut env_spot.clone(), Some(view.clone()), &mut env_depth, depth, s) {
+                    // must be out of scope, mark as unhandled
+                    unhandled.push(curr);
+                    continue;
+                }
+
+                let mut view_mut_borrow = view.borrow_mut_main(s);
+
+                let superview = view_mut_borrow.superview();
+                if view_mut_borrow.layout_up(&view, env, s) && superview.is_some() {
+                    // we have to schedule parent (if it's in range)
+                    let unwrapped = superview.unwrap();
+                    if view_mut_borrow.depth() != (depth + 1) as u32 {
+                        unwrapped.borrow_mut_main(s)
+                            .set_needs_layout_up();
+                    }
+                    else {
+                        // I believe we actually don't have to do anything
+                        // as this can only happen during a layout_up call of `right_below`
+                        // and thus the parent is already performing its layout up
+                        // so there is no need to even add it to unhandled
+                    }
+
+                    self.up_views.borrow_mut()
+                        .push(InvalidatedEntry {
+                            view: Arc::downgrade(&unwrapped),
+                            depth: curr.depth - 1
+                        });
+                }
+                else {
+                    // schedule down layout of self
+                    self.down_views.borrow_mut()
+                        .push(InvalidatedEntry {
+                            view: Arc::downgrade(&view),
+                            // invert ordering
+                            depth: -curr.depth
+                        });
+                }
+            }
+
+            let mut up_views = self.up_views.borrow_mut();
+            for not_done in unhandled {
+                up_views.push(not_done);
+            }
+
+            // put back env to root
+            // for complex borrowing reasons, we can't just do right_below
+            // as the target (as then it will have to measure right_below's depth, multiple borrow)
+            // instead we just tell it to try to walk all the way to the actual root
+            // but make sure it never crosses the min_depth, and hence get the desired behavior
+            // of moving it to right_below without any multiple borrows
+            Self::walk_env(env, &mut env_spot, None, &mut env_depth, depth, s);
+        }
+
         fn invalidate_view(&self, handle: Weak<MainSlockCell<dyn WindowEnvironmentBase<P::Env>>>, view: Weak<MainSlockCell<dyn InnerViewBase<P::Env>>>, depth: u32, s: Slock) {
+            assert!(!*self.performing_layout_down.borrow(), "Cannot call invalidator while performing layout down (try to move to layout_up instead)!");
+
             // note that we're only touching send parts of self
-            let mut borrow = self.invalidated_views.borrow_mut();
+            let mut borrow = self.up_views.borrow_mut();
             if borrow.is_empty() {
                 // schedule a layout
                 let native_handle = self.handle;

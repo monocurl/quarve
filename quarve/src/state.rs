@@ -1985,9 +1985,10 @@ mod store {
 
             fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<S::Action, S>, skip_filters: bool, s: Slock<'_, impl ThreadMarker>) {
                 #[cfg(debug_assertions)] {
-                    debug_assert_ne!(s.owner.debug_info.applying_transaction.borrow().len(), 0, "Fatal: derived store \
-                    changed in a context that was NOT initiated by the change of another store. \
-                    Derived store, being 'derived', must only be a function of other state variables. ");
+                    // Theoretically, someone may want to do an "async" derived store so this is left as an option
+                    // debug_assert_ne!(s.owner.debug_info.applying_transaction.borrow().len(), 0, "Fatal: derived store \
+                    // changed in a context that was NOT initiated by the change of another store. \
+                    // Derived store, being 'derived', must only be a function of other state variables. ");
                     s.owner.debug_info.applying_transaction.borrow_mut().push(Arc::as_ptr(arc) as usize);
                 }
 

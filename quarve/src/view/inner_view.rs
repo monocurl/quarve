@@ -19,6 +19,7 @@ pub(crate) trait InnerViewBase<E> where E: Environment {
     fn backing(&self) -> *mut c_void;
 
     /* tree methods */
+    fn window(&self) -> &Option<Weak<MainSlockCell<dyn WindowEnvironmentBase<E>>>>;
     fn superview(&self) -> Option<Arc<MainSlockCell<dyn InnerViewBase<E>>>>;
     fn set_superview(&mut self, superview: Option<Weak<MainSlockCell<dyn InnerViewBase<E>>>>);
     fn graph(&mut self) -> &mut Graph<E>;
@@ -109,6 +110,7 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
 
     // returns position of rect
     // in superview coordinate system
+    // expects environment to be below this view
     pub(super) fn layout_down_with_context(
         &mut self,
         this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>,
@@ -130,15 +132,11 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
             || suggested.size() != self.last_suggested.size();
 
         let (view_frame, exclusion) = if actually_needs_layout {
-            self.provider.push_environment(env.variable_env_mut(), s);
-
             let subtree = Subtree {
                 graph: &mut self.graph,
                 owner: this,
             };
             let (actual_frame, exclusion) = self.provider.layout_down(&subtree, suggested.size(), context, &mut EnvRef(env), s);
-
-            self.provider.pop_environment(env.variable_env_mut(), s);
 
             /* children were mounted with respect to the origin, but the used may translate
                that somewhat, so we must negate this account
@@ -214,6 +212,10 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
     // unowned
     fn backing(&self) -> *mut c_void {
         self.graph.backing.0
+    }
+
+    fn window(&self) -> &Option<Weak<MainSlockCell<dyn WindowEnvironmentBase<E>>>> {
+        &self.graph.window
     }
 
     fn superview(&self) -> Option<Arc<MainSlockCell<dyn InnerViewBase<E>>>> {
@@ -359,13 +361,6 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
             self.graph.backing = self.provider.init_backing(invalidator, &mut subtree, None, &mut handle, s);
         }
 
-        // we do NOT ask the window to invalidate this view
-        // instead, we only calculate layout_up after children do
-        // in all other cases layout_down will generally be called
-        // by the parent at some point in the future
-        self.needs_layout_up = true;
-        self.needs_layout_down = true;
-
         /* main notifications to provider and subtree */
         self.provider.pre_show(s);
         for (i, subview) in self.graph.subviews.iter().enumerate() {
@@ -385,10 +380,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         }
         self.provider.post_show(s);
 
-        // layout up now that subtree has done layout_up
-        // again, in most scenarios parent will call
-        // layout_down very soon (though technically not guaranteed)
-        self.layout_up(this, e, s);
+        self.invalidate(Arc::downgrade(this), s.as_general_slock());
 
         /* pop environment */
         self.pop_environment(e, s);
@@ -510,7 +502,23 @@ pub struct Subtree<'a, E> where E: Environment {
 }
 
 impl<'a, E> Subtree<'a, E> where E: Environment {
-    pub fn remove_subview_at(&mut self, index: usize, s: MSlock<'_>) {
+    pub fn len(&self) -> usize {
+        self.graph.subviews.len()
+    }
+
+    fn ensure_subtree_has_layout_up_done(&mut self, env: &mut EnvRef<E>, s: MSlock) {
+        let (window, depth) =
+            (self.graph.window
+                .as_ref()
+                .and_then(|w| w.upgrade())
+                .unwrap(),
+             self.graph.depth);
+
+        window.borrow_main(s)
+            .layout_up(env.0, Some(self.owner.clone()), depth as i32, s);
+    }
+
+    pub fn remove_subview_at(&mut self, index: usize, env: &mut EnvRef<E>, s: MSlock<'_>) {
         // remove from backing
         if !self.graph.backing.0.is_null() {
             view_remove_child(self.graph.backing.0, index, s);
@@ -520,38 +528,81 @@ impl<'a, E> Subtree<'a, E> where E: Environment {
         let mut borrow = removed.borrow_mut_main(s);
         borrow.set_superview(None);
         borrow.hide(s);
+
+        self.ensure_subtree_has_layout_up_done(env, s);
     }
 
-    pub fn remove_subview<P>(&mut self, subview: &View<E, P>, s: MSlock<'_>) where P: ViewProvider<E> {
+    pub fn remove_subview<P>(&mut self, subview: &View<E, P>, env: &mut EnvRef<E>, s: MSlock<'_>) where P: ViewProvider<E> {
         let comp = subview.0.clone() as Arc<MainSlockCell<dyn InnerViewBase<E>>>;
         let index = self.graph.subviews.iter()
             .position(|u| Arc::ptr_eq(u, &comp))
             .expect("Input view should be a child of the current view");
 
-        self.remove_subview_at(index, s);
+        self.remove_subview_at(index, env, s);
     }
 
     pub fn clear_subviews(&mut self, s: MSlock) {
         self.graph.clear_subviews(s)
+
+        // note that we need not ensure subtree has layout_up done in this case
+        // since we are clearing the entire thing
+        // (it may still be possible a "lower" view needs layout up
+        // in the event that a portal sender in this subtree was removed causing an
+        // invalidation of a receiver in some other subtree
+        // but we don't really care about that)
+    }
+
+    // FIXME remove duplicate logic at some point?
+    // this method should only be called by portals
+    pub(crate) fn insert_arc_even_if_mounted_on_another_view(&mut self, subview: Arc<MainSlockCell<dyn InnerViewBase<E>>>, index: usize, env: &mut EnvRef<E>, s: MSlock) {
+        let mut borrow = subview.borrow_mut_main(s);
+
+        // forcefully override checks for prior view
+        borrow.set_superview(None);
+        if borrow.depth() != u32::MAX {
+            borrow.hide(s);
+        }
+
+        if self.graph.depth != u32::MAX {
+            let weak = self.graph.window.as_ref().unwrap().clone();
+            let subview_this = subview.clone();
+            borrow.show(&subview_this, &weak, env.0, self.graph.depth + 1, s);
+        }
+
+        borrow.set_superview(Some(Arc::downgrade(self.owner)));
+        self.graph.subviews.insert(index, subview.clone());
+
+        // add to backing
+        if !self.graph.backing.0.is_null() {
+            view_add_child_at(self.graph.backing.0, borrow.backing(), index, s);
+        }
+
+        drop(borrow);
+        self.ensure_subtree_has_layout_up_done(env, s);
     }
 
     // note that cyclic is technically possible if you work hard enough
     // but this will often just result in a stall or other weird effects
     pub fn insert_subview<P>(&mut self, subview: &View<E, P>, index: usize, env: &mut EnvRef<E>, s: MSlock<'_>) where P: ViewProvider<E> {
-        subview.0.borrow_mut_main(s).set_superview(Some(Arc::downgrade(self.owner)));
         self.graph.subviews.insert(index, subview.0.clone());
+        let mut borrow = subview.0.borrow_mut_main(s);
+        borrow.set_superview(Some(Arc::downgrade(self.owner)));
+
 
         // 1. we are currently mounted
         if self.graph.depth != u32::MAX {
             let weak = self.graph.window.as_ref().unwrap().clone();
             let subview_this = subview.0.clone() as Arc<MainSlockCell<dyn InnerViewBase<E>>>;
-            subview.0.borrow_mut_main(s).show(&subview_this, &weak, env.0, self.graph.depth + 1, s);
+            borrow.show(&subview_this, &weak, env.0, self.graph.depth + 1, s);
         }
 
         // add to backing
         if !self.graph.backing.0.is_null() {
-            view_add_child_at(self.graph.backing.0, subview.0.borrow_main(s).backing(), index, s);
+            view_add_child_at(self.graph.backing.0, borrow.backing(), index, s);
         }
+
+        drop(borrow);
+        self.ensure_subtree_has_layout_up_done(env, s);
     }
 
     pub fn push_subview<P>(&mut self, subview: &View<E, P>, env: &mut EnvRef<E>, s: MSlock<'_>) where P: ViewProvider<E> {

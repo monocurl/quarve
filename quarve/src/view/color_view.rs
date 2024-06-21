@@ -90,7 +90,7 @@ impl<E: Environment, S: Signal<Color>> IntoViewProvider<E> for ColorView<S> {
     }
 }
 
-struct EmptyView;
+pub struct EmptyView;
 
 impl<E: Environment> IntoViewProvider<E> for EmptyView {
     type UpContext = ();

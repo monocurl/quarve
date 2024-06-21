@@ -47,7 +47,7 @@ mod callbacks {
     extern "C" fn front_window_layout(handle: FatPointer) {
         let s = slock_main_owner();
 
-        handle.into_window().layout(false, s.marker())
+        handle.into_window().layout_full(s.marker())
     }
 
     #[no_mangle]
