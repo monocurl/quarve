@@ -1555,10 +1555,6 @@ mod when_modifier {
 }
 pub use when_modifier::*;
 
-mod tree_modifier {
-    // TODO once portals are done
-}
-
 mod env_modifier {
     use std::marker::PhantomData;
     use crate::core::{Environment, MSlock};
