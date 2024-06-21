@@ -5,6 +5,7 @@ use crate::state::{FixedSignal, Signal, SignalOrValue};
 use crate::util::geo::{Rect, ScreenUnit, Size};
 use crate::view::util::Color;
 use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, ViewProvider};
+use crate::view::modifers::FrameModifiable;
 
 pub struct ColorView<S>(SignalOrValue<Color, S>, *mut c_void) where S: Signal<Color>;
 
@@ -33,7 +34,7 @@ impl<E, S: Signal<Color>> ViewProvider<E> for ColorView<S> where E: Environment 
     }
 
     fn xstretched_size(&mut self, _s: MSlock) -> Size {
-        Size::new(ScreenUnit::INFINITY, ScreenUnit::INFINITY)
+        Size::new(1e6, 1e6)
     }
 
     fn ysquished_size(&mut self, _s: MSlock) -> Size {
@@ -41,7 +42,7 @@ impl<E, S: Signal<Color>> ViewProvider<E> for ColorView<S> where E: Environment 
     }
 
     fn ystretched_size(&mut self, _s: MSlock) -> Size {
-        Size::new(ScreenUnit::INFINITY, ScreenUnit::INFINITY)
+        Size::new(1e6, 1e6)
     }
 
     fn up_context(&mut self, _s: MSlock) -> Self::UpContext {
@@ -96,7 +97,9 @@ impl<E: Environment> IntoViewProvider<E> for EmptyView {
     type UpContext = ();
     type DownContext = ();
 
-    fn into_view_provider(self, _env: &E::Const, _s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
-        ColorView::new(Color::transparent())
+    fn into_view_provider(self, env: &E::Const, s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
+        Color::transparent()
+            .frame(|f| f.intrinsic(0, 0))
+            .into_view_provider(env, s)
     }
 }

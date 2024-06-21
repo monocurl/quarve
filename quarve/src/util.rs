@@ -434,8 +434,18 @@ pub mod geo {
     }
 
     #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+    pub enum VerticalDirection {
+        Down, Up
+    }
+
+    #[derive(Copy, Clone, PartialEq, Eq, Debug)]
     pub enum VerticalAlignment {
         Bottom, Center, Top
+    }
+
+    #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+    pub enum HorizontalDirection {
+        Left, Right
     }
 
     #[derive(Copy, Clone, PartialEq, Eq, Debug)]

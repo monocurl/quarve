@@ -214,7 +214,7 @@ mod window {
         /* delegate methods */
         fn can_close(&self, s: MSlock<'_>) -> bool;
 
-        fn get_handle(&self) -> WindowHandle;
+        fn handle(&self) -> WindowHandle;
 
         fn layout_full(&self, s: MSlock);
     }
@@ -478,7 +478,7 @@ mod window {
                 app.get().unwrap()
                     .windows
                     .borrow_mut()
-                    .retain(|window| window.borrow_main(s).get_handle() != self.handle);
+                    .retain(|window| window.borrow_main(s).handle() != self.handle);
             });
         }
 
@@ -501,7 +501,7 @@ mod window {
             can_close
         }
 
-        fn get_handle(&self) -> WindowHandle {
+        fn handle(&self) -> WindowHandle {
             self.handle
         }
 

@@ -4,8 +4,9 @@ use quarve::view::{ViewProvider, IntoViewProvider};
 use quarve::view::layout::*;
 use quarve::view::portal::*;
 use quarve::{hstack};
+use quarve::util::geo::{HorizontalDirection, VerticalAlignment};
 use quarve::view::color_view::{EmptyView};
-use quarve::view::modifers::{FrameModifiable, WhenModifiable};
+use quarve::view::modifers::{FrameModifiable, LayerModifiable, WhenModifiable};
 use quarve::view::portal::Portal;
 use quarve::view::util::Color;
 
@@ -69,7 +70,7 @@ impl quarve::core::WindowProvider for WindowProvider {
         let black_box =
             Color::black().intrinsic(100, 100);
 
-        VStack::hetero()
+        HStack::hetero_options(|o| o.direction(HorizontalDirection::Right).align(VerticalAlignment::Bottom))
             .push(EmptyView)
             .push(
                 EmptyView
@@ -81,13 +82,13 @@ impl quarve::core::WindowProvider for WindowProvider {
                 EmptyView
             )
             .push(
+                Color::new(0, 0, 100)
+            )
+            .push(
                 Color::new(100, 0, 0).intrinsic(400, 100)
             )
             .push(
                 PortalReceiver::new(&p)
-            )
-            .push(
-                Color::new(0, 0, 100).intrinsic(400, 100)
             )
             .push(
                 EmptyView
@@ -95,6 +96,8 @@ impl quarve::core::WindowProvider for WindowProvider {
                         v.portal_sender(&p, black_box)
                     })
             )
+            .frame(|f| f.intrinsic(900, 900).unlimited_stretch())
+            .layer(|l| l.border(Color::black(), 1))
             .into_view_provider(env, s)
     }
 }

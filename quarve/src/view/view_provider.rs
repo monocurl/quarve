@@ -169,7 +169,7 @@ impl<E, P, U> ViewProvider<E> for UpContextAdapter<E, P, U>
     }
 
     fn xstretched_size(&mut self, s: MSlock) -> Size {
-        self.0.ysquished_size(s)
+        self.0.xstretched_size(s)
     }
 
     fn ysquished_size(&mut self, s: MSlock) -> Size {

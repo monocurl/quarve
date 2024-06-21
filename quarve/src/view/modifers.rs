@@ -682,7 +682,17 @@ mod provider_modifier {
         }
 
         pub fn unlimited_stretch(self) -> Frame {
-            self.stretched(ScreenUnit::INFINITY, ScreenUnit::INFINITY)
+            self.stretched(1e6, 1e6)
+        }
+
+        pub fn unlimited_width(self) -> Frame {
+            let height = self.intrinsic.expect("This method should be called after setting intrinsic").h;
+            self.stretched(1e6, height)
+        }
+
+        pub fn unlimited_height(self) -> Frame {
+            let width = self.intrinsic.expect("This method should be called after setting intrinsic").w;
+            self.stretched(width, 1e6)
         }
     }
 
@@ -744,7 +754,7 @@ mod provider_modifier {
             }
 
             subtree.translate_post_layout_down(translation, s);
-            (view.translate(translation), used.translate(translation))
+            (view.translate(translation), chosen.full_rect())
         }
     }
 

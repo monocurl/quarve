@@ -384,7 +384,7 @@ mod vec_layout {
             fn into_layout(self, env: &E::Const, build: impl HeteroVPNode<E, U, D>, s: MSlock) -> impl HeteroVPNode<E, U, D>;
         }
 
-        trait HeteroVPNodeBase<E, U, D>: 'static where E: Environment, U: 'static, D: 'static {
+        pub trait HeteroVPNodeBase<E, U, D>: 'static where E: Environment, U: 'static, D: 'static {
             fn next(&self) -> &dyn HeteroVPNodeBase<E, U, D>;
             fn view(&self) -> Option<&dyn ViewRef<E, UpContext=U, DownContext=D>>;
         }
@@ -882,7 +882,8 @@ mod vec_layout {
                                 for i in range.into_iter().rev() {
                                     subtree.remove_subview_at(i, env, s);
                                 }
-                            }
+                            },
+                            _ => unreachable!()
                         }
                     }
                 }
@@ -1143,7 +1144,7 @@ mod vec_layout {
     mod vstack {
         use crate::core::{Environment, MSlock};
         use crate::util::{FromOptions};
-        use crate::util::geo::{HorizontalAlignment, Point, Rect, ScreenUnit, Size};
+        use crate::util::geo::{HorizontalAlignment, Point, Rect, ScreenUnit, Size, VerticalDirection};
         use crate::view::layout::{VecLayoutProvider};
         use crate::view::{EnvRef, TrivialContextViewRef, ViewRef};
         use crate::view::util::SizeContainer;
@@ -1153,14 +1154,16 @@ mod vec_layout {
 
         pub struct VStackOptions {
             spacing: ScreenUnit,
-            alignment: HorizontalAlignment
+            alignment: HorizontalAlignment,
+            direction: VerticalDirection
         }
 
         impl Default for VStackOptions {
             fn default() -> Self {
                 VStackOptions {
                     spacing: 10.0,
-                    alignment: HorizontalAlignment::Center
+                    alignment: HorizontalAlignment::Center,
+                    direction: VerticalDirection::Down
                 }
             }
         }
@@ -1173,6 +1176,11 @@ mod vec_layout {
 
             pub fn align(mut self, alignment: HorizontalAlignment) -> Self {
                 self.alignment = alignment;
+                self
+            }
+
+            pub fn direction(mut self, direction: VerticalDirection) -> Self {
+                self.direction = direction;
                 self
             }
         }
@@ -1269,6 +1277,7 @@ mod vec_layout {
                 let mut elapsed = 0.0;
                 let mut total_w: f64 = 0.0;
                 let sv_clone = subviews.clone();
+                let mut extra_spacing = 0.0;
                 for view in subviews {
                     let intrinsic = view.intrinsic_size(s);
                     let other = if shrink {
@@ -1278,26 +1287,37 @@ mod vec_layout {
                         view.ystretched_size(s)
                     };
                     let alotted = intrinsic.h * (1.0 - factor) + factor * other.h;
-                    let used = view.layout_down(Rect::new(0.0, elapsed, intrinsic.w, alotted), env, s);
+                    let used = view.layout_down(Rect::new(0.0, elapsed, frame.w, alotted), env, s);
                     elapsed += used.h + self.1.spacing;
                     total_w = total_w.max(used.w);
-                }
-
-                elapsed = 0.0;
-                let mut extra_spacing = 0.0;
-                for view in sv_clone {
-                    let used = view.used_rect(s);
-                    let target = match self.1.alignment {
-                        HorizontalAlignment::Leading => Point::new(0.0, elapsed),
-                        HorizontalAlignment::Center => Point::new(total_w / 2.0 - used.w / 2.0, elapsed),
-                        HorizontalAlignment::Trailing => Point::new(total_w - used.w, elapsed),
-                    };
-                    view.translate_post_layout_down(Point::new(target.x - used.x, target.y - used.y), s);
-                    elapsed += used.h + self.1.spacing;
                     extra_spacing = self.1.spacing;
                 }
 
-                Rect::new(0.0, 0.0, total_w, elapsed - extra_spacing)
+                let total_h = elapsed - extra_spacing;
+                elapsed = match self.1.direction {
+                    VerticalDirection::Down => elapsed,
+                    VerticalDirection::Up => 0.0
+                };
+                for view in sv_clone {
+                    let used = view.used_rect(s);
+                    let target_x = match self.1.alignment {
+                        HorizontalAlignment::Leading => 0.0,
+                        HorizontalAlignment::Center => total_w / 2.0 - used.w / 2.0,
+                        HorizontalAlignment::Trailing => total_w - used.w,
+                    };
+                    match self.1.direction {
+                        VerticalDirection::Down => {
+                            elapsed -= used.h + self.1.spacing;
+                            view.translate_post_layout_down(Point::new(target_x - used.x, elapsed - used.y), s);
+                        }
+                        VerticalDirection::Up => {
+                            view.translate_post_layout_down(Point::new(target_x - used.x, elapsed - used.y), s);
+                            elapsed += used.h + self.1.spacing;
+                        }
+                    }
+                }
+
+                Rect::new(0.0, 0.0, total_w, total_h)
             }
         }
     }
@@ -1306,7 +1326,7 @@ mod vec_layout {
     mod hstack {
         use crate::core::{Environment, MSlock};
         use crate::util::FromOptions;
-        use crate::util::geo::{Point, Rect, ScreenUnit, Size, VerticalAlignment};
+        use crate::util::geo::{HorizontalAlignment, HorizontalDirection, Point, Rect, ScreenUnit, Size, VerticalAlignment, VerticalDirection};
         use crate::view::layout::{VecLayoutProvider};
         use crate::view::{EnvRef, TrivialContextViewRef, ViewRef};
         use crate::view::util::SizeContainer;
@@ -1315,14 +1335,16 @@ mod vec_layout {
 
         pub struct HStackOptions {
             spacing: ScreenUnit,
-            alignment: VerticalAlignment
+            alignment: VerticalAlignment,
+            direction: HorizontalDirection
         }
 
         impl Default for HStackOptions {
             fn default() -> Self {
                 HStackOptions {
                     spacing: 10.0,
-                    alignment: VerticalAlignment::Center
+                    alignment: VerticalAlignment::Center,
+                    direction: HorizontalDirection::Right
                 }
             }
         }
@@ -1335,6 +1357,11 @@ mod vec_layout {
 
             pub fn align(mut self, alignment: VerticalAlignment) -> Self {
                 self.alignment = alignment;
+                self
+            }
+
+            pub fn direction(mut self, direction: HorizontalDirection) -> Self {
+                self.direction = direction;
                 self
             }
         }
@@ -1388,7 +1415,7 @@ mod vec_layout {
                     .reduce(|mut new, curr| {
                         for i in 0..SizeContainer::num_sizes() {
                             new[i].h = new[i].h.max(curr[i].h);
-                            new[i].w += curr[i].w;
+                            new[i].w += curr[i].w + self.1.spacing;
                         }
                         new
                     })
@@ -1430,6 +1457,7 @@ mod vec_layout {
                 let mut elapsed = 0.0;
                 let mut total_h: f64 = 0.0;
                 let sv_clone = subviews.clone();
+                let mut extra_spacing = 0.0;
                 for view in subviews {
                     let intrinsic = view.intrinsic_size(s);
                     let other = if shrink {
@@ -1439,33 +1467,157 @@ mod vec_layout {
                         view.xstretched_size(s)
                     };
                     let alotted = intrinsic.w * (1.0 - factor) + factor * other.w;
-                    let used = view.layout_down(Rect::new(elapsed, 0.0, alotted, intrinsic.h), env, s);
+                    let used = view.layout_down(Rect::new(elapsed, 0.0, alotted, frame.h), env, s);
                     elapsed += used.w + self.1.spacing;
-                    total_h = total_h.max(used.w);
-                }
-
-                elapsed = 0.0;
-                let mut extra_spacing = 0.0;
-                for view in sv_clone {
-                    let used = view.used_rect(s);
-                    let target = match self.1.alignment {
-                        VerticalAlignment::Bottom => Point::new(elapsed, 0.0),
-                        VerticalAlignment::Center => Point::new(elapsed, total_h / 2.0 - used.h / 2.0),
-                        VerticalAlignment::Top => Point::new(elapsed, total_h - used.h),
-                    };
-                    view.translate_post_layout_down(Point::new(target.x - used.x, target.y - used.y), s);
-                    elapsed += used.h + self.1.spacing;
+                    total_h = total_h.max(used.h);
                     extra_spacing = self.1.spacing;
                 }
 
-                Rect::new(0.0, 0.0, elapsed - extra_spacing, total_h)
+                let total_w = elapsed - extra_spacing;
+                elapsed = match self.1.direction {
+                    HorizontalDirection::Left => elapsed,
+                    HorizontalDirection::Right => 0.0
+                };
+                for view in sv_clone {
+                    let used = view.used_rect(s);
+                    let target_y = match self.1.alignment {
+                        VerticalAlignment::Bottom => 0.0,
+                        VerticalAlignment::Center => total_h / 2.0 - used.h / 2.0,
+                        VerticalAlignment::Top => total_h - used.h,
+                    };
+                    match self.1.direction {
+                        HorizontalDirection::Left => {
+                            elapsed -= used.w + self.1.spacing;
+                            view.translate_post_layout_down(Point::new(elapsed - used.x, target_y - used.y), s);
+                        }
+                        HorizontalDirection::Right => {
+                            view.translate_post_layout_down(Point::new(elapsed - used.x, target_y - used.y), s);
+                            elapsed += used.w + self.1.spacing;
+                        }
+                    }
+                }
+
+                Rect::new(0.0, 0.0, total_w, total_h)
             }
         }
     }
     pub use hstack::*;
 
     mod zstack {
-        pub struct ZStack {}
+        use crate::core::{Environment, MSlock};
+        use crate::util::FromOptions;
+        use crate::util::geo::{Alignment, HorizontalAlignment, Point, Rect, Size, VerticalAlignment};
+        use crate::view::{EnvRef, TrivialContextViewRef, ViewRef};
+        use crate::view::layout::VecLayoutProvider;
+        use crate::view::util::SizeContainer;
+
+        pub struct ZStack(SizeContainer, ZStackOptions);
+
+        #[derive(Default)]
+        pub struct ZStackOptions {
+            alignment: Alignment
+        }
+
+        impl FromOptions for ZStack {
+            type Options = ZStackOptions;
+
+            fn from_options(options: Self::Options) -> Self {
+                ZStack(SizeContainer::default(), options)
+            }
+
+            fn options(&mut self) -> &mut Self::Options {
+                &mut self.1
+            }
+        }
+
+        impl<E> VecLayoutProvider<E> for ZStack where E: Environment {
+            type DownContext = ();
+            type UpContext = ();
+            type SubviewDownContext = ();
+            type SubviewUpContext = ();
+
+            fn intrinsic_size(&mut self, _s: MSlock) -> Size {
+                self.0.intrinsic()
+            }
+
+            fn xsquished_size(&mut self, _s: MSlock) -> Size {
+                self.0.xsquished()
+            }
+
+            fn ysquished_size(&mut self, _s: MSlock) -> Size {
+                self.0.ysquished()
+            }
+
+            fn xstretched_size(&mut self, _s: MSlock) -> Size {
+                self.0.xstretched()
+            }
+
+            fn ystretched_size(&mut self, _s: MSlock) -> Size {
+                self.0.ystretched()
+            }
+
+            fn up_context(&mut self, _s: MSlock) -> Self::UpContext {
+                ()
+            }
+
+            fn layout_up<'a, P>(&mut self, subviews: impl Iterator<Item=&'a P> + Clone, env: &mut EnvRef<E>, s: MSlock) -> bool where P: ViewRef<E, DownContext=Self::SubviewDownContext, UpContext=Self::SubviewUpContext> + ?Sized + 'a {
+                let mut new = SizeContainer::default();
+                for subview in subviews {
+                    let sizes = subview.sizes(s);
+                    for i in 0 .. SizeContainer::num_sizes() {
+                        new[i].w = new[i].w.max(sizes[i].w);
+                        new[i].h = new[i].h.max(sizes[i].w);
+                    }
+                }
+
+                if new != self.0 {
+                    self.0 = new;
+                    true
+                }
+                else {
+                    false
+                }
+            }
+
+            fn layout_down<'a, P>(&mut self, subviews: impl Iterator<Item=&'a P> + Clone, frame: Size, context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> Rect where P: ViewRef<E, DownContext=Self::SubviewDownContext, UpContext=Self::SubviewUpContext> + ?Sized + 'a {
+                let mut used = Size::default();
+                let sv_clone = subviews.clone();
+                for subview in subviews {
+                    let subused = subview.layout_down(frame.full_rect(), env, s);
+                    used.w = used.w.max(subused.w);
+                    used.h = used.h.max(subused.h);
+                }
+
+                for subview in sv_clone {
+                    let subused = subview.used_rect(s);
+                    let x = match self.1.alignment.horizontal() {
+                        HorizontalAlignment::Leading => {
+                            0.0
+                        }
+                        HorizontalAlignment::Center => {
+                            used.w / 2.0 - subused.w / 2.0
+                        }
+                        HorizontalAlignment::Trailing => {
+                            used.w - subused.w
+                        }
+                    };
+                    let y = match self.1.alignment.vertical() {
+                        VerticalAlignment::Bottom => {
+                            0.0
+                        }
+                        VerticalAlignment::Center => {
+                            used.h / 2.0 - subused.h / 2.0
+                        }
+                        VerticalAlignment::Top => {
+                            used.h - subused.h
+                        }
+                    };
+                    subview.translate_post_layout_down(Point::new(x - subused.x, y - subused.y), s);
+                }
+
+                used.full_rect()
+            }
+        }
     }
     pub use zstack::*;
 

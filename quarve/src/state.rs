@@ -1258,7 +1258,7 @@ mod store {
         pub(super) trait RawStoreSharedOwnerBase<S, F> : Send + Sync + Sized + Signal<S> where S: Stateful, F: ActionFilter<Target=S> {
             type Inner: RawStoreBase<S, F>;
 
-            fn get_ref(&self) -> &Arc<SlockCell<Self::Inner>>;
+            fn inner_ref(&self) -> &Arc<SlockCell<Self::Inner>>;
 
             // guaranteed to only be used for creating the binding
             // This does not need to call strong_count_increment
@@ -1304,14 +1304,14 @@ mod store {
             where S: Stateful, F: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, F> {
             fn action_listener<G>(&self, listener: G, s: Slock<'_, impl ThreadMarker>)
                 where G: Send + FnMut(&S, &S::Action, Slock<'_>) -> bool + 'static {
-                self.get_ref().borrow_mut(s).dispatcher_mut().add_listener(StateListener::ActionListener(Box::new(listener)));
+                self.inner_ref().borrow_mut(s).dispatcher_mut().add_listener(StateListener::ActionListener(Box::new(listener)));
             }
         }
 
         impl<S: Stateful, I: RawStoreSharedOwner<S, Filter<S>>> Filterable<S> for I {
             fn action_filter<G>(&self, filter: G, s: Slock<'_, impl ThreadMarker>)
                 where G: Send + Fn(&S, S::Action, Slock<'_>) -> S::Action + 'static {
-                self.get_ref().borrow_mut(s).dispatcher_mut().action_filter(filter, s);
+                self.inner_ref().borrow_mut(s).dispatcher_mut().action_filter(filter, s);
             }
         }
 
@@ -1319,7 +1319,7 @@ mod store {
             type Binding = GeneralBinding<S, F, I>;
 
             fn binding(&self) -> Self::Binding {
-                I::Inner::strong_count_increment(self.get_ref());
+                I::Inner::strong_count_increment(self.inner_ref());
 
                 GeneralBinding {
                     inner: self.arc_clone(),
@@ -1336,7 +1336,7 @@ mod store {
         impl<S, F, R> Binding<S, F> for R where
             S: Stateful, F: ActionFilter<Target=S>, R: RawStoreSharedOwnerBase<S, F> {
             fn apply(&self, action: impl IntoAction<S::Action, S>, s: Slock<'_, impl ThreadMarker>) {
-                R::Inner::apply(self.get_ref(), action, false, s);
+                R::Inner::apply(self.inner_ref(), action, false, s);
             }
         }
     }
@@ -1626,7 +1626,7 @@ mod store {
             ($s:ty) => {
                 fn borrow(&self, s: Slock<'_, impl ThreadMarker>) -> impl Deref<Target=$s> + '_ {
                     StateRef {
-                        main_ref: self.get_ref().borrow(s),
+                        main_ref: self.inner_ref().borrow(s),
                         lifetime: PhantomData,
                         filter: PhantomData,
                     }
@@ -1634,14 +1634,14 @@ mod store {
 
                 fn listen<Q>(&self, listener: Q, s: Slock<'_, impl ThreadMarker>)
                     where Q: FnMut(&$s, Slock<'_>) -> bool + Send + 'static {
-                    self.get_ref().borrow_mut(s).dispatcher_mut().add_listener(StateListener::SignalListener(Box::new(listener)));
+                    self.inner_ref().borrow_mut(s).dispatcher_mut().add_listener(StateListener::SignalListener(Box::new(listener)));
                 }
 
                 type MappedOutput<U: Send + 'static> = GeneralSignal<U>;
                 fn map<U, Q>(&self, map: Q, s: Slock<'_, impl ThreadMarker>) -> Self::MappedOutput<U>
                     where U: Send + 'static, Q: Send + 'static + Fn(&$s) -> U {
                     GeneralSignal::from(self, map, |this, listener, s| {
-                        this.get_ref().borrow_mut(s).dispatcher_mut().add_listener(StateListener::SignalListener(listener))
+                        this.inner_ref().borrow_mut(s).dispatcher_mut().add_listener(StateListener::SignalListener(listener))
                     }, s)
                 }
             };
@@ -1764,7 +1764,7 @@ mod store {
         {
             type Inner = InnerStore<S, F>;
 
-            fn get_ref(&self) -> &Arc<SlockCell<Self::Inner>> {
+            fn inner_ref(&self) -> &Arc<SlockCell<Self::Inner>> {
                 &self.inner
             }
 
@@ -1929,7 +1929,7 @@ mod store {
             where S: Stateful + Copy + Hash + Eq, A: ActionFilter<Target=S> {
             type Inner = InnerTokenStore<S, A>;
 
-            fn get_ref(&self) -> &Arc<SlockCell<Self::Inner>> {
+            fn inner_ref(&self) -> &Arc<SlockCell<Self::Inner>> {
                 &self.inner
             }
 
@@ -2070,7 +2070,7 @@ mod store {
         {
             type Inner = InnerDerivedStore<S, F>;
 
-            fn get_ref(&self) -> &Arc<SlockCell<Self::Inner>> {
+            fn inner_ref(&self) -> &Arc<SlockCell<Self::Inner>> {
                 &self.inner
             }
 
@@ -2342,7 +2342,7 @@ mod store {
         {
             type Inner = InnerCoupledStore<I, IB, M, F, C>;
 
-            fn get_ref(&self) -> &Arc<SlockCell<Self::Inner>> {
+            fn inner_ref(&self) -> &Arc<SlockCell<Self::Inner>> {
                 &self.inner
             }
 
@@ -2388,7 +2388,7 @@ mod store {
         impl<S, F, I> Clone for GeneralBinding<S, F, I>
             where S: Stateful, F: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, F> {
             fn clone(&self) -> Self {
-                I::Inner::strong_count_increment(self.inner.get_ref());
+                I::Inner::strong_count_increment(self.inner.inner_ref());
 
                 GeneralBinding {
                     inner: self.inner.arc_clone(),
@@ -2407,8 +2407,8 @@ mod store {
             where S: Stateful, A: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, A> {
             type Inner = I::Inner;
 
-            fn get_ref(&self) -> &Arc<SlockCell<Self::Inner>> {
-                self.inner.get_ref()
+            fn inner_ref(&self) -> &Arc<SlockCell<Self::Inner>> {
+                self.inner.inner_ref()
             }
 
             fn arc_clone(&self) -> Self {
@@ -2423,7 +2423,7 @@ mod store {
         impl<S, A, I> Drop for GeneralBinding<S, A, I>
             where S: Stateful, A: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, A> {
             fn drop(&mut self) {
-                I::Inner::strong_count_decrement(self.inner.get_ref());
+                I::Inner::strong_count_decrement(self.inner.inner_ref());
             }
         }
 
