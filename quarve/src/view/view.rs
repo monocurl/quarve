@@ -79,6 +79,9 @@ mod view_ref {
         // but before the parent
         // has finished its own layout_down call
         fn translate_post_layout_down(&self, by: Point, s: MSlock);
+
+        // only call after layout down
+        fn used_rect(&self, s: MSlock) -> Rect;
     }
 
     pub trait TrivialContextViewRef<E> where E: Environment {
@@ -156,6 +159,11 @@ mod view_ref {
         fn translate_post_layout_down(&self, by: Point, s: MSlock) {
             self.0.borrow_mut_main(s)
                 .translate(by, s)
+        }
+
+        fn used_rect(&self, s: MSlock) -> Rect {
+            self.0.borrow_mut_main(s)
+                .used_rect(s)
         }
     }
 

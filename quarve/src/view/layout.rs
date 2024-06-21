@@ -127,6 +127,7 @@ pub use general_layout::*;
 
 mod vec_layout {
     use crate::core::{Environment, MSlock};
+    use crate::util::FromOptions;
     use crate::util::geo::{Rect, Size};
     use crate::view::{EnvRef, IntoViewProvider, Invalidator, ViewProvider, ViewRef};
     // workaround for TAIT
@@ -174,14 +175,14 @@ mod vec_layout {
 
         fn layout_up<'a, P>(
             &mut self,
-            subviews: impl Iterator<Item=&'a P>,
+            subviews: impl Iterator<Item=&'a P> + Clone,
             env: &mut EnvRef<E>,
             s: MSlock
         ) -> bool where P: ViewRef<E, DownContext=Self::SubviewDownContext, UpContext=Self::SubviewUpContext> + ?Sized + 'a;
 
         fn layout_down<'a, P>(
             &mut self,
-            subviews: impl Iterator<Item=&'a P>,
+            subviews: impl Iterator<Item=&'a P> + Clone,
             frame: Size,
             context: &Self::DownContext,
             env: &mut EnvRef<E>,
@@ -388,7 +389,7 @@ mod vec_layout {
             fn view(&self) -> Option<&dyn ViewRef<E, UpContext=U, DownContext=D>>;
         }
 
-        trait HeteroVPNode<E, U, D>: HeteroVPNodeBase<E, U, D> where E: Environment, U: 'static, D: 'static
+        pub trait HeteroVPNode<E, U, D>: HeteroVPNodeBase<E, U, D> where E: Environment, U: 'static, D: 'static
         {
             fn push_subviews(&self, tree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock);
             fn take_backing(&mut self, from: Self, env: &mut EnvRef<E>, s: MSlock);
@@ -520,9 +521,19 @@ mod vec_layout {
             marker: PhantomData<E>
         }
 
+        #[derive(Copy)]
         struct HeteroVPIterator<'a, E, L>(&'a dyn HeteroVPNodeBase<E, L::SubviewUpContext, L::SubviewDownContext>)
             where E: Environment,
                   L: VecLayoutProvider<E>;
+
+        impl<'a, E, L> Clone for HeteroVPIterator<'a, E, L>
+            where E: Environment,
+                  L: VecLayoutProvider<E>
+        {
+            fn clone(&self) -> Self {
+                HeteroVPIterator(self.0)
+            }
+        }
 
         impl<'a, E, L> Iterator for HeteroVPIterator<'a, E, L>
             where E: Environment,
@@ -847,33 +858,85 @@ mod vec_layout {
                 }
             }
 
+            // FIXME, specialization in the case that the IVP is send would be so nice
+            // in general this feels so close yet so ugly, hopefully real world performance is ok
             fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
-                subtree.clear_subviews(s);
+                let action = self.action_buffer.take(s);
 
-                let mut view_buffer: Vec<_> = std::mem::take(&mut self.subviews)
-                    .into_iter()
-                    .map(|x| Some(x))
-                    .collect();
-
-                self.action_buffer.take(s)
-                    .apply(&mut view_buffer);
-
-                // fill in unfilled views
-                let current = self.binding.borrow(s);
-                self.subviews = std::iter::zip(view_buffer.into_iter(), current.iter())
-                    .map(|(view, src)| {
-                        if let Some(view) = view {
-                            view
+                if action.len() == 0 {
+                    // no op
+                }
+                else if action.iter()
+                    .all(|a| {
+                            matches!(a, VecActionBasis::Remove( _) | VecActionBasis::RemoveMany(_))
+                        }) {
+                    // any number of removals are easy
+                    for act in action {
+                        match act {
+                            VecActionBasis::Remove(at) => {
+                                self.subviews.remove(at);
+                                subtree.remove_subview_at(at, env, s);
+                            },
+                            VecActionBasis::RemoveMany(range) => {
+                                self.subviews.splice(range.clone(), std::iter::empty());
+                                for i in range.into_iter().rev() {
+                                    subtree.remove_subview_at(i, env, s);
+                                }
+                            }
                         }
-                        else {
-                            (self.map)(src, env.const_env(), s).into_view(s)
+                    }
+                }
+                else if action.len() == 1 &&
+                    matches!(action.iter().next().unwrap(), VecActionBasis::InsertMany(_, _) | VecActionBasis::Insert(_, _)) {
+                    // single increases are easy
+                    for act in action {
+                        let binding = self.binding.borrow(s);
+                        match act {
+                            VecActionBasis::InsertMany(elems, at) => {
+                                // hm technically n^2? we'll have to optimize at some point
+                                for i in at .. at + elems.len() {
+                                    let mapped = (self.map)(&binding[i], env.const_env(), s).into_view(s);
+                                    subtree.insert_subview(&mapped, i, env, s);
+                                    self.subviews.insert(i, mapped);
+                                }
+                            },
+                            VecActionBasis::Insert(_elem, at) => {
+                                let mapped = (self.map)(&binding[at], env.const_env(), s).into_view(s);
+                                subtree.insert_subview(&mapped, at, env, s);
+                                self.subviews.insert(at, mapped);
+                            },
+                            _ => unreachable!()
                         }
-                    })
-                    .collect();
+                    }
+                }
+                else {
+                    // multiple insertions, or mixed with perms and removals
+                    // are non-trivial so we basically recalculate everything
+                    // this should hopefully be a cold branch
+                    subtree.clear_subviews(s);
 
-                // add new subviews
-                // FIXME do more efficient version in the future
-                self.subviews.iter().for_each(|sv| subtree.push_subview(sv, env, s));
+                    let mut view_buffer: Vec<_> = std::mem::take(&mut self.subviews)
+                        .into_iter()
+                        .map(|x| Some(x))
+                        .collect();
+
+                    action.apply(&mut view_buffer);
+
+                    // fill in unfilled views
+                    let current = self.binding.borrow(s);
+                    self.subviews = std::iter::zip(view_buffer.into_iter(), current.iter())
+                        .map(|(view, src)| {
+                            if let Some(view) = view {
+                                view
+                            } else {
+                                (self.map)(src, env.const_env(), s).into_view(s)
+                            }
+                        })
+                        .collect();
+
+                    // add new subviews
+                    self.subviews.iter().for_each(|sv| subtree.push_subview(sv, env, s));
+                }
 
                 self.layout
                     .layout_up(self.subviews.iter(), env, s)
@@ -1080,7 +1143,7 @@ mod vec_layout {
     mod vstack {
         use crate::core::{Environment, MSlock};
         use crate::util::{FromOptions};
-        use crate::util::geo::{Rect, ScreenUnit, Size};
+        use crate::util::geo::{HorizontalAlignment, Point, Rect, ScreenUnit, Size};
         use crate::view::layout::{VecLayoutProvider};
         use crate::view::{EnvRef, TrivialContextViewRef, ViewRef};
         use crate::view::util::SizeContainer;
@@ -1089,13 +1152,15 @@ mod vec_layout {
         pub struct VStack(SizeContainer, VStackOptions);
 
         pub struct VStackOptions {
-            spacing: ScreenUnit
+            spacing: ScreenUnit,
+            alignment: HorizontalAlignment
         }
 
         impl Default for VStackOptions {
             fn default() -> Self {
                 VStackOptions {
-                    spacing: 10.0
+                    spacing: 10.0,
+                    alignment: HorizontalAlignment::Center
                 }
             }
         }
@@ -1103,6 +1168,11 @@ mod vec_layout {
         impl VStackOptions {
             pub fn spacing(mut self, spacing: ScreenUnit) -> Self {
                 self.spacing = spacing;
+                self
+            }
+
+            pub fn align(mut self, alignment: HorizontalAlignment) -> Self {
+                self.alignment = alignment;
                 self
             }
         }
@@ -1171,15 +1241,63 @@ mod vec_layout {
                 }
             }
 
-            fn layout_down<'a, P>(&mut self, subviews: impl Iterator<Item=&'a P>, frame: Size, _context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> Rect
+            fn layout_down<'a, P>(&mut self, subviews: impl Iterator<Item=&'a P> + Clone, frame: Size, _context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> Rect
                 where P: ViewRef<E, DownContext=Self::SubviewDownContext, UpContext=Self::SubviewUpContext> + ?Sized + 'a {
+                // determine relative stretch factor
+                let suggested_height = frame.h;
+                let our_min = self.0.ysquished().h;
+                let our_intrinsic = self.0.intrinsic().h;
+                let our_max = self.0.ystretched().h;
+                let shrink = suggested_height < our_intrinsic;
+                let factor = if shrink {
+                    if our_intrinsic == our_min {
+                        1.0
+                    }
+                    else {
+                        (our_intrinsic - suggested_height) / (our_intrinsic - our_min)
+                    }
+                }
+                else {
+                    if our_intrinsic == our_max {
+                        1.0
+                    }
+                    else {
+                        (suggested_height - our_intrinsic) / (our_max - our_intrinsic)
+                    }
+                };
+
                 let mut elapsed = 0.0;
+                let mut total_w: f64 = 0.0;
+                let sv_clone = subviews.clone();
                 for view in subviews {
                     let intrinsic = view.intrinsic_size(s);
-                    let used = view.layout_down(Rect::new(0.0, elapsed, intrinsic.w, intrinsic.h), env, s);
+                    let other = if shrink {
+                        view.ysquished_size(s)
+                    }
+                    else {
+                        view.ystretched_size(s)
+                    };
+                    let alotted = intrinsic.h * (1.0 - factor) + factor * other.h;
+                    let used = view.layout_down(Rect::new(0.0, elapsed, intrinsic.w, alotted), env, s);
                     elapsed += used.h + self.1.spacing;
+                    total_w = total_w.max(used.w);
                 }
-                frame.full_rect()
+
+                elapsed = 0.0;
+                let mut extra_spacing = 0.0;
+                for view in sv_clone {
+                    let used = view.used_rect(s);
+                    let target = match self.1.alignment {
+                        HorizontalAlignment::Leading => Point::new(0.0, elapsed),
+                        HorizontalAlignment::Center => Point::new(total_w / 2.0 - used.w / 2.0, elapsed),
+                        HorizontalAlignment::Trailing => Point::new(total_w - used.w, elapsed),
+                    };
+                    view.translate_post_layout_down(Point::new(target.x - used.x, target.y - used.y), s);
+                    elapsed += used.h + self.1.spacing;
+                    extra_spacing = self.1.spacing;
+                }
+
+                Rect::new(0.0, 0.0, total_w, elapsed - extra_spacing)
             }
         }
     }
@@ -1188,7 +1306,7 @@ mod vec_layout {
     mod hstack {
         use crate::core::{Environment, MSlock};
         use crate::util::FromOptions;
-        use crate::util::geo::{Rect, ScreenUnit, Size};
+        use crate::util::geo::{Point, Rect, ScreenUnit, Size, VerticalAlignment};
         use crate::view::layout::{VecLayoutProvider};
         use crate::view::{EnvRef, TrivialContextViewRef, ViewRef};
         use crate::view::util::SizeContainer;
@@ -1196,13 +1314,15 @@ mod vec_layout {
         pub struct HStack(SizeContainer, HStackOptions);
 
         pub struct HStackOptions {
-            spacing: ScreenUnit
+            spacing: ScreenUnit,
+            alignment: VerticalAlignment
         }
 
         impl Default for HStackOptions {
             fn default() -> Self {
                 HStackOptions {
-                    spacing: 10.0
+                    spacing: 10.0,
+                    alignment: VerticalAlignment::Center
                 }
             }
         }
@@ -1210,6 +1330,11 @@ mod vec_layout {
         impl HStackOptions {
             pub fn spacing(mut self, spacing: ScreenUnit) -> Self {
                 self.spacing = spacing;
+                self
+            }
+
+            pub fn align(mut self, alignment: VerticalAlignment) -> Self {
+                self.alignment = alignment;
                 self
             }
         }
@@ -1256,7 +1381,7 @@ mod vec_layout {
                 ()
             }
 
-            fn layout_up<'a, P>(&mut self, subviews: impl Iterator<Item=&'a P>, _env: &mut EnvRef<E>, s: MSlock) -> bool
+            fn layout_up<'a, P>(&mut self, subviews: impl Iterator<Item=&'a P> + Clone, _env: &mut EnvRef<E>, s: MSlock) -> bool
                 where P: ViewRef<E, DownContext=Self::SubviewDownContext, UpContext=Self::SubviewUpContext> + ?Sized + 'a{
                 let new = subviews
                     .map(|v| v.sizes(s))
@@ -1278,16 +1403,62 @@ mod vec_layout {
                 }
             }
 
-            fn layout_down<'a, P>(&mut self, subviews: impl Iterator<Item=&'a P>, frame: Size, _context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> Rect
+            fn layout_down<'a, P>(&mut self, subviews: impl Iterator<Item=&'a P> + Clone, frame: Size, _context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> Rect
                 where P: ViewRef<E, DownContext=Self::SubviewDownContext, UpContext=Self::SubviewUpContext> + ?Sized + 'a {
+                let suggested_width = frame.w;
+                let our_min = self.0.xsquished().w;
+                let our_intrinsic = self.0.intrinsic().w;
+                let our_max = self.0.xstretched().w;
+                let shrink = suggested_width < our_intrinsic;
+                let factor = if shrink {
+                    if our_intrinsic == our_min {
+                        1.0
+                    }
+                    else {
+                        (our_intrinsic - suggested_width) / (our_intrinsic - our_min)
+                    }
+                }
+                else {
+                    if our_intrinsic == our_max {
+                        1.0
+                    }
+                    else {
+                        (suggested_width - our_intrinsic) / (our_max - our_intrinsic)
+                    }
+                };
+
                 let mut elapsed = 0.0;
+                let mut total_h: f64 = 0.0;
+                let sv_clone = subviews.clone();
                 for view in subviews {
                     let intrinsic = view.intrinsic_size(s);
-                    view.layout_down(Rect::new(elapsed, 0.0, intrinsic.w, intrinsic.h), env, s);
-                    elapsed += intrinsic.w + self.1.spacing;
+                    let other = if shrink {
+                        view.xsquished_size(s)
+                    }
+                    else {
+                        view.xstretched_size(s)
+                    };
+                    let alotted = intrinsic.w * (1.0 - factor) + factor * other.w;
+                    let used = view.layout_down(Rect::new(elapsed, 0.0, alotted, intrinsic.h), env, s);
+                    elapsed += used.w + self.1.spacing;
+                    total_h = total_h.max(used.w);
                 }
 
-                frame.full_rect()
+                elapsed = 0.0;
+                let mut extra_spacing = 0.0;
+                for view in sv_clone {
+                    let used = view.used_rect(s);
+                    let target = match self.1.alignment {
+                        VerticalAlignment::Bottom => Point::new(elapsed, 0.0),
+                        VerticalAlignment::Center => Point::new(elapsed, total_h / 2.0 - used.h / 2.0),
+                        VerticalAlignment::Top => Point::new(elapsed, total_h - used.h),
+                    };
+                    view.translate_post_layout_down(Point::new(target.x - used.x, target.y - used.y), s);
+                    elapsed += used.h + self.1.spacing;
+                    extra_spacing = self.1.spacing;
+                }
+
+                Rect::new(0.0, 0.0, elapsed - extra_spacing, total_h)
             }
         }
     }
@@ -1319,6 +1490,5 @@ mod vec_layout {
         pub use hstack;
     }
     pub use impls::*;
-    use crate::util::FromOptions;
 }
 pub use vec_layout::*;

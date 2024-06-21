@@ -362,6 +362,14 @@ pub mod geo {
             }
         }
 
+        pub fn mid_x(self) -> ScreenUnit {
+            self.x + self.w / 2.0
+        }
+
+        pub fn mid_y(self) -> ScreenUnit {
+            self.x + self.w / 2.0
+        }
+
         pub fn translate(self, by: Point) -> Rect {
             Rect {
                 x: self.x + by.x,
@@ -436,6 +444,18 @@ pub mod geo {
     }
 
     impl Default for Alignment {
+        fn default() -> Self {
+            Self::Center
+        }
+    }
+
+    impl Default for HorizontalAlignment {
+        fn default() -> Self {
+            Self::Center
+        }
+    }
+
+    impl Default for VerticalAlignment {
         fn default() -> Self {
             Self::Center
         }

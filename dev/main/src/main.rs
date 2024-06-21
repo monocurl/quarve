@@ -69,7 +69,7 @@ impl quarve::core::WindowProvider for WindowProvider {
         let black_box =
             Color::black().intrinsic(100, 100);
 
-        HStack::hetero()
+        VStack::hetero()
             .push(EmptyView)
             .push(
                 EmptyView

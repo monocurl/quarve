@@ -272,6 +272,10 @@ mod group {
                 self.items.iter()
                     .rev()
             }
+
+            pub fn len(&self) -> usize {
+                self.items.len()
+            }
         }
 
         impl<T> IntoIterator for Word<T> where T: 'static {

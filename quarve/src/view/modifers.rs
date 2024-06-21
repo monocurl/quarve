@@ -661,7 +661,7 @@ mod provider_modifier {
     }
 
     impl Frame {
-        pub fn alignment(mut self, alignment: Alignment) -> Frame {
+        pub fn align(mut self, alignment: Alignment) -> Frame {
             self.alignment = alignment;
             self
         }
