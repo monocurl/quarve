@@ -184,7 +184,7 @@ mod provider_modifier {
         where E: Environment, U: 'static, D: 'static {
 
         #[allow(unused_variables)]
-        fn init(&mut self, invalidator: &Invalidator<E>, env: &E::Const, source: Option<Self>, s: MSlock) {
+        fn init(&mut self, invalidator: &Invalidator<E>, source: Option<Self>, s: MSlock) {
 
         }
 
@@ -334,11 +334,11 @@ mod provider_modifier {
 
         fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
             if let Some((nv, m)) = backing_source {
-                self.modifier.init(&invalidator, env.const_env(), Some(m.modifier), s);
+                self.modifier.init(&invalidator, Some(m.modifier), s);
                 self.provider.init_backing(invalidator, subtree, Some((nv, m.provider)), env, s)
             }
             else {
-                self.modifier.init(&invalidator, env.const_env(), None, s);
+                self.modifier.init(&invalidator, None, s);
                 self.provider.init_backing(invalidator, subtree, None, env, s)
             }
 
@@ -450,7 +450,7 @@ mod provider_modifier {
     impl<E, U, D, S, T> ProviderModifier<E, U, D> for Offset<S, T>
         where E: Environment, U: 'static, D: 'static, S: Signal<ScreenUnit>, T: Signal<ScreenUnit>
     {
-        fn init(&mut self, invalidator: &Invalidator<E>, _env: &E::Const, _source: Option<Self>, s: MSlock) {
+        fn init(&mut self, invalidator: &Invalidator<E>, _source: Option<Self>, s: MSlock) {
             self.dx.add_invalidator(invalidator, s);
             self.dy.add_invalidator(invalidator, s);
         }
@@ -543,7 +543,7 @@ mod provider_modifier {
     }
     
     impl<E: Environment, U: 'static, D: 'static, S: Signal<ScreenUnit>> ProviderModifier<E, U, D> for Padding<S> {
-        fn init(&mut self, invalidator: &Invalidator<E>, _env: &E::Const, _source: Option<Self>, s: MSlock) {
+        fn init(&mut self, invalidator: &Invalidator<E>, _source: Option<Self>, s: MSlock) {
             self.amount.add_invalidator(invalidator, s);
         }
 
@@ -1347,10 +1347,6 @@ mod foreback_modifier {
 }
 pub use foreback_modifier::*;
 
-mod tree_modifier {
-    // TODO once portals are done
-}
-
 mod when_modifier {
     use std::marker::PhantomData;
     use crate::core::{Environment, MSlock};
@@ -1559,6 +1555,400 @@ mod when_modifier {
 }
 pub use when_modifier::*;
 
-mod env_modifier {
-
+mod tree_modifier {
+    // TODO once portals are done
 }
+
+mod env_modifier {
+    use std::marker::PhantomData;
+    use crate::core::{Environment, MSlock};
+    use crate::event::{Event, EventResult};
+    use crate::util::geo::{Rect, Size};
+    use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, ViewProvider};
+    use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
+
+    pub trait EnvironmentModifier<E> where E: Environment {
+        fn init(&mut self, invalidator: Invalidator<E>, s: MSlock);
+        fn push_environment(&mut self, env: &mut E::Variable, s: MSlock);
+        fn pop_environment(&mut self, env: &mut E::Variable, s: MSlock);
+    }
+
+    pub struct EnvModifierIVP<E, I, M> where E: Environment, I: IntoViewProvider<E>, M: EnvironmentModifier<E> {
+        wrapping: I,
+        modifier: M,
+        phantom: PhantomData<E>
+    }
+
+    impl<E, I, M> IntoViewProvider<E> for EnvModifierIVP<E, I, M> where E: Environment, I: IntoViewProvider<E>, M: EnvironmentModifier<E>
+    {
+        type UpContext = I::UpContext;
+        type DownContext = I::DownContext;
+
+        fn into_view_provider(self, env: &E::Const, s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
+            EnvModifierVP {
+                wrapping: self.wrapping.into_view_provider(env, s),
+                modifier: self.modifier,
+                invalidator: None,
+                enabled: true,
+                enabled_during_last_push: false,
+                phantom: PhantomData
+            }
+        }
+    }
+
+    impl<E, I, M> ConditionalIVPModifier<E> for EnvModifierIVP<E, I, M>
+        where E: Environment, I: ConditionalIVPModifier<E>, M: EnvironmentModifier<E>
+    {
+        type Modifying = I;
+
+        fn into_conditional_view_provider(self, env: &E::Const, s: MSlock) -> impl ConditionalVPModifier<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
+            EnvModifierVP {
+                wrapping: self.wrapping.into_conditional_view_provider(env, s),
+                modifier: self.modifier,
+                invalidator: None,
+                enabled: true,
+                enabled_during_last_push: false,
+                phantom: PhantomData
+            }
+        }
+    }
+
+    struct EnvModifierVP<E, P, M> where E: Environment, P: ViewProvider<E>, M: EnvironmentModifier<E> {
+        wrapping: P,
+        modifier: M,
+        invalidator: Option<Invalidator<E>>,
+        enabled: bool,
+        enabled_during_last_push: bool,
+        phantom: PhantomData<E>
+    }
+
+    impl<E, P, M> ViewProvider<E> for EnvModifierVP<E, P, M> where E: Environment, P: ViewProvider<E>, M: EnvironmentModifier<E>
+    {
+        type UpContext = P::UpContext;
+        type DownContext = P::DownContext;
+
+        fn intrinsic_size(&mut self, s: MSlock) -> Size {
+            self.wrapping.intrinsic_size(s)
+        }
+
+        fn xsquished_size(&mut self, s: MSlock) -> Size {
+            self.wrapping.xsquished_size(s)
+        }
+
+        fn xstretched_size(&mut self, s: MSlock) -> Size {
+            self.wrapping.xstretched_size(s)
+        }
+
+        fn ysquished_size(&mut self, s: MSlock) -> Size {
+            self.wrapping.ysquished_size(s)
+        }
+
+        fn ystretched_size(&mut self, s: MSlock) -> Size {
+            self.wrapping.ystretched_size(s)
+        }
+
+        fn up_context(&mut self, s: MSlock) -> Self::UpContext {
+            self.wrapping.up_context(s)
+        }
+
+        fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+            self.invalidator = Some(invalidator.clone());
+            self.modifier.init(invalidator.clone(), s);
+
+            self.wrapping.init_backing(invalidator, subtree, backing_source.map(|(nv, bs)| (nv, bs.wrapping)), env, s)
+        }
+
+        fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
+            self.wrapping.layout_up(subtree, env, s)
+        }
+
+        fn layout_down(&mut self, subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
+            self.wrapping.layout_down(subtree, frame, layout_context, env, s)
+        }
+
+        fn pre_show(&mut self, s: MSlock) {
+            self.wrapping.pre_show(s)
+        }
+
+        fn post_show(&mut self, s: MSlock) {
+            self.wrapping.post_show(s)
+        }
+
+        fn pre_hide(&mut self, s: MSlock) {
+            self.wrapping.pre_hide(s)
+        }
+
+        fn post_hide(&mut self, s: MSlock) {
+            self.wrapping.post_hide(s)
+        }
+
+        fn focused(&mut self, s: MSlock) {
+            self.wrapping.focused(s)
+        }
+
+        fn unfocused(&mut self, s: MSlock) {
+            self.wrapping.unfocused(s)
+        }
+
+        fn push_environment(&mut self, env: &mut E::Variable, s: MSlock) {
+            if self.enabled {
+                self.modifier.push_environment(env, s);
+                self.enabled_during_last_push = true;
+            }
+            self.wrapping.push_environment(env, s)
+        }
+
+        fn pop_environment(&mut self, env: &mut E::Variable, s: MSlock) {
+            self.wrapping.pop_environment(env, s);
+            if self.enabled_during_last_push {
+                self.modifier.pop_environment(env, s);
+            }
+        }
+
+        fn handle_event(&mut self, e: Event, s: MSlock) -> EventResult {
+            self.wrapping.handle_event(e, s)
+        }
+    }
+
+    impl<E, P, M> ConditionalVPModifier<E> for EnvModifierVP<E, P, M>
+        where E: Environment, P: ConditionalVPModifier<E>, M: EnvironmentModifier<E>
+    {
+        fn enable(&mut self, s: MSlock) {
+            self.enabled = true;
+            self.wrapping.enable(s);
+            self.invalidator.as_ref().and_then(|u| u.upgrade()).unwrap().invalidate_environment(s)
+        }
+
+        fn disable(&mut self, s: MSlock) {
+            self.enabled = false;
+            self.wrapping.disable(s);
+            self.invalidator.as_ref().and_then(|u| u.upgrade()).unwrap().invalidate_environment(s)
+        }
+    }
+
+    pub trait EnvModifiable<E>: IntoViewProvider<E> {
+        fn env_modifier<M: EnvironmentModifier<E>>(self, modifier: M) -> EnvModifierIVP<E, Self, M>;
+    }
+
+    impl<E, I> EnvModifiable<E> for I where E: Environment, I: IntoViewProvider<E> {
+        fn env_modifier<M: EnvironmentModifier<E>>(self, modifier: M) -> EnvModifierIVP<E, Self, M> {
+            EnvModifierIVP {
+                wrapping: self,
+                modifier,
+                phantom: Default::default(),
+            }
+        }
+    }
+}
+pub use env_modifier::*;
+
+mod show_hide_modifier {
+    use std::marker::PhantomData;
+    use crate::core::{Environment, MSlock};
+    use crate::event::{Event, EventResult};
+    use crate::util::geo::{Rect, Size};
+    use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, ViewProvider};
+
+    struct ShowHideIVP<E, I, F1, F2, F3, F4>
+        where E: Environment,
+              I: IntoViewProvider<E>,
+              F1: FnMut(MSlock),
+              F2: FnMut(MSlock),
+              F3: FnMut(MSlock),
+              F4: FnMut(MSlock),
+    {
+        wrapping: I,
+        pre_show: F1,
+        post_show: F2,
+        pre_hide: F3,
+        post_hide: F4,
+        phantom: PhantomData<E>
+    }
+
+    struct ShowHideVP<E, P, F1, F2, F3, F4>
+        where E: Environment,
+              P: ViewProvider<E>,
+              F1: FnMut(MSlock),
+              F2: FnMut(MSlock),
+              F3: FnMut(MSlock),
+              F4: FnMut(MSlock),
+    {
+        wrapping: P,
+        pre_show: F1,
+        post_show: F2,
+        pre_hide: F3,
+        post_hide: F4,
+        phantom: PhantomData<E>
+    }
+
+    impl<E, I, F1, F2, F3, F4> IntoViewProvider<E> for ShowHideIVP<E, I, F1, F2, F3, F4>
+        where E: Environment,
+              I: IntoViewProvider<E>,
+              F1: FnMut(MSlock),
+              F2: FnMut(MSlock),
+              F3: FnMut(MSlock),
+              F4: FnMut(MSlock),
+    {
+        type UpContext = I::UpContext;
+        type DownContext = I::DownContext;
+
+        fn into_view_provider(self, env: &E::Const, s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
+            ShowHideVP {
+                wrapping: self.wrapping.into_view_provider(env, s),
+                pre_show: self.pre_show,
+                post_show: self.post_show,
+                pre_hide: self.pre_hide,
+                post_hide: self.post_hide,
+                phantom: Default::default(),
+            }
+        }
+    }
+
+    impl<E, P, F1, F2, F3, F4> ViewProvider<E> for ShowHideVP<E, P, F1, F2, F3, F4>
+        where E: Environment,
+              P: ViewProvider<E>,
+              F1: FnMut(MSlock),
+              F2: FnMut(MSlock),
+              F3: FnMut(MSlock),
+              F4: FnMut(MSlock),
+    {
+        type UpContext = P::UpContext;
+        type DownContext = P::DownContext;
+
+        fn intrinsic_size(&mut self, s: MSlock) -> Size {
+            self.wrapping.intrinsic_size(s)
+        }
+
+
+        fn xsquished_size(&mut self, s: MSlock) -> Size {
+            self.wrapping.xsquished_size(s)
+        }
+
+        fn xstretched_size(&mut self, s: MSlock) -> Size {
+            self.wrapping.xstretched_size(s)
+        }
+
+        fn ysquished_size(&mut self, s: MSlock) -> Size {
+            self.wrapping.ysquished_size(s)
+        }
+
+        fn ystretched_size(&mut self, s: MSlock) -> Size {
+            self.wrapping.ystretched_size(s)
+        }
+
+        fn up_context(&mut self, s: MSlock) -> Self::UpContext {
+            self.wrapping.up_context(s)
+        }
+
+        fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+            self.wrapping.init_backing(invalidator, subtree, backing_source.map(|(nv, bs)| (nv, bs.wrapping)), env, s)
+        }
+
+        fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
+            self.wrapping.layout_up(subtree, env, s)
+        }
+
+        fn layout_down(&mut self, subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
+            self.wrapping.layout_down(subtree, frame, layout_context, env, s)
+        }
+
+        fn pre_show(&mut self, s: MSlock) {
+            (self.pre_show)(s);
+            self.wrapping.pre_show(s)
+        }
+
+        fn post_show(&mut self, s: MSlock) {
+            self.wrapping.post_show(s);
+            (self.post_show)(s);
+        }
+
+        fn pre_hide(&mut self, s: MSlock) {
+            (self.pre_hide)(s);
+            self.wrapping.pre_hide(s);
+        }
+
+        fn post_hide(&mut self, s: MSlock) {
+            (self.post_hide)(s);
+            self.wrapping.post_show(s);
+        }
+
+        fn focused(&mut self, s: MSlock) {
+            self.wrapping.focused(s);
+        }
+
+        fn unfocused(&mut self, s: MSlock) {
+            self.wrapping.unfocused(s);
+        }
+
+        fn push_environment(&mut self, env: &mut E::Variable, s: MSlock) {
+            self.wrapping.push_environment(env, s);
+        }
+
+        fn pop_environment(&mut self, env: &mut E::Variable, s: MSlock) {
+            self.wrapping.pop_environment(env, s);
+        }
+
+        fn handle_event(&mut self, e: Event, s: MSlock) -> EventResult {
+            self.wrapping.handle_event(e, s)
+        }
+    }
+
+    pub trait ShowHideCallback<E>: IntoViewProvider<E> where E: Environment {
+        fn pre_show(self, f: impl FnMut(MSlock)) -> impl IntoViewProvider<E>;
+        fn post_show(self, f: impl FnMut(MSlock)) -> impl IntoViewProvider<E>;
+        fn pre_hide(self, f: impl FnMut(MSlock)) -> impl IntoViewProvider<E>;
+        fn post_hide(self, f: impl FnMut(MSlock)) -> impl IntoViewProvider<E>;
+    }
+
+    #[inline]
+    fn do_nothing(_s: MSlock) {
+
+    }
+
+    impl<E, I> ShowHideCallback<E> for I where E: Environment, I: IntoViewProvider<E> {
+        fn pre_show(self, f: impl FnMut(MSlock)) -> impl IntoViewProvider<E> {
+            ShowHideIVP {
+                wrapping: self,
+                pre_show: f,
+                post_show: do_nothing,
+                pre_hide: do_nothing,
+                post_hide: do_nothing,
+                phantom: Default::default(),
+            }
+        }
+
+        fn post_show(self, f: impl FnMut(MSlock)) -> impl IntoViewProvider<E> {
+            ShowHideIVP {
+                wrapping: self,
+                pre_show: do_nothing,
+                post_show: f,
+                pre_hide: do_nothing,
+                post_hide: do_nothing,
+                phantom: Default::default(),
+            }
+        }
+
+        fn pre_hide(self, f: impl FnMut(MSlock)) -> impl IntoViewProvider<E> {
+            ShowHideIVP {
+                wrapping: self,
+                pre_show: do_nothing,
+                post_show: do_nothing,
+                pre_hide: f,
+                post_hide: do_nothing,
+                phantom: Default::default(),
+            }
+        }
+
+        fn post_hide(self, f: impl FnMut(MSlock)) -> impl IntoViewProvider<E> {
+            ShowHideIVP {
+                wrapping: self,
+                pre_show: do_nothing,
+                post_show: do_nothing,
+                pre_hide: do_nothing,
+                post_hide: f,
+                phantom: Default::default(),
+            }
+        }
+    }
+}
+pub use show_hide_modifier::*;

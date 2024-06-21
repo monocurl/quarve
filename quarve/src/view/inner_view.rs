@@ -19,7 +19,6 @@ pub(crate) trait InnerViewBase<E> where E: Environment {
     fn backing(&self) -> *mut c_void;
 
     /* tree methods */
-    fn window(&self) -> &Option<Weak<MainSlockCell<dyn WindowEnvironmentBase<E>>>>;
     fn superview(&self) -> Option<Arc<MainSlockCell<dyn InnerViewBase<E>>>>;
     fn set_superview(&mut self, superview: Option<Weak<MainSlockCell<dyn InnerViewBase<E>>>>);
     fn graph(&mut self) -> &mut Graph<E>;
@@ -212,10 +211,6 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
     // unowned
     fn backing(&self) -> *mut c_void {
         self.graph.backing.0
-    }
-
-    fn window(&self) -> &Option<Weak<MainSlockCell<dyn WindowEnvironmentBase<E>>>> {
-        &self.graph.window
     }
 
     fn superview(&self) -> Option<Arc<MainSlockCell<dyn InnerViewBase<E>>>> {
