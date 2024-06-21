@@ -57,7 +57,7 @@ impl quarve::core::WindowProvider for WindowProvider {
 
     fn root(&self, env: &<Env as Environment>::Const, s: MSlock<'_>) -> impl ViewProvider<Env, DownContext=()> {
         let enabled = s.clock_signal()
-            .map(|val| 120.0 * *val % 2.0 > 1.0, s);
+            .map(|val| 1.0 * *val % 2.0 > 1.0, s);
 
         let enabled_int = enabled.map(|u| if *u {vec![1]} else {vec![]}, s);
         let not_enabled = enabled.map(|u| !*u, s);
@@ -69,37 +69,33 @@ impl quarve::core::WindowProvider for WindowProvider {
         let black_box =
             Color::black().intrinsic(100, 100);
 
-        hstack! {
-            EmptyView;
-
-            EmptyView
-                .when(not_enabled, |v| {
-                    v.portal_sender(&p, Color::black().intrinsic(200, 100))
-                });
-
-            not_enabled_int
-                .signal_vmap(move |_, s| {
-                    PortalReceiver::new(&p3)
-                });
-            EmptyView;
-            EmptyView;
-            Color::new(100, 0, 0).intrinsic(400, 100);
-            EmptyView;
-            EmptyView;
-
-            enabled_int
-                .signal_vmap(move |_, s| {
-                    PortalReceiver::new(&p2)
-                });
-
-            EmptyView
-                .when(enabled, |v| {
-                    v.portal_sender(&p, black_box)
-                });
-
-
-        }
-        .into_view_provider(env, s)
+        HStack::hetero()
+            .push(EmptyView)
+            .push(
+                EmptyView
+                    .when(not_enabled, |v| {
+                        v.portal_sender(&p, Color::black().intrinsic(200, 100))
+                    })
+            )
+            .push(
+                EmptyView
+            )
+            .push(
+                Color::new(100, 0, 0).intrinsic(400, 100)
+            )
+            .push(
+                PortalReceiver::new(&p)
+            )
+            .push(
+                Color::new(0, 0, 100).intrinsic(400, 100)
+            )
+            .push(
+                EmptyView
+                    .when(enabled, |v| {
+                        v.portal_sender(&p, black_box)
+                    })
+            )
+            .into_view_provider(env, s)
     }
 }
 

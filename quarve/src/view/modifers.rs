@@ -166,6 +166,7 @@ mod identity_modifier {
         }
     }
 }
+pub use identity_modifier::*;
 
 mod provider_modifier {
     use std::marker::PhantomData;
@@ -1563,7 +1564,7 @@ mod env_modifier {
     use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, ViewProvider};
     use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
 
-    pub trait EnvironmentModifier<E> where E: Environment {
+    pub trait EnvironmentModifier<E>: 'static where E: Environment {
         fn init(&mut self, invalidator: Invalidator<E>, s: MSlock);
         fn push_environment(&mut self, env: &mut E::Variable, s: MSlock);
         fn pop_environment(&mut self, env: &mut E::Variable, s: MSlock);
@@ -1722,7 +1723,7 @@ mod env_modifier {
         }
     }
 
-    pub trait EnvModifiable<E>: IntoViewProvider<E> {
+    pub trait EnvModifiable<E>: IntoViewProvider<E> where E: Environment {
         fn env_modifier<M: EnvironmentModifier<E>>(self, modifier: M) -> EnvModifierIVP<E, Self, M>;
     }
 
@@ -1748,10 +1749,10 @@ mod show_hide_modifier {
     struct ShowHideIVP<E, I, F1, F2, F3, F4>
         where E: Environment,
               I: IntoViewProvider<E>,
-              F1: FnMut(MSlock),
-              F2: FnMut(MSlock),
-              F3: FnMut(MSlock),
-              F4: FnMut(MSlock),
+              F1: FnMut(MSlock) + 'static,
+              F2: FnMut(MSlock) + 'static,
+              F3: FnMut(MSlock) + 'static,
+              F4: FnMut(MSlock) + 'static,
     {
         wrapping: I,
         pre_show: F1,
@@ -1764,10 +1765,10 @@ mod show_hide_modifier {
     struct ShowHideVP<E, P, F1, F2, F3, F4>
         where E: Environment,
               P: ViewProvider<E>,
-              F1: FnMut(MSlock),
-              F2: FnMut(MSlock),
-              F3: FnMut(MSlock),
-              F4: FnMut(MSlock),
+              F1: FnMut(MSlock) + 'static,
+              F2: FnMut(MSlock) + 'static,
+              F3: FnMut(MSlock) + 'static,
+              F4: FnMut(MSlock) + 'static,
     {
         wrapping: P,
         pre_show: F1,
@@ -1780,10 +1781,10 @@ mod show_hide_modifier {
     impl<E, I, F1, F2, F3, F4> IntoViewProvider<E> for ShowHideIVP<E, I, F1, F2, F3, F4>
         where E: Environment,
               I: IntoViewProvider<E>,
-              F1: FnMut(MSlock),
-              F2: FnMut(MSlock),
-              F3: FnMut(MSlock),
-              F4: FnMut(MSlock),
+              F1: FnMut(MSlock) + 'static,
+              F2: FnMut(MSlock) + 'static,
+              F3: FnMut(MSlock) + 'static,
+              F4: FnMut(MSlock) + 'static,
     {
         type UpContext = I::UpContext;
         type DownContext = I::DownContext;
@@ -1803,10 +1804,10 @@ mod show_hide_modifier {
     impl<E, P, F1, F2, F3, F4> ViewProvider<E> for ShowHideVP<E, P, F1, F2, F3, F4>
         where E: Environment,
               P: ViewProvider<E>,
-              F1: FnMut(MSlock),
-              F2: FnMut(MSlock),
-              F3: FnMut(MSlock),
-              F4: FnMut(MSlock),
+              F1: FnMut(MSlock) + 'static,
+              F2: FnMut(MSlock) + 'static,
+              F3: FnMut(MSlock) + 'static,
+              F4: FnMut(MSlock) + 'static,
     {
         type UpContext = P::UpContext;
         type DownContext = P::DownContext;
@@ -1814,7 +1815,6 @@ mod show_hide_modifier {
         fn intrinsic_size(&mut self, s: MSlock) -> Size {
             self.wrapping.intrinsic_size(s)
         }
-
 
         fn xsquished_size(&mut self, s: MSlock) -> Size {
             self.wrapping.xsquished_size(s)
@@ -1890,10 +1890,10 @@ mod show_hide_modifier {
     }
 
     pub trait ShowHideCallback<E>: IntoViewProvider<E> where E: Environment {
-        fn pre_show(self, f: impl FnMut(MSlock)) -> impl IntoViewProvider<E>;
-        fn post_show(self, f: impl FnMut(MSlock)) -> impl IntoViewProvider<E>;
-        fn pre_hide(self, f: impl FnMut(MSlock)) -> impl IntoViewProvider<E>;
-        fn post_hide(self, f: impl FnMut(MSlock)) -> impl IntoViewProvider<E>;
+        fn pre_show(self, f: impl FnMut(MSlock) + 'static) -> impl IntoViewProvider<E>;
+        fn post_show(self, f: impl FnMut(MSlock) + 'static) -> impl IntoViewProvider<E>;
+        fn pre_hide(self, f: impl FnMut(MSlock) + 'static) -> impl IntoViewProvider<E>;
+        fn post_hide(self, f: impl FnMut(MSlock) + 'static) -> impl IntoViewProvider<E>;
     }
 
     #[inline]
@@ -1902,7 +1902,7 @@ mod show_hide_modifier {
     }
 
     impl<E, I> ShowHideCallback<E> for I where E: Environment, I: IntoViewProvider<E> {
-        fn pre_show(self, f: impl FnMut(MSlock)) -> impl IntoViewProvider<E> {
+        fn pre_show(self, f: impl FnMut(MSlock) + 'static) -> impl IntoViewProvider<E> {
             ShowHideIVP {
                 wrapping: self,
                 pre_show: f,
@@ -1913,7 +1913,7 @@ mod show_hide_modifier {
             }
         }
 
-        fn post_show(self, f: impl FnMut(MSlock)) -> impl IntoViewProvider<E> {
+        fn post_show(self, f: impl FnMut(MSlock) + 'static) -> impl IntoViewProvider<E> {
             ShowHideIVP {
                 wrapping: self,
                 pre_show: do_nothing,
@@ -1924,7 +1924,7 @@ mod show_hide_modifier {
             }
         }
 
-        fn pre_hide(self, f: impl FnMut(MSlock)) -> impl IntoViewProvider<E> {
+        fn pre_hide(self, f: impl FnMut(MSlock) + 'static) -> impl IntoViewProvider<E> {
             ShowHideIVP {
                 wrapping: self,
                 pre_show: do_nothing,
@@ -1935,7 +1935,7 @@ mod show_hide_modifier {
             }
         }
 
-        fn post_hide(self, f: impl FnMut(MSlock)) -> impl IntoViewProvider<E> {
+        fn post_hide(self, f: impl FnMut(MSlock) + 'static) -> impl IntoViewProvider<E> {
             ShowHideIVP {
                 wrapping: self,
                 pre_show: do_nothing,

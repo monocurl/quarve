@@ -153,7 +153,7 @@ mod vec_layout {
         _into_view_provider(i, long_e, long_s)
     }
 
-    pub trait VecLayoutProvider<E>: FromOptions + 'static where E: Environment {
+    pub trait VecLayoutProvider<E>: Sized + FromOptions + 'static where E: Environment {
         type DownContext: 'static;
         type UpContext: 'static;
         type SubviewDownContext: 'static;
@@ -187,6 +187,16 @@ mod vec_layout {
             env: &mut EnvRef<E>,
             s: MSlock
         ) -> Rect where P: ViewRef<E, DownContext=Self::SubviewDownContext, UpContext=Self::SubviewUpContext> + ?Sized + 'a;
+
+        fn hetero() -> HeteroIVP<E, impl HeteroIVPNode<E, Self::SubviewUpContext, Self::SubviewDownContext>, Self>
+        {
+            new_hetero_ivp(Self::from_options(Self::Options::default()))
+        }
+
+        fn hetero_options(options: impl FnOnce(Self::Options) -> Self::Options) -> HeteroIVP<E, impl HeteroIVPNode<E, Self::SubviewUpContext, Self::SubviewDownContext>, Self>
+        {
+            new_hetero_ivp(Self::from_options(options(Self::Options::default())))
+        }
     }
 
     mod macros {
@@ -204,17 +214,23 @@ mod vec_layout {
                         #[macro_export]
                         macro_rules! $macro_name {
                             () => {
-                                quarve::view::layout::new_hetero_ivp(
-                                    <$t as quarve::util::FromOptions>::from_options(
-                                        <$t as quarve::util::FromOptions>::Options::default()
-                                    )
-                                )
+                                $t::hetero()
+                            };
+                            (__build: $d built: expr;) => {
+                                $d built
+                            };
+                            (__build: $d built: expr; $d first: expr; $d($d child: expr;)*) => {
+                                $macro_name! {
+                                    __build: $d built.push($first);
+                                    $d($d child;)*
+                                }
                             };
                             ($d first: expr $d(; $d child: expr )* $d(;)?) => {
                                 $macro_name! {
+                                    __build: $t::hetero();
+                                    $d first;
                                     $d($d child;)*
                                 }
-                                .prepend($d first)
                             };
                         }
                     }
@@ -364,7 +380,7 @@ mod vec_layout {
         use crate::view::layout::{VecLayoutProvider};
 
         pub trait HeteroIVPNode<E, U, D> where E: Environment, U: 'static, D: 'static {
-            fn into_layout(self, env: &E::Const, s: MSlock) -> impl HeteroVPNode<E, U, D>;
+            fn into_layout(self, env: &E::Const, build: impl HeteroVPNode<E, U, D>, s: MSlock) -> impl HeteroVPNode<E, U, D>;
         }
 
         trait HeteroVPNodeBase<E, U, D>: 'static where E: Environment, U: 'static, D: 'static {
@@ -380,10 +396,11 @@ mod vec_layout {
 
         struct NullNode;
         impl<E: Environment, U: 'static, D: 'static> HeteroIVPNode<E, U, D> for NullNode {
-            fn into_layout(self, _env: &E::Const, _s: MSlock) -> impl HeteroVPNode<E, U, D> {
-                 NullNode
+            fn into_layout(self, _env: &E::Const, build: impl HeteroVPNode<E, U, D>, _s: MSlock) -> impl HeteroVPNode<E, U, D> {
+                 build
             }
         }
+
         impl<E: Environment, U: 'static, D: 'static> HeteroVPNodeBase<E, U, D> for NullNode {
             fn next(&self) -> &dyn HeteroVPNodeBase<E, U, D> {
                 self
@@ -423,15 +440,20 @@ mod vec_layout {
                   N: HeteroIVPNode<E, U, D>,
                   U: 'static, D: 'static
         {
-            fn into_layout(self, env: &E::Const, s: MSlock) -> impl HeteroVPNode<E, U, D> {
-                HeteroVPActualNode {
-                    next: self.next.into_layout(env, s),
-                    view:
-                    UpContextAdapter::new(
-                        self.provider.into_view_provider(env, s)
-                    ).into_view(s),
-                    phantom: PhantomData
-                }
+            // reverses list
+            fn into_layout(self, env: &E::Const, build: impl HeteroVPNode<E, U, D>, s: MSlock) -> impl HeteroVPNode<E, U, D> {
+                self.next.into_layout(
+                    env,
+                    HeteroVPActualNode {
+                        next: build,
+                        view:
+                            UpContextAdapter::new(
+                                self.provider.into_view_provider(env, s)
+                            ).into_view(s),
+                        phantom: PhantomData
+                    },
+                    s
+                )
             }
         }
 
@@ -516,7 +538,7 @@ mod vec_layout {
             }
         }
 
-        pub fn new_hetero_ivp<E: Environment, L: VecLayoutProvider<E>>(layout: L) -> HeteroIVP<E, impl HeteroIVPNode<E, L::SubviewUpContext, L::SubviewDownContext>, L> {
+        pub(crate) fn new_hetero_ivp<E: Environment, L: VecLayoutProvider<E>>(layout: L) -> HeteroIVP<E, impl HeteroIVPNode<E, L::SubviewUpContext, L::SubviewDownContext>, L> {
             HeteroIVP {
                 root: NullNode,
                 layout,
@@ -529,7 +551,7 @@ mod vec_layout {
                   L: VecLayoutProvider<E>,
                   H: HeteroIVPNode<E, L::SubviewUpContext, L::SubviewDownContext>
         {
-            pub fn prepend<P>(self, provider: P) -> HeteroIVP<E, impl HeteroIVPNode<E, L::SubviewUpContext, L::SubviewDownContext>, L>
+            pub fn push<P>(self, provider: P) -> HeteroIVP<E, impl HeteroIVPNode<E, L::SubviewUpContext, L::SubviewDownContext>, L>
                 where P: IntoViewProvider<E, UpContext=L::SubviewUpContext, DownContext=L::SubviewDownContext>
             {
                 HeteroIVP {
@@ -559,7 +581,7 @@ mod vec_layout {
 
             fn into_view_provider(self, env: &E::Const, s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
                 HeteroVP {
-                    root: self.root.into_layout(env, s),
+                    root: self.root.into_layout(env, NullNode, s),
                     layout: self.layout,
                     marker: PhantomData
                 }
