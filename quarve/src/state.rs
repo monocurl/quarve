@@ -2509,6 +2509,24 @@ mod signal {
                   F: Send + 'static + Fn(&T) -> S;
     }
 
+    pub trait ActualDiffSignal<T> : Signal<T> where T: Send + 'static + Copy + Eq {
+        fn diff_listen<F>(&self, mut listener: F, s: Slock<'_, impl ThreadMarker>)
+            where F: (FnMut(&T, Slock<'_>) -> bool) + Send + 'static
+        {
+            let mut last_val = *self.borrow(s);
+            self.listen(move |val, s| {
+                if *val != last_val {
+                    last_val = *val;
+                    listener(val, s)
+                }
+                else {
+                    true
+                }
+            }, s)
+        }
+    }
+    impl<T, S> ActualDiffSignal<T> for S where T: Send + Copy + Eq + 'static, S: Signal<T> { }
+
     trait InnerSignal<T: Send> {
         fn borrow(&self) -> &T;
     }

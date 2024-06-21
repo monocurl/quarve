@@ -57,7 +57,7 @@ impl quarve::core::WindowProvider for WindowProvider {
 
     fn root(&self, env: &<Env as Environment>::Const, s: MSlock<'_>) -> impl ViewProvider<Env, DownContext=()> {
         let enabled = s.clock_signal()
-            .map(|val| *val % 2.0 > 1.0, s);
+            .map(|val| 2.0 * *val % 2.0 > 1.0, s);
         let enabled_int = enabled.map(|u| if *u {vec![1]} else {vec![]}, s);
         let not_enabled = enabled.map(|u| !*u, s);
         let not_enabled_int = not_enabled.map(|u| if *u {vec![1]} else {vec![]}, s);

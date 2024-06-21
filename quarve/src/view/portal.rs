@@ -86,15 +86,23 @@ impl<E, U, D> PortalReceiver<E, U, D>
                 }
             }
         }
-        println!("Try mounting Receiver");
     }
 
     #[inline]
-    fn unmount(&self) {
-        println!("Unmounting Receiver");
+    fn unmount(&self, s: MSlock) {
         self.portal.inner.borrow_mut()
             .receiver_invalidator
-            .retain(|inv| inv != self.invalidator.as_ref().unwrap())
+            .retain(|inv| {
+                if inv != self.invalidator.as_ref().unwrap() {
+                    if let Some(inv) = inv.upgrade() {
+                        inv.invalidate(s);
+                        return true
+                    }
+                }
+
+                false
+            })
+
     }
 
     #[inline]
@@ -168,11 +176,9 @@ impl<E, U, D> ViewProvider<E> for PortalReceiver<E, U, D>
     fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
         subtree.clear_subviews(s);
 
+        if let Some(arc) = self.subview().map(|v| v.to_view_base())
         {
-            if let Some(arc) = self.subview().map(|v| v.to_view_base())
-            {
-                subtree.insert_arc_even_if_mounted_on_another_view(arc, 0, env, s);
-            }
+            subtree.insert_arc_even_if_mounted_on_another_view(arc, 0, env, s);
         }
 
         self.mount(s);
@@ -185,8 +191,6 @@ impl<E, U, D> ViewProvider<E> for PortalReceiver<E, U, D>
             panic!("Multiple Receivers active at the same time!")
         }
 
-        println!("Active {:?}", self.portal.inner.borrow().receiver_invalidator.len());
-
         if let Some(ref view) = self.subview() {
             let used = view.layout_down_with_context(frame.full_rect(), layout_context, env, s);
             (used, used)
@@ -196,8 +200,8 @@ impl<E, U, D> ViewProvider<E> for PortalReceiver<E, U, D>
         }
     }
 
-    fn pre_hide(&mut self, _s: MSlock) {
-        self.unmount();
+    fn pre_hide(&mut self, s: MSlock) {
+        self.unmount(s);
     }
 }
 

@@ -1355,7 +1355,7 @@ mod when_modifier {
     use std::marker::PhantomData;
     use crate::core::{Environment, MSlock};
     use crate::event::{Event, EventResult};
-    use crate::state::Signal;
+    use crate::state::{ActualDiffSignal, Signal};
     use crate::util::geo::{Rect, Size};
     use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, ViewProvider};
     use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
@@ -1455,7 +1455,7 @@ mod when_modifier {
 
         fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
             let inv = invalidator.clone();
-            self.enabled.listen(move |_, s| {
+            self.enabled.diff_listen(move |_, s| {
                 let Some(inv) = inv.upgrade() else {
                     return false;
                 };
