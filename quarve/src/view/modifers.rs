@@ -174,7 +174,7 @@ mod provider_modifier {
     use crate::event::{Event, EventResult};
     use crate::state::{FixedSignal, Signal, SignalOrValue};
     use crate::util::geo;
-    use crate::util::geo::{Alignment, HorizontalAlignment, Point, Rect, ScreenUnit, Size, VerticalAlignment};
+    use crate::util::geo::{Alignment, HorizontalAlignment, Point, Rect, ScreenUnit, Size, UNBOUNDED, VerticalAlignment};
     use crate::util::markers::ThreadMarker;
     use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, ViewProvider};
     use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
@@ -654,9 +654,11 @@ mod provider_modifier {
 
     #[derive(Default, Copy, Clone)]
     pub struct Frame {
-        squished: Option<Size>,
+        squished_w: Option<ScreenUnit>,
+        squished_h: Option<ScreenUnit>,
         intrinsic: Option<Size>,
-        stretched: Option<Size>,
+        stretched_w: Option<ScreenUnit>,
+        stretched_h: Option<ScreenUnit>,
         alignment: Alignment
     }
 
@@ -672,54 +674,60 @@ mod provider_modifier {
         }
 
         pub fn squished(mut self, w: impl Into<ScreenUnit>, h: impl Into<ScreenUnit>) -> Frame {
-            self.squished = Some(Size::new(w.into(), h.into()));
+            self.squished_w = Some(w.into());
+            self.squished_h = Some(h.into());
             self
         }
 
         pub fn stretched(mut self, w: impl Into<ScreenUnit>, h: impl Into<ScreenUnit>) -> Frame {
-            self.stretched = Some(Size::new(w.into(), h.into()));
+            self.stretched_w = Some(w.into());
+            self.stretched_h = Some(h.into());
             self
         }
 
         pub fn unlimited_stretch(self) -> Frame {
-            self.stretched(1e6, 1e6)
+            self.stretched(UNBOUNDED, UNBOUNDED)
         }
 
-        pub fn unlimited_width(self) -> Frame {
-            let height = self.intrinsic.expect("This method should be called after setting intrinsic").h;
-            self.stretched(1e6, height)
+        pub fn unlimited_width(mut self) -> Frame {
+            self.stretched_w = Some(UNBOUNDED);
+            self
         }
 
-        pub fn unlimited_height(self) -> Frame {
-            let width = self.intrinsic.expect("This method should be called after setting intrinsic").w;
-            self.stretched(width, 1e6)
+        pub fn unlimited_height(mut self) -> Frame {
+            self.stretched_h = Some(UNBOUNDED);
+            self
         }
     }
 
     impl<E, U, D> ProviderModifier<E, U, D> for Frame where E: Environment, U: 'static, D: 'static {
-        fn intrinsic_size(&mut self, _src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, _s: MSlock) -> Size {
-            self.intrinsic.unwrap()
+        fn intrinsic_size(&mut self, src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, s: MSlock) -> Size {
+            self.intrinsic.unwrap_or(src.intrinsic_size(s))
         }
 
-        fn xsquished_size(&mut self, _src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, _s: MSlock) -> Size {
-            self.squished.or(self.intrinsic).unwrap()
+        fn xsquished_size(&mut self, src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, s: MSlock) -> Size {
+            let w = self.squished_w.unwrap_or(self.intrinsic_size(src, s).w);
+            let h = self.squished_h.unwrap_or(self.intrinsic_size(src, s).h);
+            Size::new(w, h)
         }
 
-        fn xstretched_size(&mut self, _src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, _s: MSlock) -> Size {
-            self.stretched.or(self.intrinsic).unwrap()
+        fn xstretched_size(&mut self, src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, s: MSlock) -> Size {
+            let w = self.stretched_w.unwrap_or(self.intrinsic_size(src, s).w);
+            let h = self.stretched_h.unwrap_or(self.intrinsic_size(src, s).h);
+            Size::new(w, h)
         }
 
-        fn ysquished_size(&mut self, _src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, _s: MSlock) -> Size {
-            self.squished.or(self.intrinsic).unwrap()
+        fn ysquished_size(&mut self, src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, s: MSlock) -> Size {
+            self.xsquished_size(src, s)
         }
 
-        fn ystretched_size(&mut self, _src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, _s: MSlock) -> Size {
-            self.stretched.or(self.intrinsic).unwrap()
+        fn ystretched_size(&mut self, src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, s: MSlock) -> Size {
+            self.xstretched_size(src, s)
         }
 
         fn layout_down(&mut self, src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, subtree: &Subtree<E>, frame: Size, layout_context: &D, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
-            let min = self.squished.or(self.intrinsic).unwrap();
-            let max = self.stretched.or(self.intrinsic).unwrap();
+            let min = self.xsquished_size(src, s);
+            let max = self.xstretched_size(src, s);
 
             let chosen = Size::new(
                 frame.w.clamp(min.w, max.w),
@@ -762,26 +770,19 @@ mod provider_modifier {
         where E: Environment
     {
         fn intrinsic(self, w: impl Into<ScreenUnit>, h: impl Into<ScreenUnit>) -> ProviderIVPModifier<E, Self, Frame>;
-        fn frame(self, f: impl FnOnce(Frame) -> Frame) -> ProviderIVPModifier<E, Self, Frame>;
+        fn frame(self, f: Frame) -> ProviderIVPModifier<E, Self, Frame>;
     }
 
     impl<E, I> FrameModifiable<E> for I where E: Environment, I: IntoViewProvider<E>
     {
         fn intrinsic(self, w: impl Into<ScreenUnit>, h: impl Into<ScreenUnit>) -> ProviderIVPModifier<E, Self, Frame> {
-            self.frame(|f| f.intrinsic(w, h))
+            self.frame(Frame::default().intrinsic(w, h))
         }
 
-        fn frame(self, f: impl FnOnce(Frame) -> Frame) -> ProviderIVPModifier<E, Self, Frame> {
-            let frame = f(Frame {
-                squished: None,
-                intrinsic: None,
-                stretched: None,
-                alignment: Alignment::Center
-            });
-            assert!(frame.intrinsic.is_some(), "Must set intrinsic size of the frame!");
+        fn frame(self, f: Frame) -> ProviderIVPModifier<E, Self, Frame> {
             ProviderIVPModifier {
                 provider: self,
-                modifier: frame,
+                modifier: f,
                 phantom: Default::default(),
             }
         }
@@ -806,6 +807,19 @@ mod layer_modifier {
         border_color: SignalOrValue<Color, S3>,
         border_width: SignalOrValue<ScreenUnit, S4>,
         opacity: SignalOrValue<f32, S5>
+    }
+
+    impl Default for Layer<FixedSignal<Color>, FixedSignal<ScreenUnit>, FixedSignal<Color>, FixedSignal<ScreenUnit>, FixedSignal<f32>>
+    {
+        fn default() -> Self {
+            Layer {
+                background_color: SignalOrValue::value(Color::transparent()),
+                corner_radius: SignalOrValue::value(0.0),
+                border_color: SignalOrValue::value(Color::transparent()),
+                border_width: SignalOrValue::value(0.0),
+                opacity: SignalOrValue::value(1.0),
+            }
+        }
     }
 
     impl<S1, S2, S3, S4, S5> Layer<S1, S2, S3, S4, S5> where S1: Signal<Color>, S2: Signal<ScreenUnit>, S3: Signal<Color>, S4: Signal<ScreenUnit>, S5: Signal<f32> {
@@ -1112,11 +1126,7 @@ mod layer_modifier {
     pub trait LayerModifiable<E>: IntoViewProvider<E>
         where E: Environment
     {
-        fn layer<S1, S2, S3, S4, S5>(
-            self,
-            layer: impl FnOnce(Layer<FixedSignal<Color>, FixedSignal<ScreenUnit>, FixedSignal<Color>, FixedSignal<ScreenUnit>, FixedSignal<f32>>)
-                -> Layer<S1, S2, S3, S4, S5>
-        ) -> LayerIVP<E, Self, S1, S2, S3, S4, S5>
+        fn layer<S1, S2, S3, S4, S5>(self, layer: Layer<S1, S2, S3, S4, S5>) -> LayerIVP<E, Self, S1, S2, S3, S4, S5>
             where S1: Signal<Color>,
                   S2: Signal<ScreenUnit>,
                   S3: Signal<Color>,
@@ -1126,7 +1136,7 @@ mod layer_modifier {
 
     impl<E, I> LayerModifiable<E> for I where E: Environment, I: IntoViewProvider<E>
     {
-        fn layer<S1, S2, S3, S4, S5>(self, layer: impl FnOnce(Layer<FixedSignal<Color>, FixedSignal<ScreenUnit>, FixedSignal<Color>, FixedSignal<ScreenUnit>, FixedSignal<f32>>) -> Layer<S1, S2, S3, S4, S5>) -> LayerIVP<E, Self, S1, S2, S3, S4, S5>
+        fn layer<S1, S2, S3, S4, S5>(self, layer: Layer<S1, S2, S3, S4, S5>) -> LayerIVP<E, Self, S1, S2, S3, S4, S5>
             where S1: Signal<Color>,
                   S2: Signal<ScreenUnit>,
                   S3: Signal<Color>,
@@ -1134,13 +1144,7 @@ mod layer_modifier {
                   S5: Signal<f32>
         {
             LayerIVP {
-                layer: layer(Layer {
-                    background_color: SignalOrValue::value(Color::transparent()),
-                    corner_radius: SignalOrValue::value(0.0),
-                    border_color: SignalOrValue::value(Color::black()),
-                    border_width: SignalOrValue::value(0.0),
-                    opacity: SignalOrValue::value(1.0),
-                }),
+                layer,
                 ivp: self,
                 phantom: PhantomData
             }

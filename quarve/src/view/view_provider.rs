@@ -1,7 +1,6 @@
 use std::marker::PhantomData;
 use crate::core::{Environment, MSlock};
 use crate::event::{Event, EventResult};
-use crate::state::slock_cell::MainSlockCell;
 use crate::util::geo::{Rect, Size};
 use crate::view::{EnvRef, InnerView, Invalidator, NativeView, Subtree, View};
 use crate::view::util::SizeContainer;
@@ -137,113 +136,261 @@ pub trait ViewProvider<E>: Sized + 'static
     }
 }
 
-pub struct UpContextAdapter<E, P, U>(P, PhantomData<MainSlockCell<(U, E)>>)
-    where E: Environment,
-          P: ViewProvider<E>,
-          U: 'static,
-          P::UpContext: Into<U>;
-impl<E, P, U> UpContextAdapter<E, P, U>
-    where E: Environment,
-          P: ViewProvider<E>,
-          U: 'static,
-          P::UpContext: Into<U> {
-    pub fn new(p: P) -> Self {
-        UpContextAdapter(p, PhantomData)
+mod upcontext_setter {
+    use std::marker::PhantomData;
+    use crate::core::{Environment, MSlock};
+    use crate::event::{Event, EventResult};
+    use crate::util::geo::{Rect, Size};
+    use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, ViewProvider};
+
+    pub struct UpContextSetter<E, P, U>(P, U, PhantomData<E>)
+        where E: Environment,
+              P: IntoViewProvider<E>,
+              U: 'static + Clone;
+
+    impl<E, P, U> UpContextSetter<E, P, U>
+        where E: Environment,
+              P: IntoViewProvider<E>,
+              U: 'static + Clone
+    {
+        pub fn new(p: P, up_context: U) -> Self {
+            UpContextSetter(p, up_context, PhantomData)
+        }
+    }
+
+
+
+    impl<E, P, U> IntoViewProvider<E> for UpContextSetter<E, P, U>
+        where E: Environment,
+              P: IntoViewProvider<E>,
+              U: 'static + Clone
+    {
+        type UpContext = U;
+        type DownContext = P::DownContext;
+
+        fn into_view_provider(self, env: &E::Const, s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
+            UpContextSetterVP(self.0.into_view_provider(env, s), self.1, PhantomData)
+        }
+    }
+
+    struct UpContextSetterVP<E, P, U>(P, U, PhantomData<E>)
+        where E: Environment,
+              P: ViewProvider<E>,
+              U: 'static + Clone;
+
+    impl<E, P, U> ViewProvider<E> for UpContextSetterVP<E, P, U>
+        where E: Environment,
+              P: ViewProvider<E>,
+              U: 'static + Clone,
+    {
+        type UpContext = U;
+        type DownContext = P::DownContext;
+
+        fn intrinsic_size(&mut self, s: MSlock) -> Size {
+            self.0.intrinsic_size(s)
+        }
+
+        fn xsquished_size(&mut self, s: MSlock) -> Size {
+            self.0.xsquished_size(s)
+        }
+
+        fn xstretched_size(&mut self, s: MSlock) -> Size {
+            self.0.xstretched_size(s)
+        }
+
+        fn ysquished_size(&mut self, s: MSlock) -> Size {
+            self.0.ysquished_size(s)
+        }
+
+        fn ystretched_size(&mut self, s: MSlock) -> Size {
+            self.0.ystretched_size(s)
+        }
+
+        fn up_context(&mut self, _s: MSlock) -> Self::UpContext {
+            self.1.clone()
+        }
+
+        fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+            let source = backing_source
+                .map(|(n, p)| (n, p.0));
+
+            self.0.init_backing(invalidator, subtree, source, env, s)
+        }
+
+        fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
+            self.0.layout_up(subtree, env, s)
+        }
+
+        fn layout_down(&mut self, subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
+            self.0.layout_down(subtree, frame, layout_context, env, s)
+        }
+
+        fn pre_show(&mut self, s: MSlock) {
+            self.0
+                .pre_show(s)
+        }
+
+        fn post_show(&mut self, s: MSlock) {
+            self.0
+                .post_show(s)
+        }
+
+        fn pre_hide(&mut self, s: MSlock) {
+            self.0
+                .pre_hide(s)
+        }
+
+        fn post_hide(&mut self, s: MSlock) {
+            self.0
+                .post_hide(s)
+        }
+
+        fn focused(&mut self, s: MSlock) {
+            self.0
+                .focused(s)
+        }
+
+        fn unfocused(&mut self, s: MSlock) {
+            self.0
+                .unfocused(s)
+        }
+
+        fn push_environment(&mut self, env: &mut E::Variable, s: MSlock) {
+            self.0
+                .push_environment(env, s);
+        }
+
+        fn pop_environment(&mut self, env: &mut E::Variable, s: MSlock) {
+            self.0
+                .pop_environment(env, s);
+        }
+
+        fn handle_event(&mut self, e: Event, s: MSlock) -> EventResult {
+            self.0
+                .handle_event(e, s)
+        }
     }
 }
+pub use upcontext_setter::*;
 
-impl<E, P, U> ViewProvider<E> for UpContextAdapter<E, P, U>
-    where E: Environment,
-          P: ViewProvider<E>,
-          U: 'static,
-          P::UpContext: Into<U> {
-    type UpContext = U;
-    type DownContext = P::DownContext;
+mod upcontext_adapter {
+    use std::marker::PhantomData;
+    use crate::core::{Environment, MSlock};
+    use crate::event::{Event, EventResult};
+    use crate::state::slock_cell::MainSlockCell;
+    use crate::util::geo::{Rect, Size};
+    use crate::view::{EnvRef, Invalidator, NativeView, Subtree, ViewProvider};
 
-    fn intrinsic_size(&mut self, s: MSlock) -> Size {
-        self.0.intrinsic_size(s)
+    pub struct UpContextAdapter<E, P, U>(P, PhantomData<MainSlockCell<(U, E)>>)
+        where E: Environment,
+              P: ViewProvider<E>,
+              U: 'static,
+              P::UpContext: Into<U>;
+
+    impl<E, P, U> UpContextAdapter<E, P, U>
+        where E: Environment,
+              P: ViewProvider<E>,
+              U: 'static,
+              P::UpContext: Into<U> {
+        pub fn new(p: P) -> Self {
+            UpContextAdapter(p, PhantomData)
+        }
     }
 
-    fn xsquished_size(&mut self, s: MSlock) -> Size {
-        self.0.xsquished_size(s)
-    }
+    impl<E, P, U> ViewProvider<E> for UpContextAdapter<E, P, U>
+        where E: Environment,
+              P: ViewProvider<E>,
+              U: 'static,
+              P::UpContext: Into<U> {
+        type UpContext = U;
+        type DownContext = P::DownContext;
 
-    fn xstretched_size(&mut self, s: MSlock) -> Size {
-        self.0.xstretched_size(s)
-    }
+        fn intrinsic_size(&mut self, s: MSlock) -> Size {
+            self.0.intrinsic_size(s)
+        }
 
-    fn ysquished_size(&mut self, s: MSlock) -> Size {
-        self.0.ysquished_size(s)
-    }
+        fn xsquished_size(&mut self, s: MSlock) -> Size {
+            self.0.xsquished_size(s)
+        }
 
-    fn ystretched_size(&mut self, s: MSlock) -> Size {
-        self.0.ystretched_size(s)
-    }
+        fn xstretched_size(&mut self, s: MSlock) -> Size {
+            self.0.xstretched_size(s)
+        }
 
-    fn up_context(&mut self, s: MSlock) -> Self::UpContext {
-        self.0.up_context(s).into()
-    }
+        fn ysquished_size(&mut self, s: MSlock) -> Size {
+            self.0.ysquished_size(s)
+        }
 
-    fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
-        let source = backing_source
-            .map(|(n, p)| (n, p.0));
+        fn ystretched_size(&mut self, s: MSlock) -> Size {
+            self.0.ystretched_size(s)
+        }
 
-        self.0.init_backing(invalidator, subtree, source, env, s)
-    }
+        fn up_context(&mut self, s: MSlock) -> Self::UpContext {
+            self.0.up_context(s).into()
+        }
 
-    fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
-        self.0.layout_up(subtree, env, s)
-    }
+        fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+            let source = backing_source
+                .map(|(n, p)| (n, p.0));
 
-    fn layout_down(&mut self, subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
-        self.0.layout_down(subtree, frame, layout_context, env, s)
-    }
+            self.0.init_backing(invalidator, subtree, source, env, s)
+        }
 
-    fn pre_show(&mut self, s: MSlock) {
-        self.0
-            .pre_show(s)
-    }
+        fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
+            self.0.layout_up(subtree, env, s)
+        }
 
-    fn post_show(&mut self, s: MSlock) {
-        self.0
-            .post_show(s)
-    }
+        fn layout_down(&mut self, subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
+            self.0.layout_down(subtree, frame, layout_context, env, s)
+        }
 
-    fn pre_hide(&mut self, s: MSlock) {
-        self.0
-            .pre_hide(s)
-    }
+        fn pre_show(&mut self, s: MSlock) {
+            self.0
+                .pre_show(s)
+        }
 
-    fn post_hide(&mut self, s: MSlock) {
-        self.0
-            .post_hide(s)
-    }
+        fn post_show(&mut self, s: MSlock) {
+            self.0
+                .post_show(s)
+        }
 
-    fn focused(&mut self, s: MSlock) {
-        self.0
-            .focused(s)
-    }
+        fn pre_hide(&mut self, s: MSlock) {
+            self.0
+                .pre_hide(s)
+        }
 
-    fn unfocused(&mut self, s: MSlock) {
-        self.0
-            .unfocused(s)
-    }
+        fn post_hide(&mut self, s: MSlock) {
+            self.0
+                .post_hide(s)
+        }
 
-    fn push_environment(&mut self, env: &mut E::Variable, s: MSlock) {
-        self.0
-            .push_environment(env, s);
-    }
+        fn focused(&mut self, s: MSlock) {
+            self.0
+                .focused(s)
+        }
 
-    fn pop_environment(&mut self, env: &mut E::Variable, s: MSlock) {
-        self.0
-            .pop_environment(env, s);
-    }
+        fn unfocused(&mut self, s: MSlock) {
+            self.0
+                .unfocused(s)
+        }
 
-    fn handle_event(&mut self, e: Event, s: MSlock) -> EventResult {
-        self.0
-            .handle_event(e, s)
+        fn push_environment(&mut self, env: &mut E::Variable, s: MSlock) {
+            self.0
+                .push_environment(env, s);
+        }
+
+        fn pop_environment(&mut self, env: &mut E::Variable, s: MSlock) {
+            self.0
+                .pop_environment(env, s);
+        }
+
+        fn handle_event(&mut self, e: Event, s: MSlock) -> EventResult {
+            self.0
+                .handle_event(e, s)
+        }
     }
 }
+pub use upcontext_adapter::*;
 
 // when need to return None for Option<impl ViewProvider> and need concrete type
 pub(crate) struct DummyProvider<E, U, D>(pub PhantomData<(E, U, D)>);

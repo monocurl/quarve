@@ -5,7 +5,7 @@ use crate::core::{Environment, MSlock};
 use crate::event::{Event, EventResult};
 use crate::util::geo::{Rect, Size};
 use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, ToArcViewBase, View, ViewProvider};
-use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier, OffsetModifiable};
+use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
 
 struct PortalInner<E, U, D>
     where E: Environment, U: 'static, D: 'static {

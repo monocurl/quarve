@@ -38,20 +38,40 @@ mod size_container {
             self.sizes[0]
         }
 
+        pub fn intrinsic_mut(&mut self) -> &mut Size {
+            &mut self.sizes[0]
+        }
+
         pub fn xsquished(&self) -> Size {
             self.sizes[1]
+        }
+
+        pub fn xsquished_mut(&mut self) -> &mut Size {
+            &mut self.sizes[1]
         }
 
         pub fn xstretched(&self) -> Size {
             self.sizes[2]
         }
 
+        pub fn xstretched_mut(&mut self) -> &mut Size {
+            &mut self.sizes[2]
+        }
+
         pub fn ysquished(&self) -> Size {
             self.sizes[3]
         }
 
+        pub fn ysquished_mut(&mut self) -> &mut Size {
+            &mut self.sizes[3]
+        }
+
         pub fn ystretched(&self) -> Size {
             self.sizes[4]
+        }
+
+        pub fn ystretched_mut(&mut self) -> &mut Size {
+            &mut self.sizes[4]
         }
     }
 }

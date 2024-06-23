@@ -188,7 +188,7 @@ mod window {
     use crate::core::{APP, Environment, MSlock, run_main_async, run_main_maybe_sync, Slock};
     use crate::native;
     use crate::native::{WindowHandle};
-    use crate::state::{ActualDiffSignal, Signal};
+    use crate::state::{Signal};
     use crate::state::slock_cell::{MainSlockCell};
     use crate::util::geo::{Rect, Size};
     use crate::view::{InnerViewBase};

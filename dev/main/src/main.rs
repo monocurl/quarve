@@ -2,12 +2,7 @@ use quarve::core::{Application, Environment, launch, MSlock};
 use quarve::state::{FixedSignal, Signal};
 use quarve::view::{ViewProvider, IntoViewProvider};
 use quarve::view::layout::*;
-use quarve::view::portal::*;
-use quarve::{hstack};
-use quarve::util::geo::{HorizontalDirection, VerticalAlignment};
-use quarve::view::color_view::{EmptyView};
-use quarve::view::modifers::{FrameModifiable, LayerModifiable, WhenModifiable};
-use quarve::view::portal::Portal;
+use quarve::view::modifers::{Frame, FrameModifiable, Layer, LayerModifiable};
 use quarve::view::util::Color;
 
 struct Env(());
@@ -57,48 +52,51 @@ impl quarve::core::WindowProvider for WindowProvider {
     }
 
     fn root(&self, env: &<Env as Environment>::Const, s: MSlock<'_>) -> impl ViewProvider<Env, DownContext=()> {
-        let enabled = s.clock_signal()
-            .map(|val| 1.0 * *val % 2.0 > 1.0, s);
+        let clock = s.clock_signal();
+        let count = clock
+            .map(|val| {
+                (0 ..((val / 10.0).sin().abs() * 15.0) as usize)
+                    .collect()
+            }, s);
 
-        let enabled_int = enabled.map(|u| if *u {vec![1]} else {vec![]}, s);
-        let not_enabled = enabled.map(|u| !*u, s);
-        let not_enabled_int = not_enabled.map(|u| if *u {vec![1]} else {vec![]}, s);
-        let p = Portal::new();
-        let p2 = p.clone();
-        let p3 = p.clone();
-
-        let black_box =
-            Color::black().intrinsic(100, 100);
-
-        HStack::hetero_options(|o| o.direction(HorizontalDirection::Right).align(VerticalAlignment::Bottom))
-            .push(EmptyView)
-            .push(
-                EmptyView
-                    .when(not_enabled, |v| {
-                        v.portal_sender(&p, Color::black().intrinsic(200, 100))
-                    })
+        count
+            .signal_flexmap_options(
+                |val, _| {
+                    Color::new(100, 0, 0)
+                        .frame(
+                            Frame::default()
+                                .intrinsic(100, 100.0 + 25.0 * (val % 2) as f64)
+                                .stretched(150, 150.0)
+                                .squished(50, 100.0 - 50.0 * (val % 2) as f64)
+                        )
+                        .flex(FlexContext::default()
+                            .grow(0.5 + (val % 2) as f64)
+                        )
+                },
+                FlexStackOptions::default()
+                    .gap(10.0)
+                    .wrap()
+                    .cross_gap(10.0)
             )
-            .push(
-                EmptyView
-            )
-            .push(
-                Color::new(0, 0, 100)
-            )
-            .push(
-                Color::new(100, 0, 0).intrinsic(400, 100)
-            )
-            .push(
-                PortalReceiver::new(&p)
-            )
-            .push(
-                EmptyView
-                    .when(enabled, |v| {
-                        v.portal_sender(&p, black_box)
-                    })
-            )
-            .frame(|f| f.intrinsic(900, 900).unlimited_stretch())
-            .layer(|l| l.border(Color::black(), 1))
+            .layer(Layer::default().border(Color::black(), 1.0))
+            .intrinsic(550, 500)
+            .layer(Layer::default().border(Color::new(100, 100, 100), 1.0))
             .into_view_provider(env, s)
+
+        //
+        // FlexStack::hetero()
+        //     .push(
+        //         Color::new(100, 0, 0).intrinsic(400, 100)
+        //             .flex(|f| f.grow(1.0))
+        //     )
+        //     .push(
+        //         Color::new(0, 0, 100)
+        //             .flex(|f| f.grow(1.0))
+        //     )
+        //     .push(
+        //         Color::new(0, 100, 0).intrinsic(400, 100)
+        //     )
+        //     .into_view_provider(env, s)
     }
 }
 

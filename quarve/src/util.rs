@@ -346,6 +346,7 @@ pub mod markers {
 
 pub mod geo {
     pub type ScreenUnit = f64;
+    pub const UNBOUNDED: f64 = 1e7;
 
     #[derive(Copy, Clone, Default, Debug, PartialEq)]
     pub struct Rect {
@@ -446,6 +447,11 @@ pub mod geo {
     #[derive(Copy, Clone, PartialEq, Eq, Debug)]
     pub enum HorizontalDirection {
         Left, Right
+    }
+
+    #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+    pub enum Direction {
+        Left, Right, Down, Up
     }
 
     #[derive(Copy, Clone, PartialEq, Eq, Debug)]

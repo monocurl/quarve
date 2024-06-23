@@ -41,6 +41,7 @@ pub(crate) trait InnerViewBase<E> where E: Environment {
     fn try_layout_down(&mut self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, env: &mut E, frame: Option<Rect>, s: MSlock<'_>) -> Result<(), ()>;
     fn translate(&mut self, by: Point, s: MSlock);
     fn used_rect(&mut self, s: MSlock) -> Rect;
+    fn suggested_rect(&mut self, _s: MSlock) -> Rect;
 
     fn intrinsic_size(&mut self, s: MSlock) -> Size;
     fn xsquished_size(&mut self, s: MSlock) -> Size;
@@ -282,11 +283,15 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         view_set_frame(self.backing(), self.last_view_frame, s);
     }
 
-    fn used_rect(&mut self, s: MSlock) -> Rect {
+    fn used_rect(&mut self, _s: MSlock) -> Rect {
         debug_assert!(!self.needs_layout_down);
         self.last_exclusion
     }
 
+    fn suggested_rect(&mut self, _s: MSlock) -> Rect {
+        debug_assert!(!self.needs_layout_down);
+        self.last_suggested
+    }
 
     fn intrinsic_size(&mut self, s: MSlock) -> Size {
         debug_assert!(!self.needs_layout_up() && self.depth() != u32::MAX,

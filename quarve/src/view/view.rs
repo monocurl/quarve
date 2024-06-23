@@ -82,6 +82,7 @@ mod view_ref {
 
         // only call after layout down
         fn used_rect(&self, s: MSlock) -> Rect;
+        fn suggested_rect(&self, s: MSlock) -> Rect;
     }
 
     pub trait TrivialContextViewRef<E> where E: Environment {
@@ -164,6 +165,11 @@ mod view_ref {
         fn used_rect(&self, s: MSlock) -> Rect {
             self.0.borrow_mut_main(s)
                 .used_rect(s)
+        }
+
+        fn suggested_rect(&self, s: MSlock) -> Rect {
+            self.0.borrow_mut_main(s)
+                .suggested_rect(s)
         }
     }
 

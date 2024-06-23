@@ -194,9 +194,9 @@ mod vec_layout {
             new_hetero_ivp(Self::from_options(Self::Options::default()))
         }
 
-        fn hetero_options(options: impl FnOnce(Self::Options) -> Self::Options) -> HeteroIVP<E, impl HeteroIVPNode<E, Self::SubviewUpContext, Self::SubviewDownContext>, Self>
+        fn hetero_options(options: Self::Options) -> HeteroIVP<E, impl HeteroIVPNode<E, Self::SubviewUpContext, Self::SubviewDownContext>, Self>
         {
-            new_hetero_ivp(Self::from_options(options(Self::Options::default())))
+            new_hetero_ivp(Self::from_options(options))
         }
     }
 
@@ -249,15 +249,15 @@ mod vec_layout {
                                         DownContext=<$t as VecLayoutProvider<E>>::DownContext,
                                         UpContext=<$t as VecLayoutProvider<E>>::UpContext>
                         where P: IntoViewProvider<E,
-                                        DownContext=<$t as VecLayoutProvider<E>>::SubviewDownContext,
-                                        UpContext=<$t as VecLayoutProvider<E>>::SubviewUpContext>;
-                    fn $method_name_options<P>(self, map: impl FnMut(&T, MSlock) -> P + 'static, options: impl FnOnce(<$t as FromOptions>::Options) -> <$t as FromOptions>::Options)
+                                        DownContext=<$t as VecLayoutProvider<E>>::SubviewDownContext>,
+                              P::UpContext: Into<<$t as VecLayoutProvider<E>>::SubviewUpContext>;
+                fn $method_name_options<P>(self, map: impl FnMut(&T, MSlock) -> P + 'static, options: <$t as FromOptions>::Options)
                         -> impl IntoViewProvider<E,
                                         DownContext=<$t as VecLayoutProvider<E>>::DownContext,
                                         UpContext=<$t as VecLayoutProvider<E>>::UpContext>
                         where P: IntoViewProvider<E,
-                                        DownContext=<$t as VecLayoutProvider<E>>::SubviewDownContext,
-                                        UpContext=<$t as VecLayoutProvider<E>>::SubviewUpContext>;
+                                        DownContext=<$t as VecLayoutProvider<E>>::SubviewDownContext>,
+                              P::UpContext: Into<<$t as VecLayoutProvider<E>>::SubviewUpContext>;
                 }
             };
             (__impl_trait $t: ty, $trait_name: ident, $method_name: ident, $method_name_options: ident) => {
@@ -265,22 +265,22 @@ mod vec_layout {
                     -> impl IntoViewProvider<E,
                                     DownContext=<$t as VecLayoutProvider<E>>::DownContext,
                                     UpContext=<$t as VecLayoutProvider<E>>::UpContext>
-                    where P: IntoViewProvider<E,
-                                    DownContext=<$t as VecLayoutProvider<E>>::SubviewDownContext,
-                                    UpContext=<$t as VecLayoutProvider<E>>::SubviewUpContext>
+                        where P: IntoViewProvider<E,
+                                        DownContext=<$t as VecLayoutProvider<E>>::SubviewDownContext>,
+                              P::UpContext: Into<<$t as VecLayoutProvider<E>>::SubviewUpContext>
                 {
                     VecSignalLayout::new(self, map, <$t as FromOptions>::from_options(<$t as FromOptions>::Options::default()))
                 }
 
-                fn $method_name_options<P>(self, map: impl FnMut(&T, MSlock) -> P + 'static, options: impl FnOnce(<$t as FromOptions>::Options) -> <$t as FromOptions>::Options)
+                fn $method_name_options<P>(self, map: impl FnMut(&T, MSlock) -> P + 'static, options: <$t as FromOptions>::Options)
                         -> impl IntoViewProvider<E,
                                         DownContext=<$t as VecLayoutProvider<E>>::DownContext,
                                         UpContext=<$t as VecLayoutProvider<E>>::UpContext>
                         where P: IntoViewProvider<E,
-                                        DownContext=<$t as VecLayoutProvider<E>>::SubviewDownContext,
-                                        UpContext=<$t as VecLayoutProvider<E>>::SubviewUpContext>
+                                        DownContext=<$t as VecLayoutProvider<E>>::SubviewDownContext>,
+                              P::UpContext: Into<<$t as VecLayoutProvider<E>>::SubviewUpContext>
                 {
-                    VecSignalLayout::new(self, map, <$t as FromOptions>::from_options(options(<$t as FromOptions>::Options::default())))
+                    VecSignalLayout::new(self, map, <$t as FromOptions>::from_options(options))
                 }
             };
 
@@ -317,7 +317,7 @@ mod vec_layout {
                         where P: IntoViewProvider<E,
                                         DownContext=<$t as VecLayoutProvider<E>>::SubviewDownContext,
                                         UpContext=<$t as VecLayoutProvider<E>>::SubviewUpContext>;
-                    fn $method_name_options<P>(self, map: impl FnMut(&T, MSlock) -> P + 'static, options: impl FnOnce(<$t as FromOptions>::Options) -> <$t as FromOptions>::Options)
+                fn $method_name_options<P>(self, map: impl FnMut(&T, MSlock) -> P + 'static, options: <$t as FromOptions>::Options)
                         -> impl IntoViewProvider<E,
                                         DownContext=<$t as VecLayoutProvider<E>>::DownContext,
                                         UpContext=<$t as VecLayoutProvider<E>>::UpContext>
@@ -337,7 +337,7 @@ mod vec_layout {
                 {
                     VecBindingLayout::new(self, map, <$t as FromOptions>::from_options(<$t as FromOptions>::Options::default()))
                 }
-                fn $method_name_options<P>(self, map: impl FnMut(&T, MSlock) -> P + 'static, options: impl FnOnce(<$t as FromOptions>::Options) -> <$t as FromOptions>::Options)
+                fn $method_name_options<P>(self, map: impl FnMut(&T, MSlock) -> P + 'static, options: <$t as FromOptions>::Options)
                     -> impl IntoViewProvider<E,
                                     DownContext=<$t as VecLayoutProvider<E>>::DownContext,
                                     UpContext=<$t as VecLayoutProvider<E>>::UpContext>
@@ -345,7 +345,7 @@ mod vec_layout {
                                     DownContext=<$t as VecLayoutProvider<E>>::SubviewDownContext,
                                     UpContext=<$t as VecLayoutProvider<E>>::SubviewUpContext>
                 {
-                    VecBindingLayout::new(self, map, <$t as FromOptions>::from_options(options(<$t as FromOptions>::Options::default())))
+                    VecBindingLayout::new(self, map, <$t as FromOptions>::from_options(options))
                 }
             };
 
@@ -563,7 +563,8 @@ mod vec_layout {
                   H: HeteroIVPNode<E, L::SubviewUpContext, L::SubviewDownContext>
         {
             pub fn push<P>(self, provider: P) -> HeteroIVP<E, impl HeteroIVPNode<E, L::SubviewUpContext, L::SubviewDownContext>, L>
-                where P: IntoViewProvider<E, UpContext=L::SubviewUpContext, DownContext=L::SubviewDownContext>
+                where P: IntoViewProvider<E, DownContext=L::SubviewDownContext>,
+                      P::UpContext: Into<L::SubviewUpContext>
             {
                 HeteroIVP {
                     root: HeteroIVPActualNode {
@@ -576,9 +577,8 @@ mod vec_layout {
                 }
             }
 
-            pub fn options(mut self, options: impl FnOnce(L::Options) -> L::Options) -> Self {
-                let current = std::mem::take(self.layout.options());
-                *self.layout.options() = options(current);
+            pub fn options(mut self, options: L::Options) -> Self {
+                *self.layout.options() = options;
                 self
             }
         }
@@ -1155,7 +1155,8 @@ mod vec_layout {
         pub struct VStackOptions {
             spacing: ScreenUnit,
             alignment: HorizontalAlignment,
-            direction: VerticalDirection
+            direction: VerticalDirection,
+            stretch: bool
         }
 
         impl Default for VStackOptions {
@@ -1163,7 +1164,8 @@ mod vec_layout {
                 VStackOptions {
                     spacing: 10.0,
                     alignment: HorizontalAlignment::Center,
-                    direction: VerticalDirection::Down
+                    direction: VerticalDirection::Down,
+                    stretch: false
                 }
             }
         }
@@ -1181,6 +1183,11 @@ mod vec_layout {
 
             pub fn direction(mut self, direction: VerticalDirection) -> Self {
                 self.direction = direction;
+                self
+            }
+
+            pub fn stretch_children(mut self) -> Self {
+                self.stretch = true;
                 self
             }
         }
@@ -1229,7 +1236,7 @@ mod vec_layout {
 
             fn layout_up<'a, P>(&mut self, subviews: impl Iterator<Item=&'a P>, _env: &mut EnvRef<E>, s: MSlock) -> bool
                 where P: ViewRef<E, DownContext=Self::SubviewDownContext, UpContext=Self::SubviewUpContext> + ?Sized + 'a{
-                let new = subviews
+                let mut new = subviews
                     .map(|v| v.sizes(s))
                     .reduce(|mut new, curr| {
                         for i in 0..SizeContainer::num_sizes() {
@@ -1239,6 +1246,11 @@ mod vec_layout {
                         new
                     })
                     .unwrap_or_default();
+
+                if !self.1.stretch {
+                    *new.xstretched_mut() = new.intrinsic();
+                    *new.ystretched_mut() = new.intrinsic();
+                }
 
                 if new != self.0 {
                     self.0 = new;
@@ -1265,14 +1277,15 @@ mod vec_layout {
                         (our_intrinsic - suggested_height) / (our_intrinsic - our_min)
                     }
                 }
-                else {
+                else if self.1.stretch {
                     if our_intrinsic == our_max {
                         1.0
                     }
                     else {
                         (suggested_height - our_intrinsic) / (our_max - our_intrinsic)
                     }
-                };
+                }
+                else { 0.0 };
 
                 let mut elapsed = 0.0;
                 let mut total_w: f64 = 0.0;
@@ -1326,7 +1339,7 @@ mod vec_layout {
     mod hstack {
         use crate::core::{Environment, MSlock};
         use crate::util::FromOptions;
-        use crate::util::geo::{HorizontalAlignment, HorizontalDirection, Point, Rect, ScreenUnit, Size, VerticalAlignment, VerticalDirection};
+        use crate::util::geo::{HorizontalDirection, Point, Rect, ScreenUnit, Size, VerticalAlignment};
         use crate::view::layout::{VecLayoutProvider};
         use crate::view::{EnvRef, TrivialContextViewRef, ViewRef};
         use crate::view::util::SizeContainer;
@@ -1336,7 +1349,8 @@ mod vec_layout {
         pub struct HStackOptions {
             spacing: ScreenUnit,
             alignment: VerticalAlignment,
-            direction: HorizontalDirection
+            direction: HorizontalDirection,
+            stretch: bool
         }
 
         impl Default for HStackOptions {
@@ -1344,7 +1358,8 @@ mod vec_layout {
                 HStackOptions {
                     spacing: 10.0,
                     alignment: VerticalAlignment::Center,
-                    direction: HorizontalDirection::Right
+                    direction: HorizontalDirection::Right,
+                    stretch: false
                 }
             }
         }
@@ -1362,6 +1377,11 @@ mod vec_layout {
 
             pub fn direction(mut self, direction: HorizontalDirection) -> Self {
                 self.direction = direction;
+                self
+            }
+
+            pub fn stretch_children(mut self) -> Self {
+                self.stretch = true;
                 self
             }
         }
@@ -1410,7 +1430,7 @@ mod vec_layout {
 
             fn layout_up<'a, P>(&mut self, subviews: impl Iterator<Item=&'a P> + Clone, _env: &mut EnvRef<E>, s: MSlock) -> bool
                 where P: ViewRef<E, DownContext=Self::SubviewDownContext, UpContext=Self::SubviewUpContext> + ?Sized + 'a{
-                let new = subviews
+                let mut new = subviews
                     .map(|v| v.sizes(s))
                     .reduce(|mut new, curr| {
                         for i in 0..SizeContainer::num_sizes() {
@@ -1420,6 +1440,11 @@ mod vec_layout {
                         new
                     })
                     .unwrap_or_default();
+
+                if !self.1.stretch {
+                    *new.xstretched_mut() = new.intrinsic();
+                    *new.ystretched_mut() = new.intrinsic();
+                }
 
                 if new != self.0 {
                     self.0 = new;
@@ -1445,14 +1470,15 @@ mod vec_layout {
                         (our_intrinsic - suggested_width) / (our_intrinsic - our_min)
                     }
                 }
-                else {
+                else if self.1.stretch {
                     if our_intrinsic == our_max {
                         1.0
                     }
                     else {
                         (suggested_width - our_intrinsic) / (our_max - our_intrinsic)
                     }
-                };
+                }
+                else { 0.0 };
 
                 let mut elapsed = 0.0;
                 let mut total_h: f64 = 0.0;
@@ -1560,7 +1586,7 @@ mod vec_layout {
                 ()
             }
 
-            fn layout_up<'a, P>(&mut self, subviews: impl Iterator<Item=&'a P> + Clone, env: &mut EnvRef<E>, s: MSlock) -> bool where P: ViewRef<E, DownContext=Self::SubviewDownContext, UpContext=Self::SubviewUpContext> + ?Sized + 'a {
+            fn layout_up<'a, P>(&mut self, subviews: impl Iterator<Item=&'a P> + Clone, _env: &mut EnvRef<E>, s: MSlock) -> bool where P: ViewRef<E, DownContext=Self::SubviewDownContext, UpContext=Self::SubviewUpContext> + ?Sized + 'a {
                 let mut new = SizeContainer::default();
                 for subview in subviews {
                     let sizes = subview.sizes(s);
@@ -1579,7 +1605,7 @@ mod vec_layout {
                 }
             }
 
-            fn layout_down<'a, P>(&mut self, subviews: impl Iterator<Item=&'a P> + Clone, frame: Size, context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> Rect where P: ViewRef<E, DownContext=Self::SubviewDownContext, UpContext=Self::SubviewUpContext> + ?Sized + 'a {
+            fn layout_down<'a, P>(&mut self, subviews: impl Iterator<Item=&'a P> + Clone, frame: Size, _context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> Rect where P: ViewRef<E, DownContext=Self::SubviewDownContext, UpContext=Self::SubviewUpContext> + ?Sized + 'a {
                 let mut used = Size::default();
                 let sv_clone = subviews.clone();
                 for subview in subviews {
@@ -1621,25 +1647,572 @@ mod vec_layout {
     }
     pub use zstack::*;
 
+    mod flex {
+        use crate::core::{Environment, MSlock};
+        use crate::util::{FromOptions, geo};
+        use crate::util::geo::{Direction, Point, Rect, ScreenUnit, Size};
+        use crate::view::{EnvRef, IntoViewProvider, TrivialContextViewRef, UpContextSetter, ViewRef};
+        use crate::view::layout::VecLayoutProvider;
+        use crate::view::util::SizeContainer;
+
+        pub struct FlexStack(SizeContainer, FlexStackOptions);
+        pub struct FlexStackOptions {
+            direction: Direction,
+            align: FlexAlign,
+            justify: FlexJustify,
+            gap: ScreenUnit,
+            cross_gap: ScreenUnit,
+            wrap: bool
+        }
+
+        impl Default for FlexStackOptions {
+            fn default() -> Self {
+                FlexStackOptions {
+                    direction: Direction::Right,
+                    align: FlexAlign::Center,
+                    justify: FlexJustify::Center,
+                    gap: 0.0,
+                    cross_gap: 0.0,
+                    wrap: false,
+                }
+            }
+        }
+
+        impl FlexStackOptions {
+            pub fn direction(mut self, direction: Direction) -> Self {
+                self.direction = direction;
+                self
+            }
+
+            pub fn gap(mut self, gap: ScreenUnit) -> Self {
+                self.gap = gap;
+                self
+            }
+
+            pub fn cross_gap(mut self, cross_gap: ScreenUnit) -> Self {
+                self.cross_gap = cross_gap;
+                self
+            }
+
+            pub fn align(mut self, align: FlexAlign) -> Self {
+                self.align = align;
+                self
+            }
+
+            pub fn justify(mut self, justify: FlexJustify) -> Self {
+                self.justify = justify;
+                self
+            }
+
+            pub fn wrap(mut self) -> Self {
+                self.wrap = true;
+                self
+            }
+        }
+
+        impl FromOptions for FlexStack {
+            type Options = FlexStackOptions;
+
+            fn from_options(options: Self::Options) -> Self {
+                FlexStack(SizeContainer::default(), options)
+            }
+
+            fn options(&mut self) -> &mut Self::Options {
+                &mut self.1
+            }
+        }
+
+        #[derive(Copy, Clone)]
+        pub enum FlexJustify {
+            Start,
+            Center,
+            End
+        }
+
+        #[derive(Copy, Clone)]
+        pub enum FlexAlign {
+            Start,
+            Center,
+            Stretch,
+            End,
+        }
+
+        #[derive(Clone, Copy)]
+        pub struct FlexContext {
+            grow: f64,
+            shrink: f64,
+            align_self: Option<FlexAlign>,
+        }
+
+        impl Default for FlexContext {
+            fn default() -> Self {
+                FlexContext {
+                    grow: 0.0,
+                    shrink: 1.0,
+                    align_self: None,
+                }
+            }
+        }
+
+        impl FlexContext {
+            pub fn grow(mut self, grow: f64) -> Self {
+                self.grow = grow;
+                self
+            }
+
+            pub fn shrink(mut self, shrink: f64) -> Self {
+                self.shrink = shrink;
+                self
+            }
+
+            pub fn align(mut self, align: FlexAlign) -> Self {
+                self.align_self = Some(align);
+                self
+            }
+        }
+
+        impl From<()> for FlexContext {
+            fn from(_value: ()) -> Self {
+                Self::default()
+            }
+        }
+
+        pub trait FlexSubview<E>: IntoViewProvider<E> where E: Environment {
+            fn flex(self, f: FlexContext)
+                -> impl IntoViewProvider<E, DownContext=Self::DownContext, UpContext=FlexContext>;
+        }
+
+        impl<E, I> FlexSubview<E> for I where E: Environment, I: IntoViewProvider<E> {
+            fn flex(self, f: FlexContext)
+                    -> impl IntoViewProvider<E, DownContext=Self::DownContext, UpContext=FlexContext>
+            {
+                UpContextSetter::new(self, f)
+            }
+        }
+
+        impl FlexStack {
+            fn provider_squished<E: Environment>(
+                &self,
+                provider: &(impl ViewRef<E> + ?Sized),
+                up: &FlexContext,
+                is_horizontal: bool,
+                s: MSlock
+            ) -> ScreenUnit {
+                if up.shrink == 0.0 {
+                    self.provider_intrinsic(provider, is_horizontal, s)
+                }
+                else if is_horizontal {
+                    let size = provider.xsquished_size(s);
+                    size.w
+                }
+                else {
+                    let size = provider.ysquished_size(s);
+                    size.h
+                }
+            }
+
+            fn provider_intrinsic<E: Environment>(
+                &self,
+                provider: &(impl ViewRef<E> + ?Sized),
+                is_horizontal: bool,
+                s: MSlock
+            ) -> ScreenUnit {
+                let size = provider.intrinsic_size(s);
+                if is_horizontal {
+                    size.w
+                }
+                else {
+                    size.h
+                }
+            }
+
+            fn provider_stretched<E: Environment>(
+                &self,
+                provider: &(impl ViewRef<E> + ?Sized),
+                up: &FlexContext,
+                is_horizontal: bool,
+                s: MSlock
+            ) -> ScreenUnit {
+                if up.grow == 0.0 {
+                    self.provider_intrinsic(provider, is_horizontal, s)
+                }
+                else if is_horizontal {
+                    let size = provider.xstretched_size(s);
+                    size.w
+                }
+                else {
+                    let size = provider.ystretched_size(s);
+                    size.h
+                }
+            }
+
+            fn layout<'a, E, P>(
+                &mut self,
+                subviews: impl Iterator<Item=&'a P> + Clone,
+                frame: Size,
+                env: &mut EnvRef<E>,
+                is_down: bool,
+                allow_resizing: bool,
+                s: MSlock
+            ) -> Rect where P: ViewRef<E, DownContext=(), UpContext=FlexContext> + ?Sized + 'a, E: Environment {
+                let horizontal = matches!(self.1.direction, Direction::Left | Direction::Right);
+
+                // keep placing nodes until intrinsic overflows
+                // if we can wrap, then wrap. Otherwise, we'll have to shrink as much as possible
+                let mut spans = vec![];
+                let mut iter = subviews;
+                let mut largest_span_main_axis: ScreenUnit = 0.0;
+                let mut span_main_axis = -self.1.gap;
+                let alotted_main_axis = if horizontal { frame.w } else { frame.h };
+
+                let mut span_cross_axis = 0.0;
+                let mut cross_axis = -self.1.cross_gap;
+
+                let mut follower = iter.clone();
+                while let Some(curr) = iter.next() {
+                    // try extending
+                    let this_intrinsic = curr.intrinsic_size(s);
+                    let this_main_axis = if horizontal { this_intrinsic.w } else { this_intrinsic.h };
+                    let this_cross_axis = if horizontal { this_intrinsic.h } else { this_intrinsic.w };
+
+                    let fits = this_main_axis + self.1.gap + span_main_axis <= alotted_main_axis;
+                    if spans.is_empty() || (!fits && self.1.wrap) {
+                        // finish previous
+                        cross_axis += self.1.cross_gap + span_cross_axis;
+
+                        // start new
+                        spans.push((follower.clone(), 1usize));
+
+                        span_main_axis = this_main_axis;
+                        span_cross_axis = this_cross_axis;
+                    } else {
+                        // extend previous by 1
+                        spans.last_mut().unwrap().1 += 1;
+
+                        span_main_axis += self.1.gap + this_main_axis;
+                        span_cross_axis = span_cross_axis.max(this_cross_axis);
+                    }
+
+                    largest_span_main_axis = largest_span_main_axis.max(span_main_axis);
+                    follower.next();
+                }
+                // finish last
+                cross_axis += span_cross_axis;
+                cross_axis = cross_axis.max(0.0);
+
+                // finalize exact main axis size based off of growth
+                let mut finalized_main_axis: ScreenUnit = 0.0;
+                for (start, count) in &spans {
+                    let mut span_min_axis = -self.1.gap;
+                    let mut span_max_axis = -self.1.gap;
+
+                    for sv in start.clone().take(*count) {
+                        let mut up = sv.up_context(s);
+                        if !allow_resizing {
+                            up.shrink = 0.0;
+                            up.grow = 0.0;
+                        }
+                        let squished_main = self.provider_squished(sv, &up, horizontal, s);
+                        let stretched_main = self.provider_stretched(sv, &up, horizontal, s);
+                        span_min_axis += self.1.gap + squished_main;
+                        span_max_axis += self.1.gap + stretched_main;
+                    }
+
+                    finalized_main_axis = finalized_main_axis
+                        .max(alotted_main_axis.clamp(span_min_axis, span_max_axis));
+                }
+
+                // perform final layout
+                if is_down {
+                    self.actually_layout_down(env, s, horizontal, &mut spans, alotted_main_axis, finalized_main_axis, cross_axis);
+                }
+
+                if horizontal {
+                    Rect::new(0.0, 0.0, finalized_main_axis, cross_axis)
+                }
+                else {
+                    Rect::new(0.0, 0.0, cross_axis, finalized_main_axis)
+                }
+            }
+
+            fn actually_layout_down<'a, E, P>(
+                &mut self, env: &mut EnvRef<E>,
+                s: MSlock,
+                horizontal: bool,
+                spans: &Vec<(impl Iterator<Item=&'a P> + Clone + Sized, usize)>,
+                alotted_main_axis: ScreenUnit,
+                finalized_main_axis: f64,
+                finalized_cross_axis: f64
+            )
+                where P: ViewRef<E, DownContext=(), UpContext=FlexContext> + ?Sized + 'a, E: Environment
+            {
+                let (main_pos, mut cross_pos) = match self.1.direction {
+                    Direction::Left => {
+                        (finalized_main_axis, finalized_cross_axis)
+                    }
+                    Direction::Right => {
+                        (0.0, finalized_cross_axis)
+                    }
+                    Direction::Down => {
+                        (finalized_cross_axis, 0.0)
+                    }
+                    Direction::Up => {
+                        (0.0, 0.0)
+                    }
+                };
+
+                for (start, count) in spans.iter() {
+                    // maybe we cache this?
+                    let mut span_main_axis = -self.1.gap;
+                    for sv in start.clone().take(*count) {
+                        span_main_axis += self.provider_intrinsic(sv, horizontal, s) + self.1.gap;
+                    }
+
+                    let is_shrink = span_main_axis > alotted_main_axis;
+
+                    // in words: the ones that "run out of room" first will be handled first
+                    let mut total_factor = 0.0;
+                    let mut max_cross_axis: ScreenUnit = 0.0;
+                    let mut ordered: Vec<_> = start.clone()
+                        .take(*count)
+                        .map(|p| {
+                            let up = p.up_context(s);
+                            max_cross_axis = max_cross_axis.max(self.provider_intrinsic(p, !horizontal, s));
+                            if is_shrink && up.shrink == 0.0 || !is_shrink && up.grow == 0.0 {
+                                return (p, -1.0);
+                            }
+
+                            let intr = self.provider_intrinsic(p, horizontal, s);
+
+                            let (other, factor) = if is_shrink {
+                                (self.provider_squished(p, &up, horizontal, s), up.shrink)
+                            } else {
+                                (self.provider_stretched(p, &up, horizontal, s), up.grow)
+                            };
+                            total_factor += factor;
+                            let diff = (intr - other).abs();
+                            (p, diff / factor)
+                        })
+                        .collect::<Vec<_>>();
+
+                    ordered.sort_unstable_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+
+                    let mut remaining = (finalized_main_axis - span_main_axis).abs();
+                    for sv in ordered {
+                        // doesnt want to resize at all
+                        if sv.1 < 0.0 {
+                            let size = sv.0.intrinsic_size(s);
+                            sv.0.layout_down(Rect::new(0.0, 0.0, size.w, size.h), env, s);
+                            continue;
+                        }
+
+                        let up = sv.0.up_context(s);
+                        let (other, factor) = if is_shrink {
+                            (self.provider_squished(sv.0, &up, horizontal, s), up.shrink)
+                        } else {
+                            (self.provider_stretched(sv.0, &up, horizontal, s), up.grow)
+                        };
+                        let intrinsic = self.provider_intrinsic(sv.0, horizontal, s);
+                        let diff = (intrinsic - other).abs();
+                        let delta = (remaining * factor / total_factor).min(diff);
+                        let final_main = intrinsic + if is_shrink { -delta } else { delta };
+
+                        let child_align = up.align_self.unwrap_or(self.1.align);
+                        let cross = if matches!(child_align, FlexAlign::Stretch) {
+                            max_cross_axis
+                        } else {
+                            self.provider_intrinsic(sv.0, !horizontal, s)
+                        };
+
+                        let align_offset = match child_align {
+                            FlexAlign::Start | FlexAlign::Stretch => 0.0,
+                            FlexAlign::Center => {
+                                if horizontal {
+                                    (cross - max_cross_axis) / 2.0
+                                }
+                                else {
+                                    (max_cross_axis - cross) / 2.0
+                                }
+                            }
+                            FlexAlign::End => {
+                                if horizontal {
+                                    cross - max_cross_axis
+                                }
+                                else {
+                                    max_cross_axis - cross
+                                }
+                            }
+                        };
+
+                        match self.1.direction {
+                            Direction::Left => {
+                                sv.0.layout_down(Rect::new(0.0, align_offset, final_main, cross), env, s);
+                            }
+                            Direction::Right => {
+                                sv.0.layout_down(Rect::new(0.0, align_offset, final_main, cross), env, s);
+                            }
+                            Direction::Down => {
+                                sv.0.layout_down(Rect::new(align_offset, 0.0, cross, final_main), env, s);
+                            }
+                            Direction::Up => {
+                                sv.0.layout_down(Rect::new(align_offset, 0.0, cross, final_main), env, s);
+                            }
+                        }
+
+                        remaining -= delta;
+                        total_factor -= factor;
+                    }
+
+                    // in this case, we use the suggested rect, rather than the used rect like
+                    // most other layouts. This generally improves layout flow
+                    let mut span_main_pos = main_pos;
+                    for sv in start.clone().take(*count) {
+                        let suggested = sv.suggested_rect(s);
+                        let (pos_x, pos_y) = match self.1.direction {
+                            Direction::Left => {
+                                let ret = (span_main_pos - suggested.w, cross_pos - suggested.h);
+                                span_main_pos -= self.1.gap + suggested.w;
+                                ret
+                            }
+                            Direction::Right => {
+                                let ret = (span_main_pos, cross_pos - suggested.h);
+                                span_main_pos += self.1.gap + suggested.w;
+                                ret
+                            }
+                            Direction::Down => {
+                                let ret = (cross_pos, span_main_pos - suggested.h);
+                                span_main_pos -= suggested.h + self.1.gap;
+                                ret
+                            }
+                            Direction::Up => {
+                                let ret = (cross_pos, span_main_pos);
+                                span_main_pos += suggested.h + self.1.gap;
+                                ret
+                            }
+                        };
+
+                        sv.translate_post_layout_down(Point::new(pos_x, pos_y), s);
+                    }
+
+                    let adjusted_span_pos = match self.1.direction {
+                        Direction::Left | Direction::Down => span_main_pos + self.1.gap,
+                        Direction::Right | Direction::Up=> span_main_pos - self.1.gap
+                    };
+
+                    let justification_delta = match self.1.justify {
+                        FlexJustify::Start => 0.0,
+                        FlexJustify::Center => (finalized_main_axis - main_pos) / 2.0 - (adjusted_span_pos + main_pos) / 2.0,
+                        FlexJustify::End => (finalized_main_axis - main_pos) - (adjusted_span_pos - self.1.gap),
+                    };
+
+                    if horizontal {
+                        for sv in start.clone().take(*count) {
+                            sv.translate_post_layout_down(Point::new(justification_delta, 0.0), s);
+                        }
+                        cross_pos -= max_cross_axis + self.1.cross_gap;
+                    }
+                    else {
+                        for sv in start.clone().take(*count) {
+                            sv.translate_post_layout_down(Point::new(0.0, justification_delta), s);
+                        }
+                        cross_pos += max_cross_axis + self.1.cross_gap;
+                    }
+                }
+            }
+        }
+
+        impl<E> VecLayoutProvider<E> for FlexStack where E: Environment {
+            type DownContext = ();
+            type UpContext = ();
+            type SubviewDownContext = ();
+            type SubviewUpContext = FlexContext;
+
+            fn intrinsic_size(&mut self, _s: MSlock) -> Size {
+                self.0.intrinsic()
+            }
+
+            fn xsquished_size(&mut self, _s: MSlock) -> Size {
+                self.0.xsquished()
+            }
+
+            fn ysquished_size(&mut self, _s: MSlock) -> Size {
+                self.0.ysquished()
+            }
+
+            fn xstretched_size(&mut self, _s: MSlock) -> Size {
+                self.0.xstretched()
+            }
+
+            fn ystretched_size(&mut self, _s: MSlock) -> Size {
+                self.0.ystretched()
+            }
+
+            fn up_context(&mut self, _s: MSlock) -> Self::UpContext {
+                ()
+            }
+
+            fn layout_up<'a, P>(&mut self, subviews: impl Iterator<Item=&'a P> + Clone, env: &mut EnvRef<E>, s: MSlock) -> bool where P: ViewRef<E, DownContext=Self::SubviewDownContext, UpContext=Self::SubviewUpContext> + ?Sized + 'a {
+                let sv1 = subviews.clone();
+                let sv2 = subviews.clone();
+                let sv3 = subviews.clone();
+                let sv4 = subviews.clone();
+                let new = SizeContainer::new(
+                    self.layout(subviews, Size::new(geo::UNBOUNDED, geo::UNBOUNDED), env, false, false, s).size(),
+                    self.layout(sv1, Size::new(0.0, geo::UNBOUNDED), env, false, true, s).size(),
+                    self.layout(sv2, Size::new(geo::UNBOUNDED, 0.0), env, false, true, s).size(),
+                    self.layout(sv3, Size::new(geo::UNBOUNDED, 0.0), env, false, true, s).size(),
+                    self.layout(sv4, Size::new(0.0, geo::UNBOUNDED), env, false, true, s).size(),
+                );
+
+                if new != self.0 {
+                    self.0 = new;
+                    true
+                }
+                else {
+                    false
+                }
+            }
+
+            fn layout_down<'a, P>(&mut self, subviews: impl Iterator<Item=&'a P> + Clone, frame: Size, _context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> Rect where P: ViewRef<E, DownContext=Self::SubviewDownContext, UpContext=Self::SubviewUpContext> + ?Sized + 'a {
+                self.layout(subviews, frame, env, true, true, s)
+            }
+        }
+    }
+    pub use flex::*;
+
     mod impls {
         use crate::state::{Signal, StoreContainer, Binding};
         use crate::core::Environment;
         use crate::view::IntoViewProvider;
         use crate::core::MSlock;
-        use crate::{impl_hetero_layout, impl_signal_layout_extension};
-        use crate::view::layout::vec_layout::macros::impl_binding_layout_extension;
-        use crate::view::layout::{VecSignalLayout, VecBindingLayout, VecLayoutProvider};
+        use crate::{impl_hetero_layout, impl_binding_layout_extension, impl_signal_layout_extension};
+        use crate::view::layout::{VecSignalLayout, VecBindingLayout, VecLayoutProvider, ZStack, HStack, FlexStack};
         use crate::util::{FromOptions};
         use super::{VStack};
 
         impl_signal_layout_extension!(VStack, SignalVMap, signal_vmap, signal_vmap_options, where E: Environment);
         impl_binding_layout_extension!(VStack, BindingVMap, binding_vmap, binding_vmap_options, where E: Environment);
 
+        impl_signal_layout_extension!(HStack, SignalHMap, signal_hmap, signal_hmap_options, where E: Environment);
+        impl_binding_layout_extension!(HStack, BindingHMap, binding_hmap, binding_hmap_options, where E: Environment);
+
+        impl_signal_layout_extension!(ZStack, SignalZMap, signal_zmap, signal_zmap_options, where E: Environment);
+        impl_binding_layout_extension!(ZStack, BindingZMap, binding_zmap, binding_zmap_options, where E: Environment);
+
+        impl_signal_layout_extension!(FlexStack, SignalFlexMap, signal_flexmap, signal_flexmap_options, where E: Environment);
+        impl_binding_layout_extension!(FlexStack, BindingFlexMap, binding_flexmap, binding_flexmap_options, where E: Environment);
+
         impl_hetero_layout!(VStack, vstack);
         pub use vstack;
 
         impl_hetero_layout!(HStack, hstack);
         pub use hstack;
+
+        impl_hetero_layout!(ZStack, zstack);
+        pub use zstack;
+
+        impl_hetero_layout!(FlexStack, flexstack);
+        pub use flexstack;
     }
     pub use impls::*;
 }
