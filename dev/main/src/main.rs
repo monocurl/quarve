@@ -1,5 +1,6 @@
 use quarve::core::{Application, Environment, launch, MSlock};
 use quarve::state::{FixedSignal, Signal};
+use quarve::util::geo::Direction;
 use quarve::view::{ViewProvider, IntoViewProvider};
 use quarve::view::layout::*;
 use quarve::view::modifers::{Frame, FrameModifiable, Layer, LayerModifiable};
@@ -77,6 +78,7 @@ impl quarve::core::WindowProvider for WindowProvider {
                     .gap(10.0)
                     .wrap()
                     .cross_gap(10.0)
+                    .direction(Direction::Left)
             )
             .layer(Layer::default().border(Color::black(), 1.0))
             .intrinsic(550, 500)

@@ -2101,8 +2101,8 @@ mod vec_layout {
 
                     let justification_delta = match self.1.justify {
                         FlexJustify::Start => 0.0,
-                        FlexJustify::Center => (finalized_main_axis - main_pos) / 2.0 - (adjusted_span_pos + main_pos) / 2.0,
-                        FlexJustify::End => (finalized_main_axis - main_pos) - (adjusted_span_pos - self.1.gap),
+                        FlexJustify::Center => finalized_main_axis / 2.0 - (adjusted_span_pos + main_pos) / 2.0,
+                        FlexJustify::End => (finalized_main_axis - main_pos) - adjusted_span_pos,
                     };
 
                     if horizontal {
