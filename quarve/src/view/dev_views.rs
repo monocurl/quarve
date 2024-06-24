@@ -51,17 +51,17 @@ impl<E: Environment> ViewProvider<E> for DebugView {
         ()
     }
 
-    fn init_backing(&mut self, _invalidator: Invalidator<E>, _subviews: &mut Subtree<E>, _replaced_backing: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, s: MSlock<'_>) -> NativeView {
+    fn init_backing(&mut self, _invalidator: Invalidator<E>, _subviews: &mut Subtree<E>, _replaced_backing: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, s: MSlock) -> NativeView {
         unsafe {
             NativeView::new(native::view::debug_view_init(s))
         }
     }
 
-    fn layout_up(&mut self, _subviews: &mut Subtree<E>, _env: &mut EnvRef<E>, s: MSlock<'_>) -> bool {
+    fn layout_up(&mut self, _subviews: &mut Subtree<E>, _env: &mut EnvRef<E>, s: MSlock) -> bool {
         false
     }
 
-    fn layout_down(&mut self, subtree: &Subtree<E>, frame: Size, _layout_context: &Self::DownContext, _env: &mut EnvRef<E>, s: MSlock<'_>) -> (Rect, Rect) {
+    fn layout_down(&mut self, subtree: &Subtree<E>, frame: Size, _layout_context: &Self::DownContext, _env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
         (frame.full_rect(), frame.full_rect())
     }
 }
@@ -96,7 +96,7 @@ impl<E: Environment, S: Signal<Vector<f64, 2>>> ViewProvider<E> for Layout<E, S>
         ()
     }
 
-    fn init_backing(&mut self, invalidator: Invalidator<E>, subviews: &mut Subtree<E>, _replaced_backing: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock<'_>) -> NativeView {
+    fn init_backing(&mut self, invalidator: Invalidator<E>, subviews: &mut Subtree<E>, _replaced_backing: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
         subviews.push_subview(&self.0, env, s);
         subviews.push_subview(&self.1, env, s);
 
@@ -112,7 +112,7 @@ impl<E: Environment, S: Signal<Vector<f64, 2>>> ViewProvider<E> for Layout<E, S>
         NativeView::layout_view(s)
     }
 
-    fn layout_up(&mut self, subviews: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock<'_>) -> bool {
+    fn layout_up(&mut self, subviews: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
         false
     }
 

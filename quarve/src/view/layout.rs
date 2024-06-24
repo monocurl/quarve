@@ -90,7 +90,7 @@ mod general_layout {
             self.0.up_context(s)
         }
 
-        fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock<'_>) -> NativeView {
+        fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
             if let Some(source) = backing_source {
                 self.0.init(invalidator, subtree, Some(source.1.0), env, s);
 
@@ -102,11 +102,11 @@ mod general_layout {
             }
         }
 
-        fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock<'_>) -> bool {
+        fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
             self.0.layout_up(subtree, env, s)
         }
 
-        fn layout_down(&mut self, subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock<'_>) -> (Rect, Rect) {
+        fn layout_down(&mut self, subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
             let rect = self.0.layout_down(subtree, frame, layout_context, env, s);
             (rect, rect)
         }
@@ -645,13 +645,13 @@ mod vec_layout {
                 }
             }
 
-            fn layout_up(&mut self, _subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock<'_>) -> bool {
+            fn layout_up(&mut self, _subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
                 let iterator: HeteroVPIterator<E, L> = HeteroVPIterator(&self.root);
 
                 self.layout.layout_up(iterator, env, s)
             }
 
-            fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock<'_>) -> (Rect, Rect) {
+            fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
                 let iterator: HeteroVPIterator<E, L> = HeteroVPIterator(&self.root);
 
                 let used = self.layout.layout_down(iterator, frame, layout_context, env, s);
@@ -1026,7 +1026,7 @@ mod vec_layout {
             fn into_view_provider(mut self, _env: &E::Const, _s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
                 VecSignalViewProvider {
                     source: self.source,
-                    map: move |a: &'_ T, env: &'_ E::Const, s: MSlock<'_>| {
+                    map: move |a: &T, env: &E::Const, s: MSlock| {
                         UpContextAdapter::new(
                             into_view_provider((self.map)(a, s), env, s)
                         ).into_view(s)
@@ -1073,7 +1073,7 @@ mod vec_layout {
                 self.layout.up_context(s)
             }
 
-            fn init_backing(&mut self, invalidator: Invalidator<E>, _subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, s: MSlock<'_>) -> NativeView {
+            fn init_backing(&mut self, invalidator: Invalidator<E>, _subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, s: MSlock) -> NativeView {
                 self.layout.init(invalidator.clone(), s);
 
                 /* register listeners and try to steal whatever backing we can */
@@ -1098,7 +1098,7 @@ mod vec_layout {
                 }
             }
 
-            fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock<'_>) -> bool {
+            fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
                 subtree.clear_subviews(s);
 
                 /* new subviews */
@@ -1126,7 +1126,7 @@ mod vec_layout {
                 )
             }
 
-            fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock<'_>) -> (Rect, Rect) {
+            fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
                 let used = self.layout.layout_down(
                     self.subviews.iter(),
                     frame,
@@ -2186,20 +2186,19 @@ mod vec_layout {
         use crate::view::IntoViewProvider;
         use crate::core::MSlock;
         use crate::{impl_hetero_layout, impl_binding_layout_extension, impl_signal_layout_extension};
-        use crate::view::layout::{VecSignalLayout, VecBindingLayout, VecLayoutProvider, ZStack, HStack, FlexStack};
+        use crate::view::layout::{VecSignalLayout, VecBindingLayout, VecLayoutProvider, VStack, ZStack, HStack, FlexStack};
         use crate::util::{FromOptions};
-        use super::{VStack};
 
-        impl_signal_layout_extension!(VStack, SignalVMap, signal_vmap, signal_vmap_options, where E: Environment);
+        impl_signal_layout_extension!(VStack, SignalVMap, sig_vmap, sig_vmap_options, where E: Environment);
         impl_binding_layout_extension!(VStack, BindingVMap, binding_vmap, binding_vmap_options, where E: Environment);
 
-        impl_signal_layout_extension!(HStack, SignalHMap, signal_hmap, signal_hmap_options, where E: Environment);
+        impl_signal_layout_extension!(HStack, SignalHMap, sig_hmap, sig_hmap_options, where E: Environment);
         impl_binding_layout_extension!(HStack, BindingHMap, binding_hmap, binding_hmap_options, where E: Environment);
 
-        impl_signal_layout_extension!(ZStack, SignalZMap, signal_zmap, signal_zmap_options, where E: Environment);
+        impl_signal_layout_extension!(ZStack, SignalZMap, sig_zmap, sig_zmap_options, where E: Environment);
         impl_binding_layout_extension!(ZStack, BindingZMap, binding_zmap, binding_zmap_options, where E: Environment);
 
-        impl_signal_layout_extension!(FlexStack, SignalFlexMap, signal_flexmap, signal_flexmap_options, where E: Environment);
+        impl_signal_layout_extension!(FlexStack, SignalFlexMap, sig_flexmap, sig_flexmap_options, where E: Environment);
         impl_binding_layout_extension!(FlexStack, BindingFlexMap, binding_flexmap, binding_flexmap_options, where E: Environment);
 
         impl_hetero_layout!(VStack, vstack);

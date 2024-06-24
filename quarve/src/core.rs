@@ -138,7 +138,7 @@ mod application {
     }
 
     pub trait ApplicationProvider: 'static {
-        fn will_spawn(&self, app: &Application, s: MSlock<'_>);
+        fn will_spawn(&self, app: &Application, s: MSlock);
     }
 
     pub struct Application {
@@ -167,12 +167,12 @@ mod application {
             self.provider.will_spawn(self, slock.marker());
         }
 
-        pub fn spawn_window<W>(&self, provider: W, s: MSlock<'_>) where W: WindowProvider {
+        pub fn spawn_window<W>(&self, provider: W, s: MSlock) where W: WindowProvider {
             self.windows.borrow_mut().push(Window::new(provider, s));
         }
 
         #[cold]
-        pub fn exit(&self, _s: MSlock<'_>) {
+        pub fn exit(&self, _s: MSlock) {
             native::global::exit();
         }
     }
@@ -185,10 +185,10 @@ mod window {
     use std::collections::BinaryHeap;
     use std::ops::{Deref, DerefMut};
     use std::sync::{Arc, Weak};
-    use crate::core::{APP, Environment, MSlock, run_main_async, run_main_maybe_sync, Slock};
+    use crate::core::{APP, Environment, MSlock, run_main_maybe_sync, Slock};
     use crate::native;
     use crate::native::{WindowHandle};
-    use crate::state::{Signal};
+    use crate::state::{ActionFilter, Bindable, Binding, Signal, Store};
     use crate::state::slock_cell::{MainSlockCell};
     use crate::util::geo::{Rect, Size};
     use crate::view::{InnerViewBase};
@@ -198,21 +198,24 @@ mod window {
     pub trait WindowProvider: 'static {
         type Env: Environment;
 
-        fn title(&self, s: MSlock<'_>) -> impl Signal<String>;
+        fn title(&self, s: MSlock) -> impl Signal<String>;
 
-        fn style(&self, s: MSlock<'_>);
+        fn style(&self, s: MSlock);
 
-        fn root(&self, env: &<Self::Env as Environment>::Const, s: MSlock<'_>)
+        fn root(&self, env: &<Self::Env as Environment>::Const, s: MSlock)
                 -> impl ViewProvider<Self::Env, DownContext=()>;
 
-        fn can_close(&self, _s: MSlock<'_>) -> bool {
-            true
+        fn size(&self) -> (Size, Size, Size);
+
+        #[allow(unused_variables)]
+        fn is_open(&self, s: MSlock) -> impl Binding<bool> {
+            Store::new(true).binding()
         }
     }
 
     pub(crate) trait WindowBase {
         /* delegate methods */
-        fn can_close(&self, s: MSlock<'_>) -> bool;
+        fn can_close(&self, s: MSlock) -> bool;
 
         fn handle(&self) -> WindowHandle;
 
@@ -282,7 +285,7 @@ mod window {
     impl<P> Window<P> where P: WindowProvider {
         // order things are done is a bit awkward
         // but need to coordinate between many things
-        pub(super) fn new(provider: P, s: MSlock<'_>) -> Arc<MainSlockCell<dyn WindowBase>> {
+        pub(super) fn new(provider: P, s: MSlock) -> Arc<MainSlockCell<dyn WindowBase>> {
             let root_env = P::Env::root_environment();
 
             let handle = native::window::window_init(s);
@@ -300,6 +303,7 @@ mod window {
             };
 
             let b = Arc::new(MainSlockCell::new_main(window, s));
+
             // create initial tree and other tasks
             Window::init(&b, s);
 
@@ -316,18 +320,6 @@ mod window {
             b
         }
 
-        fn set_dimensions_of_window(&self, content_borrow: &mut dyn InnerViewBase<P::Env>, s: MSlock) {
-            let xsquish = content_borrow.xsquished_size(s);
-            let ysquish = content_borrow.ysquished_size(s);
-            let min = Size::new(xsquish.w.max(ysquish.w), xsquish.h.max(ysquish.h));
-            let xstretch = content_borrow.xstretched_size(s);
-            let ystretch = content_borrow.ystretched_size(s);
-            let max = Size::new(xstretch.w.min(ystretch.w), xstretch.h.max(ystretch.h));
-
-            native::window::window_set_min_size(self.handle, min.w as f64, min.h as f64, s);
-            native::window::window_set_max_size(self.handle, max.w as f64, max.h as f64, s);
-        }
-
         fn init(this: &Arc<MainSlockCell<Self>>, s: MSlock) {
             let borrow = this.borrow_main(s);
 
@@ -335,7 +327,7 @@ mod window {
             Self::apply_window_style(s, borrow.deref());
 
             /* apply window title  */
-            Self::title_listener(&this, borrow.deref(), s);
+            Self::window_listeners(&this, borrow.deref(), s);
 
             /* mount content view */
             Self::mount_content_view(&this, s, borrow.deref());
@@ -366,9 +358,6 @@ mod window {
                 s
             ).unwrap();
 
-            // set window size (note no recursive layout call can happen since handle not mounted yet)
-            native::window::window_set_size(borrow.handle, intrinsic.w as f64, intrinsic.h as f64, s);
-            borrow.set_dimensions_of_window(content_borrow.deref_mut(), s);
 
             // give back env
             borrow.environment.set(Some(stolen_env));
@@ -376,27 +365,43 @@ mod window {
 
         fn apply_window_style(s: MSlock, borrow: &Window<P>) {
             let _style = borrow.provider.style(s);
+
+            // set window size (note no recursive layout call can happen since handle not mounted yet)
+            let sizes = borrow.provider.size();
+            native::window::window_set_min_size(borrow.handle, sizes.0.w, sizes.0.h, s);
+            native::window::window_set_size(borrow.handle, sizes.1.w, sizes.1.h, s);
+            native::window::window_set_max_size(borrow.handle, sizes.2.w, sizes.2.h, s);
         }
 
-        fn title_listener(this: &Arc<MainSlockCell<Window<P>>>, borrow: &Window<P>, s: MSlock) {
+        fn window_listeners(this: &Arc<MainSlockCell<Window<P>>>, borrow: &Window<P>, s: MSlock) {
             let title = borrow.provider.title(s);
             let weak = Arc::downgrade(&this);
-            title.listen(move |val, _s| {
+            title.listen(move |val, s| {
                 let Some(this) = weak.upgrade() else {
                     return false;
                 };
 
                 let title_copy = val.to_owned();
-                run_main_async(move |s| {
+                run_main_maybe_sync(move |s| {
                     let borrow = this.borrow_main(s);
                     native::window::window_set_title(borrow.handle, &title_copy, s);
-                });
+                }, s);
 
                 true
             }, s);
 
             let current = title.borrow(s).to_owned();
             native::window::window_set_title(borrow.handle, &current, s);
+
+            let open = borrow.provider.is_open(s);
+            open.listen(|a, s| {
+                if !a {
+                    run_main_maybe_sync(|s| {
+                        // window_close
+                    }, s);
+                }
+                true
+            }, s);
         }
 
         // env is currently right below from
@@ -416,7 +421,6 @@ mod window {
 
             let mut targ_depth = to.as_ref().map(|t| t.borrow_main(s).depth() as i32).unwrap_or(-1);
 
-            // FIXME, some borrows can be elided into one
             let mut targ = to;
             while *curr_depth > targ_depth {
                 if *curr_depth == min_depth {
@@ -491,9 +495,9 @@ mod window {
     }
 
     impl<P> WindowBase for Window<P> where P: WindowProvider {
-        fn can_close(&self, s: MSlock<'_>) -> bool {
-            let can_close = self.provider.can_close(s);
-
+        fn can_close(&self, s: MSlock) -> bool {
+            // let can_close = self.provider.can_close(s);
+            let can_close = true;
             if can_close {
                 self.remove_from_app(s);
             }
@@ -550,8 +554,6 @@ mod window {
             Self::walk_env(env.deref_mut(), &mut env_spot, None, &mut env_depth, -1, s);
             self.environment.set(Some(env));
             *self.performing_layout_down.borrow_mut() = false;
-
-            self.set_dimensions_of_window(self.content_view.borrow_mut_main(s).deref_mut(), s);
         }
     }
 
@@ -792,7 +794,7 @@ mod slock {
         // lifetime of slockowner; calling marker does not acquire the state lock
         // and dropping the marker does not relenquish it
         #[inline]
-        pub fn marker(&self) -> Slock<'_, M> {
+        pub fn marker(&self) -> Slock<M> {
             #[cfg(debug_assertions)]
             {
                 Slock {
@@ -951,7 +953,7 @@ mod global {
     }
 
     /// Must be called only after initial application launch was called
-    pub fn with_app(f: impl FnOnce(&Application), _s: MSlock<'_>) {
+    pub fn with_app(f: impl FnOnce(&Application), _s: MSlock) {
         APP.with(|app| {
             f(app.get().expect("With app should only be called after the application has fully launched"))
         })

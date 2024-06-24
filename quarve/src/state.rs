@@ -42,11 +42,11 @@ pub mod slock_cell {
     }
 
     impl<T> SlockCell<T> where T: Send + ?Sized {
-        pub fn borrow(&self, _s: Slock<'_, impl ThreadMarker>) -> Ref<'_, T> {
+        pub fn borrow<'a>(&'a self, _s: Slock<'a, impl ThreadMarker>) -> Ref<'a, T> {
             self.0.borrow()
         }
 
-        pub fn borrow_mut(&self, _s: Slock<'_, impl ThreadMarker>) -> RefMut<'_, T>  {
+        pub fn borrow_mut<'a>(&'a self, _s: Slock<'a, impl ThreadMarker>) -> RefMut<'a, T>  {
             self.0.borrow_mut()
         }
 
@@ -60,21 +60,21 @@ pub mod slock_cell {
     }
 
     impl<T> MainSlockCell<T> where T: ?Sized {
-        pub fn borrow_main(&self, _s: MSlock<'_>) -> impl Deref<Target=T> + '_ {
+        pub fn borrow_main<'a>(&'a self, _s: MSlock<'a>) -> impl Deref<Target=T> + 'a {
             self.1.borrow()
         }
 
-        pub fn borrow_mut_main(&self, _s: MSlock<'_>) -> impl DerefMut<Target=T> + '_ {
+        pub fn borrow_mut_main<'a>(&'a self, _s: MSlock<'a>) -> impl DerefMut<Target=T> + 'a {
             self.1.borrow_mut()
         }
 
         // caller must ensure that the part they're
         // borrowing is send
-        pub unsafe fn borrow_non_main_non_send(&self, _s: Slock<'_>) -> impl Deref<Target=T> + '_ {
+        pub unsafe fn borrow_non_main_non_send<'a>(&'a self, _s: Slock<'a>) -> impl Deref<Target=T> + 'a {
             self.1.borrow()
         }
 
-        pub unsafe fn borrow_mut_non_main_non_send(&self, _s: Slock<'_>) -> impl DerefMut<Target=T> + '_ {
+        pub unsafe fn borrow_mut_non_main_non_send<'a>(&'a self, _s: Slock<'a>) -> impl DerefMut<Target=T> + 'a {
             self.1.borrow_mut()
         }
 
@@ -132,19 +132,19 @@ mod listener {
         pub(in crate::state) trait DirectlyInvertibleBase {
             // This function must only be called once per instance
             // (We cannot take ownership since the caller is often unsized)
-            fn invert(&mut self, s: Slock<'_>);
+            fn invert(&mut self, s: Slock);
 
             /// It must be guaranteed by the caller
             /// the other type is exactly the same as our type
             /// and with the same id
-            unsafe fn right_multiply(&mut self, by: Box<dyn DirectlyInvertible>, s: Slock<'_>);
+            unsafe fn right_multiply(&mut self, by: Box<dyn DirectlyInvertible>, s: Slock);
 
             // gets a pointer to the action instance
             // (void pointer)
-            unsafe fn action_pointer(&self, s: Slock<'_>) -> *const ();
+            unsafe fn action_pointer(&self, s: Slock) -> *const ();
 
             // forgets the reference action without dropping it
-            unsafe fn forget_action(&mut self, s: Slock<'_>);
+            unsafe fn forget_action(&mut self, s: Slock);
         }
     }
 
@@ -156,19 +156,19 @@ mod listener {
 
 
     /* trait aliases */
-    pub trait GeneralListener : for <'a> FnMut(Slock<'a>) -> bool + Send + 'static {}
-    pub trait InverseListener : for <'a> FnMut(Box<dyn DirectlyInvertible>, Slock<'a>) -> bool + Send + 'static {}
-    impl<T> GeneralListener for T where T: for <'a> FnMut(Slock<'a>) -> bool + Send + 'static {}
-    impl<T> InverseListener for T where T: for <'a> FnMut(Box<dyn DirectlyInvertible>, Slock<'a>) -> bool + Send + 'static {}
+    pub trait GeneralListener : FnMut(Slock) -> bool + Send + 'static {}
+    pub trait InverseListener : FnMut(Box<dyn DirectlyInvertible>, Slock) -> bool + Send + 'static {}
+    impl<T> GeneralListener for T where T: FnMut(Slock) -> bool + Send + 'static {}
+    impl<T> InverseListener for T where T: FnMut(Box<dyn DirectlyInvertible>, Slock) -> bool + Send + 'static {}
 
     pub(super) type BoxInverseListener = Box<
-        dyn for <'a> FnMut(Box<dyn DirectlyInvertible>, Slock<'a>) -> bool + Send
+        dyn FnMut(Box<dyn DirectlyInvertible>, Slock) -> bool + Send
     >;
 
     pub(super) enum StateListener<S: Stateful> {
-        ActionListener(Box<dyn (FnMut(&S, &S::Action, Slock<'_>) -> bool) + Send>),
-        SignalListener(Box<dyn (FnMut(&S, Slock<'_>) -> bool) + Send>),
-        GeneralListener(Box<dyn FnMut(Slock<'_>) -> bool + Send>),
+        ActionListener(Box<dyn (FnMut(&S, &S::Action, Slock) -> bool) + Send>),
+        SignalListener(Box<dyn (FnMut(&S, Slock) -> bool) + Send>),
+        GeneralListener(Box<dyn FnMut(Slock) -> bool + Send>),
     }
 }
 pub use listener::*;
@@ -187,19 +187,19 @@ mod group {
         // to be applied on the surrounding container
         // (if it wants)
         #[allow(unused_variables)]
-        fn subtree_general_listener<F>(&self, f: F, s: Slock<'_, impl ThreadMarker>)
-            -> Option<impl Send + FnMut(&Self, &Self::Action, Slock<'_>) -> bool + 'static>
+        fn subtree_general_listener<F>(&self, f: F, s: Slock<impl ThreadMarker>)
+            -> Option<impl Send + FnMut(&Self, &Self::Action, Slock) -> bool + 'static>
             where F: GeneralListener + Clone {
-            None::<fn(&Self, &Self::Action, Slock<'_>) -> bool>
+            None::<fn(&Self, &Self::Action, Slock) -> bool>
         }
 
         // Returns an action listener to be applied on the parent container
         // (if necessary)
         #[allow(unused_variables)]
-        fn subtree_inverse_listener<F>(&self, f: F, s: Slock<'_, impl ThreadMarker>)
-            -> Option<impl Send + FnMut(&Self, &Self::Action, Slock<'_>) -> bool + 'static>
+        fn subtree_inverse_listener<F>(&self, f: F, s: Slock<impl ThreadMarker>)
+            -> Option<impl Send + FnMut(&Self, &Self::Action, Slock) -> bool + 'static>
             where F: InverseListener + Clone {
-            None::<fn(&Self, &Self::Action, Slock<'_>) -> bool>
+            None::<fn(&Self, &Self::Action, Slock) -> bool>
         }
     }
 
@@ -339,13 +339,13 @@ mod group {
             fn new() -> Self;
 
             fn add_filter<F>(&mut self, f: F)
-                where F: Send + 'static + Fn(&Self::Target, <Self::Target as Stateful>::Action, Slock<'_>) -> <Self::Target as Stateful>::Action;
+                where F: Send + 'static + Fn(&Self::Target, <Self::Target as Stateful>::Action, Slock) -> <Self::Target as Stateful>::Action;
 
-            fn filter(&self, val: &Self::Target, a: <Self::Target as Stateful>::Action, s: Slock<'_, impl ThreadMarker>) -> <Self::Target as Stateful>::Action;
+            fn filter(&self, val: &Self::Target, a: <Self::Target as Stateful>::Action, s: Slock<impl ThreadMarker>) -> <Self::Target as Stateful>::Action;
         }
 
         pub struct Filter<S: Stateful>(
-            Vec<Box<dyn Send + Fn(&S, S::Action, Slock<'_>) -> S::Action>>
+            Vec<Box<dyn Send + Fn(&S, S::Action, Slock) -> S::Action>>
         );
 
         // generic parameter is needed for some weird things...
@@ -358,12 +358,12 @@ mod group {
                 Filterless(PhantomData)
             }
 
-            fn add_filter<F>(&mut self, _f: F) where F: Send + 'static + Fn(&S, S::Action, Slock<'_>) -> S::Action {
+            fn add_filter<F>(&mut self, _f: F) where F: Send + 'static + Fn(&S, S::Action, Slock) -> S::Action {
 
             }
 
             #[inline]
-            fn filter(&self, _val: &S, a: S::Action, _s: Slock<'_, impl ThreadMarker>) -> S::Action {
+            fn filter(&self, _val: &S, a: S::Action, _s: Slock<impl ThreadMarker>) -> S::Action {
                 a
             }
         }
@@ -375,11 +375,11 @@ mod group {
                 Filter(Vec::new())
             }
 
-            fn add_filter<F>(&mut self, f: F) where F: Send + 'static + Fn(&S, S::Action, Slock<'_>) -> S::Action {
+            fn add_filter<F>(&mut self, f: F) where F: Send + 'static + Fn(&S, S::Action, Slock) -> S::Action {
                 self.0.push(Box::new(f));
             }
 
-            fn filter(&self, val: &S, a: S::Action, s: Slock<'_, impl ThreadMarker>) -> S::Action {
+            fn filter(&self, val: &S, a: S::Action, s: Slock<impl ThreadMarker>) -> S::Action {
                 self.0
                     .iter()
                     .rfold(a, |a, action| action(val, a, s.as_general_slock()))
@@ -552,8 +552,8 @@ mod group {
                 type Action = Word<VecActionBasis<T>>;
                 type HasInnerStores = TrueMarker;
 
-                fn subtree_general_listener<F>(&self, mut f: F, s: Slock<'_, impl ThreadMarker>)
-                    -> Option<impl Send + FnMut(&Self, &Self::Action, Slock<'_>) -> bool + 'static>
+                fn subtree_general_listener<F>(&self, mut f: F, s: Slock<impl ThreadMarker>)
+                    -> Option<impl Send + FnMut(&Self, &Self::Action, Slock) -> bool + 'static>
                     where F: GeneralListener + Clone {
 
                     for store in self {
@@ -579,8 +579,8 @@ mod group {
                     })
                 }
 
-                fn subtree_inverse_listener<F>(&self, f: F, s: Slock<'_, impl ThreadMarker>)
-                    -> Option<impl Send + FnMut(&Self, &Self::Action, Slock<'_>) -> bool + 'static>
+                fn subtree_inverse_listener<F>(&self, f: F, s: Slock<impl ThreadMarker>)
+                    -> Option<impl Send + FnMut(&Self, &Self::Action, Slock) -> bool + 'static>
                     where F: InverseListener + Clone {
                     for store in self {
                         store.subtree_inverse_listener(f.clone(), s);
@@ -1190,21 +1190,21 @@ mod store {
     pub trait StoreContainer: Send + Sized + 'static {
         // Only ONE general listener
         // can ever be present for a subtree
-        fn subtree_general_listener<F: GeneralListener + Clone>(&self, f: F, s: Slock<'_, impl ThreadMarker>);
+        fn subtree_general_listener<F: GeneralListener + Clone>(&self, f: F, s: Slock<impl ThreadMarker>);
 
         // Only ONE active general listener
         // can ever be present for a subtree
-        fn subtree_inverse_listener<F: InverseListener + Clone>(&self, f: F, s: Slock<'_, impl ThreadMarker>);
+        fn subtree_inverse_listener<F: InverseListener + Clone>(&self, f: F, s: Slock<impl ThreadMarker>);
     }
 
     pub trait ActionDispatcher<S: Stateful, F: ActionFilter<Target=S>> {
-        fn action_listener<G>(&self, listener: G, s: Slock<'_, impl ThreadMarker>)
-            where for<'a> G: Send + FnMut(&S, &S::Action, Slock<'a>) -> bool + 'static;
+        fn action_listener<G>(&self, listener: G, s: Slock<impl ThreadMarker>)
+            where G: Send + FnMut(&S, &S::Action, Slock) -> bool + 'static;
     }
 
     pub trait Filterable<S: Stateful> {
-        fn action_filter<G>(&self, filter: G, s: Slock<'_, impl ThreadMarker>)
-            where for<'a> G: Send + Fn(&S, S::Action, Slock<'a>) -> S::Action + 'static;
+        fn action_filter<G>(&self, filter: G, s: Slock<impl ThreadMarker>)
+            where G: Send + Fn(&S, S::Action, Slock) -> S::Action + 'static;
     }
 
     pub trait Bindable<S: Stateful, F: ActionFilter<Target=S>> {
@@ -1217,7 +1217,7 @@ mod store {
     // S to be an associated type, but then we can't have default
     // filterless? So, it is done for consistency as a generic parameter
     pub trait Binding<S: Stateful, F: ActionFilter<Target=S>=Filterless<S>>: ActionDispatcher<S, F> + Signal<S> {
-        fn apply(&self, action: impl IntoAction<S::Action, S>, s: Slock<'_, impl ThreadMarker>);
+        fn apply(&self, action: impl IntoAction<S::Action, S>, s: Slock<impl ThreadMarker>);
     }
 
     mod sealed_base {
@@ -1237,7 +1237,7 @@ mod store {
             fn dispatcher_mut(&mut self) -> &mut StoreDispatcher<S, F, Self::InverseListenerHolder>;
 
             // may introduce some additional behavior that the dispatcher does not handle
-            fn apply(inner: &Arc<SlockCell<Self>>, action: impl IntoAction<S::Action, S>, skip_filters: bool, s: Slock<'_, impl ThreadMarker>,);
+            fn apply(inner: &Arc<SlockCell<Self>>, action: impl IntoAction<S::Action, S>, skip_filters: bool, s: Slock<impl ThreadMarker>,);
 
             // Must be careful with these two methods
             // since generally not called with the state lock
@@ -1302,15 +1302,15 @@ mod store {
 
         impl<S, F, I> ActionDispatcher<S, F> for I
             where S: Stateful, F: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, F> {
-            fn action_listener<G>(&self, listener: G, s: Slock<'_, impl ThreadMarker>)
-                where G: Send + FnMut(&S, &S::Action, Slock<'_>) -> bool + 'static {
+            fn action_listener<G>(&self, listener: G, s: Slock<impl ThreadMarker>)
+                where G: Send + FnMut(&S, &S::Action, Slock) -> bool + 'static {
                 self.inner_ref().borrow_mut(s).dispatcher_mut().add_listener(StateListener::ActionListener(Box::new(listener)));
             }
         }
 
         impl<S: Stateful, I: RawStoreSharedOwner<S, Filter<S>>> Filterable<S> for I {
-            fn action_filter<G>(&self, filter: G, s: Slock<'_, impl ThreadMarker>)
-                where G: Send + Fn(&S, S::Action, Slock<'_>) -> S::Action + 'static {
+            fn action_filter<G>(&self, filter: G, s: Slock<impl ThreadMarker>)
+                where G: Send + Fn(&S, S::Action, Slock) -> S::Action + 'static {
                 self.inner_ref().borrow_mut(s).dispatcher_mut().action_filter(filter, s);
             }
         }
@@ -1335,7 +1335,7 @@ mod store {
         // It's therefore done as macros
         impl<S, F, R> Binding<S, F> for R where
             S: Stateful, F: ActionFilter<Target=S>, R: RawStoreSharedOwnerBase<S, F> {
-            fn apply(&self, action: impl IntoAction<S::Action, S>, s: Slock<'_, impl ThreadMarker>) {
+            fn apply(&self, action: impl IntoAction<S::Action, S>, s: Slock<impl ThreadMarker>) {
                 R::Inner::apply(self.inner_ref(), action, false, s);
             }
         }
@@ -1373,7 +1373,7 @@ mod store {
 
         impl<S, F, I> DirectlyInvertibleBase for ActionInverter<S, F, I>
             where S: Stateful, F: ActionFilter<Target=S>, I: RawStore<S, F> {
-            fn invert(&mut self, s: Slock<'_>) {
+            fn invert(&mut self, s: Slock) {
                 let Some(state) = self.state.upgrade() else {
                     return;
                 };
@@ -1382,7 +1382,7 @@ mod store {
                 I::apply(&state, self.action.take().unwrap(), true, s);
             }
 
-            unsafe fn right_multiply(&mut self, mut by: Box<dyn DirectlyInvertible>, s: Slock<'_>) {
+            unsafe fn right_multiply(&mut self, mut by: Box<dyn DirectlyInvertible>, s: Slock) {
                 /* we are free to assume by is of type Self, allowing us to do this conversion */
                 let ptr = by.action_pointer(s) as *const S::Action;
                 self.action = Some(self.action.take().unwrap() * std::ptr::read(ptr));
@@ -1392,11 +1392,11 @@ mod store {
                 by.forget_action(s);
             }
 
-            unsafe fn action_pointer(&self, _s: Slock<'_>) -> *const () {
+            unsafe fn action_pointer(&self, _s: Slock) -> *const () {
                 self.action.as_ref().unwrap() as *const S::Action as *const ()
             }
 
-            unsafe fn forget_action(&mut self, _s: Slock<'_>) {
+            unsafe fn forget_action(&mut self, _s: Slock) {
                 std::mem::forget(self.action.take());
             }
         }
@@ -1442,7 +1442,7 @@ mod store {
             fn new() -> Self;
             fn set_listener(&mut self, listener: BoxInverseListener);
 
-            fn invoke_listener(&mut self, action: impl FnOnce() -> Box<dyn DirectlyInvertible>, s: Slock<'_>);
+            fn invoke_listener(&mut self, action: impl FnOnce() -> Box<dyn DirectlyInvertible>, s: Slock);
         }
 
         pub(super) struct NullInverseListenerHolder;
@@ -1456,7 +1456,7 @@ mod store {
 
             }
 
-            fn invoke_listener(&mut self, _action: impl FnOnce() -> Box<dyn DirectlyInvertible>, _s: Slock<'_>) {
+            fn invoke_listener(&mut self, _action: impl FnOnce() -> Box<dyn DirectlyInvertible>, _s: Slock) {
 
             }
         }
@@ -1472,7 +1472,7 @@ mod store {
                 self.0 = Some(listener);
             }
 
-            fn invoke_listener(&mut self, action: impl FnOnce() -> Box<dyn DirectlyInvertible>, s: Slock<'_>) {
+            fn invoke_listener(&mut self, action: impl FnOnce() -> Box<dyn DirectlyInvertible>, s: Slock) {
                 if let Some(ref mut func) = self.0 {
                     if !func(action(), s) {
                         self.0 = None;
@@ -1526,7 +1526,7 @@ mod store {
                 make_inverter: impl FnOnce(S::Action) -> Box<dyn DirectlyInvertible>,
                 post_filter: impl FnOnce(&S, S::Action) -> S::Action,
                 skip_filters: bool,
-                s: Slock<'_, impl ThreadMarker>
+                s: Slock<impl ThreadMarker>
             ) {
                 let transaction = into_action.into_action(&self.data);
 
@@ -1571,7 +1571,7 @@ mod store {
                 into_action: impl IntoAction<S::Action, S>,
                 make_inverter: impl FnOnce(S::Action) -> Box<dyn DirectlyInvertible>,
                 skip_filters: bool,
-                s: Slock<'_, impl ThreadMarker>
+                s: Slock<impl ThreadMarker>
             ) {
                 self.apply_post_filter(into_action, make_inverter, |_, f| f, skip_filters, s);
             }
@@ -1583,12 +1583,12 @@ mod store {
                 self.listeners.push(listener);
             }
 
-            pub fn action_filter<G>(&mut self, filter: G, _s: Slock<'_, impl ThreadMarker>)
-                where G: Send + Fn(&S, S::Action, Slock<'_>) -> S::Action + 'static {
+            pub fn action_filter<G>(&mut self, filter: G, _s: Slock<impl ThreadMarker>)
+                where G: Send + Fn(&S, S::Action, Slock) -> S::Action + 'static {
                 self.filter.add_filter(filter);
             }
 
-            pub fn set_general_listener(&mut self, f: impl GeneralListener + Clone, s: Slock<'_>) {
+            pub fn set_general_listener(&mut self, f: impl GeneralListener + Clone, s: Slock) {
                 self.listeners.retain(|x| !matches!(x, StateListener::GeneralListener(_)));
                 self.listeners.push(StateListener::GeneralListener(Box::new(f.clone())));
 
@@ -1597,7 +1597,7 @@ mod store {
                 }
             }
 
-            pub fn set_inverse_listener(&mut self, f: impl InverseListener + Clone, s: Slock<'_>) {
+            pub fn set_inverse_listener(&mut self, f: impl InverseListener + Clone, s: Slock) {
                 self.inverse_listener.set_listener(Box::new(f.clone()));
 
                 if let Some(action) = self.data.subtree_inverse_listener(f, s) {
@@ -1610,12 +1610,12 @@ mod store {
     mod macros {
         macro_rules! impl_store_container_inner {
             () => {
-                fn subtree_general_listener<Q>(&self, f: Q, s: Slock<'_, impl ThreadMarker>)
+                fn subtree_general_listener<Q>(&self, f: Q, s: Slock<impl ThreadMarker>)
                     where Q: GeneralListener + Clone {
                     self.inner.borrow_mut(s).dispatcher_mut().set_general_listener(f, s.as_general_slock());
                 }
 
-                fn subtree_inverse_listener<Q>(&self, f: Q, s: Slock<'_, impl ThreadMarker>)
+                fn subtree_inverse_listener<Q>(&self, f: Q, s: Slock<impl ThreadMarker>)
                     where Q: InverseListener + Clone {
                     self.inner.borrow_mut(s).dispatcher_mut().set_inverse_listener(f, s.as_general_slock());
                 }
@@ -1624,7 +1624,7 @@ mod store {
 
         macro_rules! impl_signal_inner {
             ($s:ty) => {
-                fn borrow(&self, s: Slock<'_, impl ThreadMarker>) -> impl Deref<Target=$s> + '_ {
+                fn borrow<'a>(&'a self, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=$s> + 'a {
                     StateRef {
                         main_ref: self.inner_ref().borrow(s),
                         lifetime: PhantomData,
@@ -1632,13 +1632,13 @@ mod store {
                     }
                 }
 
-                fn listen<Q>(&self, listener: Q, s: Slock<'_, impl ThreadMarker>)
-                    where Q: FnMut(&$s, Slock<'_>) -> bool + Send + 'static {
+                fn listen<Q>(&self, listener: Q, s: Slock<impl ThreadMarker>)
+                    where Q: FnMut(&$s, Slock) -> bool + Send + 'static {
                     self.inner_ref().borrow_mut(s).dispatcher_mut().add_listener(StateListener::SignalListener(Box::new(listener)));
                 }
 
                 type MappedOutput<U: Send + 'static> = GeneralSignal<U>;
-                fn map<U, Q>(&self, map: Q, s: Slock<'_, impl ThreadMarker>) -> Self::MappedOutput<U>
+                fn map<U, Q>(&self, map: Q, s: Slock<impl ThreadMarker>) -> Self::MappedOutput<U>
                     where U: Send + 'static, Q: Send + 'static + Fn(&$s) -> U {
                     GeneralSignal::from(self, map, |this, listener, s| {
                         this.inner_ref().borrow_mut(s).dispatcher_mut().add_listener(StateListener::SignalListener(listener))
@@ -1688,7 +1688,7 @@ mod store {
                 &mut self.dispatcher
             }
 
-            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<S::Action, S>, skip_filters: bool, s: Slock<'_, impl ThreadMarker>) {
+            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<S::Action, S>, skip_filters: bool, s: Slock<impl ThreadMarker>) {
                 #[cfg(debug_assertions)] {
                     debug_assert_eq!(s.owner.debug_info.applying_transaction.borrow().len(), 0, "Fatal: store \
                     changed as a result of the change of another state variable. \
@@ -1806,7 +1806,7 @@ mod store {
 
         pub(super) struct InnerTokenStore<S: Stateful + Copy + Hash + Eq, F: ActionFilter<Target=S>> {
             dispatcher: StoreDispatcher<S, F, ActualInverseListenerHolder>,
-            equal_listeners: HashMap<S, Vec<Box<dyn FnMut(&S, Slock<'_>) -> bool + Send>>>,
+            equal_listeners: HashMap<S, Vec<Box<dyn FnMut(&S, Slock) -> bool + Send>>>,
         }
         impl<S, F> RawStoreBase<S, F> for InnerTokenStore<S, F>
             where S: Stateful + Copy + Hash + Eq,
@@ -1822,7 +1822,7 @@ mod store {
                 &mut self.dispatcher
             }
 
-            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<S::Action, S>, skip_filters: bool, s: Slock<'_, impl ThreadMarker>) {
+            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<S::Action, S>, skip_filters: bool, s: Slock<impl ThreadMarker>) {
                 #[cfg(debug_assertions)] {
                     debug_assert_eq!(s.owner.debug_info.applying_transaction.borrow().len(), 0, "Fatal: token store \
                     changed as a result of the change of another state variable. \
@@ -1865,7 +1865,7 @@ mod store {
         }
 
         impl<S, F> TokenStore<S, F> where S: Stateful + Copy + Hash + Eq, F: ActionFilter<Target=S> {
-            pub fn equals(&self, target: S, s: Slock<'_>) -> impl Signal<bool> + Clone {
+            pub fn equals(&self, target: S, s: Slock) -> impl Signal<bool> + Clone {
                 GeneralSignal::from(self, move |u| *u == target,
                     |this, listener, _s | {
                         this.inner.borrow_mut(s).equal_listeners.entry(target)
@@ -1987,7 +1987,7 @@ mod store {
                 &mut self.dispatcher
             }
 
-            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<S::Action, S>, skip_filters: bool, s: Slock<'_, impl ThreadMarker>) {
+            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<S::Action, S>, skip_filters: bool, s: Slock<impl ThreadMarker>) {
                 #[cfg(debug_assertions)] {
                     // Theoretically, someone may want to do an "async" derived store so this is left as an option
                     // debug_assert_ne!(s.owner.debug_info.applying_transaction.borrow().len(), 0, "Fatal: derived store \
@@ -2142,7 +2142,7 @@ mod store {
             // logic for this is somewhat convoluted
             // in large part due to the awkwardness of this
             // and the borrow rules
-            fn fully_apply(arc: &Arc<SlockCell<Self>>, intrinsic: Option<&I>, alt_action: impl IntoAction<M::Action, M>, s: Slock<'_, impl ThreadMarker>) {
+            fn fully_apply(arc: &Arc<SlockCell<Self>>, intrinsic: Option<&I>, alt_action: impl IntoAction<M::Action, M>, s: Slock<impl ThreadMarker>) {
                 /* must only be changed by itself, or by the parent */
                 #[cfg(debug_assertions)] {
                     // no need for self checks since if someone other than the parent initiates a transaction
@@ -2228,7 +2228,7 @@ mod store {
                 &mut self.dispatcher
             }
 
-            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<M::Action, M>, _skip_filters: bool, s: Slock<'_, impl ThreadMarker>) {
+            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<M::Action, M>, _skip_filters: bool, s: Slock<impl ThreadMarker>) {
                 InnerCoupledStore::fully_apply(arc, None, alt_action, s);
             }
 
@@ -2274,7 +2274,7 @@ mod store {
         impl<I, IB, M, F, C> CoupledStore<I, IB, M, F, C>
             where I: Stateful, IB: Binding<I>, M: Stateful, F: ActionFilter<Target=M>, C: Coupler<I, M, F>
         {
-            pub fn new(intrinsic: IB, coupler: C, s: Slock<'_, impl ThreadMarker>) -> Self {
+            pub fn new(intrinsic: IB, coupler: C, s: Slock<impl ThreadMarker>) -> Self {
                 let data = coupler.initial_mapped(intrinsic.borrow(s).deref());
                 let ret = CoupledStore {
                     inner: Arc::new(SlockCell::new(InnerCoupledStore {
@@ -2459,15 +2459,15 @@ mod buffer {
             Buffer(Arc::new((SlockCell::new(initial), QuarveAllocTag::new())))
         }
 
-        pub fn borrow(&self, s: Slock<'_, impl ThreadMarker>) -> impl Deref<Target=T> + '_ {
+        pub fn borrow<'a>(&'a self, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=T> + 'a {
             self.0.0.borrow(s)
         }
 
-        pub fn borrow_mut(&self, s: Slock<'_, impl ThreadMarker>) -> impl DerefMut<Target=T> + '_  {
+        pub fn borrow_mut<'a>(&'a self, s: Slock<'a, impl ThreadMarker>) -> impl DerefMut<Target=T> + 'a  {
             self.0.0.borrow_mut(s)
         }
 
-        pub fn replace(&self, with: T, s: Slock<'_, impl ThreadMarker>) -> T {
+        pub fn replace<'a>(&'a self, with: T, s: Slock<'a, impl ThreadMarker>) -> T {
             std::mem::replace(self.borrow_mut(s).deref_mut(), with)
         }
 
@@ -2477,7 +2477,7 @@ mod buffer {
     }
 
     impl<T> Buffer<T> where T: Send + Default {
-        pub fn take(&self, s: Slock<'_, impl ThreadMarker>) -> T {
+        pub fn take(&self, s: Slock<impl ThreadMarker>) -> T {
             std::mem::take(self.borrow_mut(s).deref_mut())
         }
     }
@@ -2502,20 +2502,20 @@ mod signal {
         /// This can easily cause retain cycles
         /// Instead, similar logic can usually be done by using JoinedSignals,
         /// DerivedStores, or Buffers
-        fn borrow(&self, s: Slock<'_, impl ThreadMarker>) -> impl Deref<Target=T> + '_;
+        fn borrow<'a>(&'a self, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=T> + 'a;
 
-        fn listen<F>(&self, listener: F, s: Slock<'_, impl ThreadMarker>)
-            where F: (FnMut(&T, Slock<'_>) -> bool) + Send + 'static;
+        fn listen<F>(&self, listener: F, s: Slock<impl ThreadMarker>)
+            where F: (FnMut(&T, Slock) -> bool) + Send + 'static;
 
         type MappedOutput<S: Send + 'static>: Signal<S> + Clone;
-        fn map<S, F>(&self, map: F, s: Slock<'_, impl ThreadMarker>) -> Self::MappedOutput<S>
+        fn map<S, F>(&self, map: F, s: Slock<impl ThreadMarker>) -> Self::MappedOutput<S>
             where S: Send + 'static,
                   F: Send + 'static + Fn(&T) -> S;
     }
 
     pub trait ActualDiffSignal<T> : Signal<T> where T: Send + 'static + Copy + Eq {
-        fn diff_listen<F>(&self, mut listener: F, s: Slock<'_, impl ThreadMarker>)
-            where F: (FnMut(&T, Slock<'_>) -> bool) + Send + 'static
+        fn diff_listen<F>(&self, mut listener: F, s: Slock<impl ThreadMarker>)
+            where F: (FnMut(&T, Slock) -> bool) + Send + 'static
         {
             let mut last_val = *self.borrow(s);
             self.listen(move |val, s| {
@@ -2540,7 +2540,7 @@ mod signal {
         use crate::util::markers::ThreadMarker;
 
         pub(super) struct SignalAudience<T: Send> {
-            listeners: Vec<Box<dyn FnMut(&T, Slock<'_>) -> bool + Send>>
+            listeners: Vec<Box<dyn FnMut(&T, Slock) -> bool + Send>>
         }
 
         impl<T> SignalAudience<T> where T: Send {
@@ -2550,20 +2550,20 @@ mod signal {
                 }
             }
 
-            pub(super) fn listen<F>(&mut self, listener: F, _s: Slock<'_, impl ThreadMarker>)
-                where F: (FnMut(&T, Slock<'_>) -> bool) + Send + 'static {
+            pub(super) fn listen<F>(&mut self, listener: F, _s: Slock<impl ThreadMarker>)
+                where F: (FnMut(&T, Slock) -> bool) + Send + 'static {
                 self.listeners.push(Box::new(listener));
             }
 
             pub(super) fn listen_box(
                 &mut self,
-                listener: Box<dyn (FnMut(&T, Slock<'_>) -> bool) + Send + 'static>,
-                _s: Slock<'_, impl ThreadMarker>
+                listener: Box<dyn (FnMut(&T, Slock) -> bool) + Send + 'static>,
+                _s: Slock<impl ThreadMarker>
             ) {
                 self.listeners.push(listener);
             }
 
-            pub(super) fn dispatch(&mut self, new_val: &T, s: Slock<'_, impl ThreadMarker>) {
+            pub(super) fn dispatch(&mut self, new_val: &T, s: Slock<impl ThreadMarker>) {
                 self.listeners
                     .retain_mut(|listener| listener(new_val, s.as_general_slock()))
             }
@@ -2637,20 +2637,20 @@ mod signal {
         }
 
         impl<T> Signal<T> for FixedSignal<T> where T: Send + 'static {
-            fn borrow(&self, s: Slock<'_, impl ThreadMarker>) -> impl Deref<Target=T> + '_ {
+            fn borrow<'a>(&'a self, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=T> + 'a {
                 SignalRef {
                     src: self.inner.borrow(s),
                     marker: PhantomData
                 }
             }
 
-            fn listen<F>(&self, _listener: F, _s: Slock<'_, impl ThreadMarker>)
-                where F: FnMut(&T, Slock<'_>) -> bool + Send {
+            fn listen<F>(&self, _listener: F, _s: Slock<impl ThreadMarker>)
+                where F: FnMut(&T, Slock) -> bool + Send {
                 /* no op */
             }
 
             type MappedOutput<S: Send + 'static> = FixedSignal<S>;
-            fn map<S, F>(&self, map: F, s: Slock<'_, impl ThreadMarker>) -> FixedSignal<S>
+            fn map<S, F>(&self, map: F, s: Slock<impl ThreadMarker>) -> FixedSignal<S>
                 where S: Send + 'static,
                       F: Send + 'static + Fn(&T) -> S
             {
@@ -2704,12 +2704,12 @@ mod signal {
         impl<T> GeneralSignal<T> where T: Send + 'static {
             /// add listener is a function to help out generally handling
             /// TokenStore. Otherwise, .listen is used
-            pub(crate) fn from<S, U, F, G>(source: &S, map: F, add_listener: G, s: Slock<'_, impl ThreadMarker>)
+            pub(crate) fn from<S, U, F, G>(source: &S, map: F, add_listener: G, s: Slock<impl ThreadMarker>)
                 -> GeneralSignal<T>
                 where S: Signal<U>,
                       U: Send + 'static,
                       F: Send + 'static + Fn(&U) -> T,
-                      G: FnOnce(&S, Box<dyn FnMut(&U, Slock<'_>) -> bool + Send>, Slock<'_>)
+                      G: FnOnce(&S, Box<dyn FnMut(&U, Slock) -> bool + Send>, Slock)
             {
                 let inner;
                 {
@@ -2743,20 +2743,20 @@ mod signal {
         }
 
         impl<T> Signal<T> for GeneralSignal<T> where T: Send + 'static {
-            fn borrow(&self, s: Slock<'_, impl ThreadMarker>) -> impl Deref<Target=T> + '_ {
+            fn borrow<'a>(&'a self, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=T> + 'a {
                 SignalRef {
                     src: self.inner.borrow(s),
                     marker: PhantomData,
                 }
             }
 
-            fn listen<F>(&self, listener: F, s: Slock<'_, impl ThreadMarker>)
-                where F: FnMut(&T, Slock<'_>) -> bool + Send + 'static {
+            fn listen<F>(&self, listener: F, s: Slock<impl ThreadMarker>)
+                where F: FnMut(&T, Slock) -> bool + Send + 'static {
                 self.inner.borrow_mut(s).audience.listen(listener, s);
             }
 
             type MappedOutput<S: Send + 'static> = GeneralSignal<S>;
-            fn map<S, F>(&self, map: F, s: Slock<'_, impl ThreadMarker>) -> GeneralSignal<S>
+            fn map<S, F>(&self, map: F, s: Slock<impl ThreadMarker>) -> GeneralSignal<S>
                 where S: Send + 'static, F: Fn(&T) -> S + Send + 'static {
                 GeneralSignal::from(self, map, |this, listener, s| {
                     this.inner.borrow_mut(s).audience.listen_box(listener, s);
@@ -2846,7 +2846,7 @@ mod signal {
                   U: Send + Clone + 'static,
                   V: Send + 'static
         {
-            pub fn from<F>(lhs: &impl Signal<T>, rhs: &impl Signal<U>, map: F, s: Slock<'_, impl ThreadMarker>)
+            pub fn from<F>(lhs: &impl Signal<T>, rhs: &impl Signal<U>, map: F, s: Slock<impl ThreadMarker>)
                            -> JoinedSignal<T, U, V>
                 where F: Send + Clone + 'static + Fn(&T, &U) -> V
             {
@@ -2909,20 +2909,20 @@ mod signal {
                   U: Send + Clone + 'static,
                   V: Send + 'static
         {
-            fn borrow(&self, s: Slock<'_, impl ThreadMarker>) -> impl Deref<Target=V> + '_ {
+            fn borrow<'a>(&'a self, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=V> + 'a {
                 SignalRef {
                     src: self.inner.1.borrow(s),
                     marker: Default::default(),
                 }
             }
 
-            fn listen<F>(&self, listener: F, s: Slock<'_, impl ThreadMarker>)
-                where F: FnMut(&V, Slock<'_>) -> bool + Send + 'static {
+            fn listen<F>(&self, listener: F, s: Slock<impl ThreadMarker>)
+                where F: FnMut(&V, Slock) -> bool + Send + 'static {
                 self.inner.1.borrow_mut(s).audience.listen(listener, s);
             }
 
             type MappedOutput<S: Send + 'static> = GeneralSignal<S>;
-            fn map<S, F>(&self, map: F, s: Slock<'_, impl ThreadMarker>) -> GeneralSignal<S>
+            fn map<S, F>(&self, map: F, s: Slock<impl ThreadMarker>) -> GeneralSignal<S>
                 where S: Send + 'static,
                       F: Send + 'static + Fn(&V) -> S
             {
@@ -2971,7 +2971,7 @@ mod signal {
         }
 
         impl<C> CapacitatedInnerSignal<C> where C: Capacitor {
-            fn set_curr(&mut self, to: C::Target, s: Slock<'_>) {
+            fn set_curr(&mut self, to: C::Target, s: Slock) {
                 self.curr = to;
                 self.audience.dispatch(&self.curr, s);
             }
@@ -3012,7 +3012,7 @@ mod signal {
         impl<C> CapacitatedSignal<C> where C: Capacitor {
 
             #[inline]
-            fn update_active(this: &Arc<(AtomicU8, SlockCell<CapacitatedInnerSignal<C>>)>, mut_ref: &mut CapacitatedInnerSignal<C>, _s: Slock<'_>) {
+            fn update_active(this: &Arc<(AtomicU8, SlockCell<CapacitatedInnerSignal<C>>)>, mut_ref: &mut CapacitatedInnerSignal<C>, _s: Slock) {
                 if mut_ref.time_active.is_none() {
                     mut_ref.time_active = Some(Duration::from_secs(0));
 
@@ -3094,20 +3094,20 @@ mod signal {
         }
 
         impl<C> Signal<C::Target> for CapacitatedSignal<C> where C: Capacitor {
-            fn borrow(&self, s: Slock<'_, impl ThreadMarker>) -> impl Deref<Target=C::Target> + '_ {
+            fn borrow<'a>(&'a self, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=C::Target> + 'a {
                 SignalRef {
                     src: self.inner.1.borrow(s),
                     marker: Default::default(),
                 }
             }
 
-            fn listen<F>(&self, listener: F, s: Slock<'_, impl ThreadMarker>)
-                where F: FnMut(&C::Target, Slock<'_>) -> bool + Send + 'static {
+            fn listen<F>(&self, listener: F, s: Slock<impl ThreadMarker>)
+                where F: FnMut(&C::Target, Slock) -> bool + Send + 'static {
                 self.inner.1.borrow_mut(s).audience.listen(listener, s);
             }
 
             type MappedOutput<S: Send + 'static> = GeneralSignal<S>;
-            fn map<S, F>(&self, map: F, s: Slock<'_, impl ThreadMarker>) -> GeneralSignal<S>
+            fn map<S, F>(&self, map: F, s: Slock<impl ThreadMarker>) -> GeneralSignal<S>
                 where S: Send + 'static,
                       F: Send + 'static + Fn(&C::Target) -> S
             {
@@ -3172,10 +3172,11 @@ mod test {
     use std::time::Duration;
     use rand::Rng;
     use crate::core::{setup_timing_thread, slock_owner, timed_worker};
-    use crate::state::{Store, Signal, TokenStore, Binding, Bindable, ActionDispatcher, StoreContainer, NumericAction, DirectlyInvertible, Filterable, DerivedStore, Stateful, CoupledStore, StringActionBasis, Buffer, Word, GroupAction, WithCapacitor};
+    use crate::state::{Store, Signal, TokenStore, Binding, Bindable, ActionDispatcher, StoreContainer, NumericAction, DirectlyInvertible, Filterable, DerivedStore, Stateful, CoupledStore, StringActionBasis, Buffer, Word, GroupAction, WithCapacitor, FixedSignal};
     use crate::state::capacitor::{ConstantSpeedCapacitor, ConstantTimeCapacitor, SmoothCapacitor};
     use crate::state::coupler::{FilterlessCoupler, NumericStringCoupler};
     use crate::state::SetAction::{Identity, Set};
+    use crate::state::slock_cell::SlockCell;
     use crate::state::VecActionBasis::{Insert, Remove, Swap};
     use crate::util::numeric::Norm;
     use crate::util::test_util::HeapChecker;
@@ -3489,14 +3490,6 @@ mod test {
             true
         }, s.marker());
         state1.apply(Set(0), s.marker());
-    }
-
-    #[test]
-    #[should_panic]
-    fn test_falsely_marked_derived_causes_panic() {
-        let s = slock_owner();
-        let state = DerivedStore::new(0);
-        state.apply(Set(1), s.marker());
     }
 
     #[test]
@@ -4388,5 +4381,4 @@ mod test {
         state2.apply(buffer.replace(Word::identity(), s.marker()), s.marker());
         assert_eq!(*state2.borrow(s.marker()), *state.borrow(s.marker()));
     }
-
 }

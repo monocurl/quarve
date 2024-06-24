@@ -492,7 +492,7 @@ mod provider_modifier {
                 last_dy: ScreenUnit::NAN
             };
 
-            self.provider_modifier(o)
+            ProviderIVPModifier::new(self, o)
         }
 
         fn offset_signal(self, dx: impl Signal<ScreenUnit>, dy: impl Signal<ScreenUnit>) -> ProviderIVPModifier<E, Self, impl ProviderModifier<E, Self::UpContext, Self::DownContext>> {
@@ -503,7 +503,7 @@ mod provider_modifier {
                 last_dy: ScreenUnit::NAN
             };
 
-            self.provider_modifier(o)
+            ProviderIVPModifier::new(self, o)
         }
     }
 
@@ -618,7 +618,7 @@ mod provider_modifier {
                 last_amount: ScreenUnit::NAN
             };
 
-            self.provider_modifier(padding)
+            ProviderIVPModifier::new(self, padding)
         }
 
         fn padding_signal<S: Signal<ScreenUnit>>(self, amount: S) -> ProviderIVPModifier<E, Self, Padding<S>> {
@@ -628,7 +628,7 @@ mod provider_modifier {
                 last_amount: ScreenUnit::NAN
             };
 
-            self.provider_modifier(padding)
+            ProviderIVPModifier::new(self, padding)
         }
 
         fn padding_edge(self, amount: impl Into<ScreenUnit>, edges: u8) -> ProviderIVPModifier<E, Self, Padding<FixedSignal<ScreenUnit>>> {
@@ -638,7 +638,7 @@ mod provider_modifier {
                 last_amount: ScreenUnit::NAN
             };
 
-            self.provider_modifier(padding)
+            ProviderIVPModifier::new(self, padding)
         }
 
         fn padding_edge_signal<S: Signal<ScreenUnit>>(self, amount: S, edges: u8) -> ProviderIVPModifier<E, Self, Padding<S>> {
@@ -648,7 +648,7 @@ mod provider_modifier {
                 last_amount: ScreenUnit::NAN
             };
 
-            self.provider_modifier(padding)
+            ProviderIVPModifier::new(self, padding)
         }
     }
 
@@ -1760,7 +1760,7 @@ mod show_hide_modifier {
     use crate::util::geo::{Rect, Size};
     use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, ViewProvider};
 
-    struct ShowHideIVP<E, I, F1, F2, F3, F4>
+    pub struct ShowHideIVP<E, I, F1, F2, F3, F4>
         where E: Environment,
               I: IntoViewProvider<E>,
               F1: FnMut(MSlock) + 'static,
@@ -1915,49 +1915,55 @@ mod show_hide_modifier {
 
     }
 
-    impl<E, I> ShowHideCallback<E> for I where E: Environment, I: IntoViewProvider<E> {
-        fn pre_show(self, f: impl FnMut(MSlock) + 'static) -> impl IntoViewProvider<E> {
-            ShowHideIVP {
-                wrapping: self,
-                pre_show: f,
-                post_show: do_nothing,
-                pre_hide: do_nothing,
-                post_hide: do_nothing,
-                phantom: Default::default(),
-            }
+    pub(crate) fn pre_show_wrap<E: Environment, I: IntoViewProvider<E>>(ivp: I, f: impl FnMut(MSlock) + 'static)
+        -> impl IntoViewProvider<E>
+    {
+        ShowHideIVP {
+            wrapping: ivp,
+            pre_show: f,
+            post_show: do_nothing,
+            pre_hide: do_nothing,
+            post_hide: do_nothing,
+            phantom: Default::default(),
         }
+    }
 
-        fn post_show(self, f: impl FnMut(MSlock) + 'static) -> impl IntoViewProvider<E> {
-            ShowHideIVP {
-                wrapping: self,
-                pre_show: do_nothing,
-                post_show: f,
-                pre_hide: do_nothing,
-                post_hide: do_nothing,
-                phantom: Default::default(),
-            }
+    pub(crate) fn post_show_wrap<E: Environment, I: IntoViewProvider<E>>(ivp: I, f: impl FnMut(MSlock) + 'static)
+                                                                        -> impl IntoViewProvider<E>
+    {
+        ShowHideIVP {
+            wrapping: ivp,
+            pre_show: do_nothing,
+            post_show: f,
+            pre_hide: do_nothing,
+            post_hide: do_nothing,
+            phantom: Default::default(),
         }
+    }
 
-        fn pre_hide(self, f: impl FnMut(MSlock) + 'static) -> impl IntoViewProvider<E> {
-            ShowHideIVP {
-                wrapping: self,
-                pre_show: do_nothing,
-                post_show: do_nothing,
-                pre_hide: f,
-                post_hide: do_nothing,
-                phantom: Default::default(),
-            }
+    pub(crate) fn pre_hide_wrap<E: Environment, I: IntoViewProvider<E>>(ivp: I, f: impl FnMut(MSlock) + 'static)
+                                                                        -> impl IntoViewProvider<E>
+    {
+        ShowHideIVP {
+            wrapping: ivp,
+            pre_show: do_nothing,
+            post_show: do_nothing,
+            pre_hide: f,
+            post_hide: do_nothing,
+            phantom: Default::default(),
         }
+    }
 
-        fn post_hide(self, f: impl FnMut(MSlock) + 'static) -> impl IntoViewProvider<E> {
-            ShowHideIVP {
-                wrapping: self,
-                pre_show: do_nothing,
-                post_show: do_nothing,
-                pre_hide: do_nothing,
-                post_hide: f,
-                phantom: Default::default(),
-            }
+    pub(crate) fn post_hide_wrap<E: Environment, I: IntoViewProvider<E>>(ivp: I, f: impl FnMut(MSlock) + 'static)
+                                                                        -> impl IntoViewProvider<E>
+    {
+        ShowHideIVP {
+            wrapping: ivp,
+            pre_show: do_nothing,
+            post_show: do_nothing,
+            pre_hide: do_nothing,
+            post_hide: f,
+            phantom: Default::default(),
         }
     }
 }

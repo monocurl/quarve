@@ -6,7 +6,10 @@ pub use view::*;
 
 mod into_view_provider {
     use crate::core::{Environment, MSlock};
-    use crate::view::modifers::{ProviderIVPModifier, ProviderModifier};
+    use crate::state::{FixedSignal, Signal};
+    use crate::util::geo::ScreenUnit;
+    use crate::view::modifers::{Layer, LayerIVP, LayerModifiable, post_hide_wrap, post_show_wrap, pre_hide_wrap, pre_show_wrap};
+    use crate::view::util::Color;
     use crate::view::ViewProvider;
 
     // it may seem like we will have to wait a while for
@@ -23,17 +26,38 @@ mod into_view_provider {
         fn into_view_provider(self, env: &E::Const, s: MSlock)
             -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext>;
 
-        fn provider_modifier<M>(self, modifier: M) -> ProviderIVPModifier<E, Self, M>
-            where M: ProviderModifier<E, Self::UpContext, Self::DownContext>
-        {
-            ProviderIVPModifier::new(self, modifier)
+        // FIXME pre_show, layer methods, and related should be optimized for ShowHideIVP/LayerIVP
+        fn pre_show(self, f: impl FnMut(MSlock) + 'static) -> impl IntoViewProvider<E> {
+            pre_show_wrap(self, f)
         }
 
-        // fn tree_modifier<P>(self, modifier: P) -> P
-        //     where P: TreeModifier<E, Self::UpContext, Self::DownContext>
-        // {
-        //     self
-        // }
+        fn post_show(self, f: impl FnMut(MSlock) + 'static) -> impl IntoViewProvider<E> {
+            post_show_wrap(self, f)
+        }
+
+        fn pre_hide(self, f: impl FnMut(MSlock) + 'static) -> impl IntoViewProvider<E> {
+            pre_hide_wrap(self, f)
+        }
+
+        fn post_hide(self, f: impl FnMut(MSlock) + 'static) -> impl IntoViewProvider<E> {
+            post_hide_wrap(self, f)
+        }
+
+        fn border(self, color: Color, width: impl Into<ScreenUnit>)
+            -> LayerIVP<E, Self, impl Signal<Color>, impl Signal<ScreenUnit>, impl Signal<Color>, impl Signal<ScreenUnit>, impl Signal<f32>>
+        {
+            self.layer(Layer::default()
+                .border(color, width)
+            )
+        }
+
+        fn bg_color(self, color: Color)
+            -> LayerIVP<E, Self, impl Signal<Color>, impl Signal<ScreenUnit>, impl Signal<Color>, impl Signal<ScreenUnit>, FixedSignal<f32>>
+        {
+            self.layer(Layer::default()
+                .bg_color(color)
+            )
+        }
     }
 }
 pub use into_view_provider::*;
@@ -48,37 +72,13 @@ pub mod util;
 // #[cfg(debug_assertions)]
 #[allow(unused_variables)]
 pub mod dev_views;
+
 pub mod color_view;
-pub mod signal_view;
 pub mod portal;
-
-// vstack, hstack, zstack, hflex, vflex
-// scrollview
-// text, textfield, monotonicview
-// button, link, spacer, radiobutton, checkbox
-// vsplit, hsplit
-// #if, #match (via view signal)
-// router view/mux/match
-// file opener
-// image
-// shape/path
-// codecompletionthing that's like a new window
-// fonts
-
-// modifiers
-// .hover
-// .click
-// when(
-// opacity
-// background
-// border
-// corner radius
-
-// positional
-// padding, offset
-// box
-// layer
-// min_frame, frame, max_frame (and alignment)
-// vmap, hmap, zmap
-// flex_grow, flex_shrink, (and related)
-// all done in a monadic fashion?
+pub mod conditional;
+pub mod image_view;
+pub mod view_match;
+pub mod monotonic_text_view;
+pub mod text;
+pub mod control;
+pub mod scroll;

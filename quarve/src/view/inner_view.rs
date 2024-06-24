@@ -30,7 +30,7 @@ pub(crate) trait InnerViewBase<E> where E: Environment {
     fn needs_layout_down(&self) -> bool;
 
     // true if we need to go to the parent and lay that up
-    fn layout_up(&mut self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, env: &mut E, s: MSlock<'_>) -> bool;
+    fn layout_up(&mut self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, env: &mut E, s: MSlock) -> bool;
 
     // fails if the current view requires context
     // in such a case, we must go to the parent and retry
@@ -38,7 +38,7 @@ pub(crate) trait InnerViewBase<E> where E: Environment {
     // or null if we are to use the last frame
     // this should only be done if we know for sure
     // the last frame is valid
-    fn try_layout_down(&mut self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, env: &mut E, frame: Option<Rect>, s: MSlock<'_>) -> Result<(), ()>;
+    fn try_layout_down(&mut self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, env: &mut E, frame: Option<Rect>, s: MSlock) -> Result<(), ()>;
     fn translate(&mut self, by: Point, s: MSlock);
     fn used_rect(&mut self, s: MSlock) -> Rect;
     fn suggested_rect(&mut self, _s: MSlock) -> Rect;
@@ -57,10 +57,10 @@ pub(crate) trait InnerViewBase<E> where E: Environment {
         window: &Weak<MainSlockCell<dyn WindowEnvironmentBase<E>>>,
         e: &mut E,
         depth: u32,
-        s: MSlock<'_>
+        s: MSlock
     );
 
-    fn hide(&mut self, s: MSlock<'_>);
+    fn hide(&mut self, s: MSlock);
 
 
     // this is done whenever a node has layout context
@@ -118,7 +118,7 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
         suggested: Rect,
         env: &mut E,
         context: &P::DownContext,
-        s: MSlock<'_>
+        s: MSlock
     ) -> Rect {
         // all writes to dirty flag are done with a state lock
         // we may set the dirty flag to false now that we are performing a layout
@@ -172,7 +172,7 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
 
     pub(super) fn take_backing(
         &mut self,
-        this: &'_ Arc<MainSlockCell<dyn InnerViewBase<E>>>,
+        this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>,
         source: (NativeView, P),
         env: &mut EnvRef<E>,
         s: MSlock
@@ -244,7 +244,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         self.needs_layout_down
     }
 
-    fn layout_up(&mut self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, env: &mut E, s: MSlock<'_>) -> bool {
+    fn layout_up(&mut self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, env: &mut E, s: MSlock) -> bool {
         debug_assert!(self.needs_layout_up);
 
         let mut handle = EnvRef(env);
@@ -260,7 +260,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         ret
     }
 
-    fn try_layout_down(&mut self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, env: &mut E, frame: Option<Rect>, s: MSlock<'_>) -> Result<(), ()> {
+    fn try_layout_down(&mut self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, env: &mut E, frame: Option<Rect>, s: MSlock) -> Result<(), ()> {
         let context = ();
         let context_ref: &dyn Any = &context;
 
@@ -341,7 +341,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         window: &Weak<MainSlockCell<dyn WindowEnvironmentBase<E>>>,
         e: &mut E,
         depth: u32,
-        s: MSlock<'_>
+        s: MSlock
     ) {
         /* save attributes */
         let new_window = Some(window.clone());
@@ -394,7 +394,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         self.pop_environment(e, s);
     }
 
-    fn hide(&mut self, s: MSlock<'_>) {
+    fn hide(&mut self, s: MSlock) {
         // keep window,
         // note that superview is responsible for removing itself
         // when appropriate
@@ -526,7 +526,7 @@ impl<'a, E> Subtree<'a, E> where E: Environment {
             .layout_up(env.0, Some(self.owner.clone()), depth as i32, s);
     }
 
-    pub fn remove_subview_at(&mut self, index: usize, env: &mut EnvRef<E>, s: MSlock<'_>) {
+    pub fn remove_subview_at(&mut self, index: usize, env: &mut EnvRef<E>, s: MSlock) {
         // remove from backing
         if !self.graph.backing.0.is_null() {
             view_remove_child(self.graph.backing.0, index, s);
@@ -540,7 +540,7 @@ impl<'a, E> Subtree<'a, E> where E: Environment {
         self.ensure_subtree_has_layout_up_done(env, s);
     }
 
-    pub fn remove_subview<P>(&mut self, subview: &View<E, P>, env: &mut EnvRef<E>, s: MSlock<'_>) where P: ViewProvider<E> {
+    pub fn remove_subview<P>(&mut self, subview: &View<E, P>, env: &mut EnvRef<E>, s: MSlock) where P: ViewProvider<E> {
         let comp = subview.0.clone() as Arc<MainSlockCell<dyn InnerViewBase<E>>>;
         let index = self.graph.subviews.iter()
             .position(|u| Arc::ptr_eq(u, &comp))
@@ -591,7 +591,7 @@ impl<'a, E> Subtree<'a, E> where E: Environment {
 
     // note that cyclic is technically possible if you work hard enough
     // but this will often just result in a stall or other weird effects
-    pub fn insert_subview<P>(&mut self, subview: &View<E, P>, index: usize, env: &mut EnvRef<E>, s: MSlock<'_>) where P: ViewProvider<E> {
+    pub fn insert_subview<P>(&mut self, subview: &View<E, P>, index: usize, env: &mut EnvRef<E>, s: MSlock) where P: ViewProvider<E> {
         self.graph.subviews.insert(index, subview.0.clone());
         let mut borrow = subview.0.borrow_mut_main(s);
         borrow.set_superview(Some(Arc::downgrade(self.owner)));
@@ -613,7 +613,7 @@ impl<'a, E> Subtree<'a, E> where E: Environment {
         self.ensure_subtree_has_layout_up_done(env, s);
     }
 
-    pub fn push_subview<P>(&mut self, subview: &View<E, P>, env: &mut EnvRef<E>, s: MSlock<'_>) where P: ViewProvider<E> {
+    pub fn push_subview<P>(&mut self, subview: &View<E, P>, env: &mut EnvRef<E>, s: MSlock) where P: ViewProvider<E> {
         self.insert_subview(subview, self.graph.subviews.len(), env, s);
     }
 

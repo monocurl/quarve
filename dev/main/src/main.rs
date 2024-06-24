@@ -1,6 +1,6 @@
 use quarve::core::{Application, Environment, launch, MSlock};
 use quarve::state::{FixedSignal, Signal};
-use quarve::util::geo::Direction;
+use quarve::util::geo::{Direction, Size, VerticalDirection};
 use quarve::view::{ViewProvider, IntoViewProvider};
 use quarve::view::layout::*;
 use quarve::view::modifers::{Frame, FrameModifiable, Layer, LayerModifiable};
@@ -34,7 +34,7 @@ impl Environment for Env {
 }
 
 impl quarve::core::ApplicationProvider for ApplicationProvider {
-    fn will_spawn(&self, app: &Application, s: MSlock<'_>) {
+    fn will_spawn(&self, app: &Application, s: MSlock) {
         app.spawn_window(WindowProvider, s);
     }
 }
@@ -42,17 +42,17 @@ impl quarve::core::ApplicationProvider for ApplicationProvider {
 impl quarve::core::WindowProvider for WindowProvider {
     type Env = Env;
 
-    fn title(&self, _s: MSlock<'_>) -> impl Signal<String> {
+    fn title(&self, _s: MSlock) -> impl Signal<String> {
         // s.clock_signal()
         //     .map(|time| format!("Time {}", time), s)
         FixedSignal::new("Hello".to_owned())
     }
 
-    fn style(&self, _s: MSlock<'_>) {
+    fn style(&self, _s: MSlock) {
 
     }
 
-    fn root(&self, env: &<Env as Environment>::Const, s: MSlock<'_>) -> impl ViewProvider<Env, DownContext=()> {
+    fn root(&self, env: &<Env as Environment>::Const, s: MSlock) -> impl ViewProvider<Env, DownContext=()> {
         let clock = s.clock_signal();
         let count = clock
             .map(|val| {
@@ -60,29 +60,36 @@ impl quarve::core::WindowProvider for WindowProvider {
                     .collect()
             }, s);
 
-        count
-            .signal_flexmap_options(
-                |val, _| {
-                    Color::new(100, 0, 0)
-                        .frame(
-                            Frame::default()
-                                .intrinsic(100, 100.0 + 25.0 * (val % 2) as f64)
-                                .stretched(150, 150.0)
-                                .squished(50, 100.0 - 50.0 * (val % 2) as f64)
-                        )
-                        .flex(FlexContext::default()
-                            .grow(0.5 + (val % 2) as f64)
-                        )
-                },
-                FlexStackOptions::default()
-                    .gap(10.0)
-                    .wrap()
-                    .cross_gap(10.0)
-                    .direction(Direction::Left)
+        VStack::hetero_options(VStackOptions::default().direction(VerticalDirection::Up))
+            .push(
+                count
+                    .sig_flexmap_options(
+                        |val, _| {
+                            Color::new(100, 0, 0)
+                                .frame(
+                                    Frame::default()
+                                        .intrinsic(100, 100.0 + 25.0 * (val % 2) as f64)
+                                        .stretched(150, 150.0)
+                                        .squished(50, 100.0 - 50.0 * (val % 2) as f64)
+                                )
+                                .flex(FlexContext::default()
+                                    .grow(0.5 + (val % 2) as f64)
+                                )
+                        },
+                        FlexStackOptions::default()
+                            .gap(10.0)
+                            .wrap()
+                            .cross_gap(10.0)
+                            .direction(Direction::Left)
+                    )
+                    .layer(Layer::default().border(Color::black(), 1.0))
+                    .intrinsic(550, 500)
+                    .layer(Layer::default().border(Color::new(100, 100, 100), 1.0))
             )
-            .layer(Layer::default().border(Color::black(), 1.0))
-            .intrinsic(550, 500)
-            .layer(Layer::default().border(Color::new(100, 100, 100), 1.0))
+            .push(
+                Color::black()
+                    .intrinsic(100, 0.5)
+            )
             .into_view_provider(env, s)
 
         //
@@ -99,6 +106,14 @@ impl quarve::core::WindowProvider for WindowProvider {
         //         Color::new(0, 100, 0).intrinsic(400, 100)
         //     )
         //     .into_view_provider(env, s)
+    }
+
+    fn size(&self) -> (Size, Size, Size) {
+        (
+            Size::new(400.0, 400.0),
+            Size::new(400.0, 400.0),
+            Size::new(400.0, 400.0)
+        )
     }
 }
 

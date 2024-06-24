@@ -424,15 +424,15 @@ impl<E, U, D> ViewProvider<E> for DummyProvider<E, U, D>
         unreachable!()
     }
 
-    fn init_backing(&mut self, _invalidator: Invalidator<E>, _subtree: &mut Subtree<E>, _backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, _s: MSlock<'_>) -> NativeView {
+    fn init_backing(&mut self, _invalidator: Invalidator<E>, _subtree: &mut Subtree<E>, _backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, _s: MSlock) -> NativeView {
         unreachable!()
     }
 
-    fn layout_up(&mut self, _subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, _s: MSlock<'_>) -> bool {
+    fn layout_up(&mut self, _subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, _s: MSlock) -> bool {
         unreachable!()
     }
 
-    fn layout_down(&mut self, _subtree: &Subtree<E>, _frame: Size, _layout_context: &D, _env: &mut EnvRef<E>, _s: MSlock<'_>) -> (Rect, Rect) {
+    fn layout_down(&mut self, _subtree: &Subtree<E>, _frame: Size, _layout_context: &D, _env: &mut EnvRef<E>, _s: MSlock) -> (Rect, Rect) {
         unreachable!()
     }
 }
