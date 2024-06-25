@@ -514,6 +514,29 @@ impl<'a, E> Subtree<'a, E> where E: Environment {
         self.graph.subviews.len()
     }
 
+    fn dfs(curr: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, s: MSlock) {
+        // safety is same reason invalidate above is safe
+        // (only touching send parts)
+        let mut borrow = curr.borrow_mut_main(s);
+        borrow.invalidate(Arc::downgrade(curr), s.as_general_slock());
+
+        for subview in borrow.graph().subviews() {
+            Subtree::dfs(subview, s);
+        }
+    }
+
+    // ugly hack to avoid reentry whenever
+    // a environment_modifier wants to invalidate entire subtree
+    // as a result of layout_up (it cant just call invalidtor
+    // since that would reborrow the calling view)
+    pub(crate) fn invalidate_subtree(&mut self, env: &mut EnvRef<E>, s: MSlock) {
+        for sv in &self.graph.subviews {
+            Subtree::dfs(sv, s);
+        }
+
+        self.ensure_subtree_has_layout_up_done(env, s);
+    }
+
     fn ensure_subtree_has_layout_up_done(&mut self, env: &mut EnvRef<E>, s: MSlock) {
         let (window, depth) =
             (self.graph.window

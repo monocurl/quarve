@@ -129,6 +129,7 @@ pub mod window {
         fn back_window_set_size(window: *mut c_void, w: f64, h: f64);
         fn back_window_set_min_size(window: *mut c_void, w: f64, h: f64);
         fn back_window_set_max_size(window: *mut c_void, w: f64, h: f64);
+        // Note that this should NOT call front_window_should_close even though it's performed by front
         fn back_window_exit(window: *mut c_void);
         fn back_window_free(window: *mut c_void);
     }

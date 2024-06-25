@@ -1,5 +1,5 @@
 use crate::core::{Environment, MSlock};
-use crate::view::{IntoViewProvider, ViewProvider};
+use crate::view::{EnvRef, IntoViewProvider, Subtree, ViewProvider};
 
 // FIXME perhaps could do some better software architecture here
 
@@ -17,14 +17,14 @@ pub trait ConditionalIVPModifier<E>:
             DownContext=<Self::Modifying as IntoViewProvider<E>>::DownContext>;
 }
 
-// dont like how the syntax of the two is midly different
+// dont like how the syntax of the two ivp/vp is mildly different
 // (mainly because we don't need modifying once it reaches the vp stage)
 pub trait ConditionalVPModifier<E>: ViewProvider<E> where E: Environment
 {
     // enable and disabled calls must be called exactly before
     // the underlying layout up call of the view provider
-    fn enable(&mut self, s: MSlock);
-    fn disable(&mut self, s: MSlock);
+    fn enable(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock);
+    fn disable(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock);
 }
 
 mod identity_modifier {
@@ -78,11 +78,11 @@ mod identity_modifier {
     }
 
     impl<E, P> ConditionalVPModifier<E> for UnmodifiedVP<E, P> where E: Environment, P: ViewProvider<E> {
-        fn enable(&mut self, _s: MSlock) {
+        fn enable(&mut self, _subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, _s: MSlock) {
             /* no op */
         }
 
-        fn disable(&mut self, _s: MSlock) {
+        fn disable(&mut self, _subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, _s: MSlock) {
             /* no op */
         }
     }
@@ -426,16 +426,16 @@ mod provider_modifier {
               P: ConditionalVPModifier<E>,
               M: ProviderModifier<E, P::UpContext, P::DownContext>
     {
-        fn enable(&mut self, s: MSlock) {
+        fn enable(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) {
             if !self.enabled {
                 self.enabled = true;
-                self.provider.enable(s);
+                self.provider.enable(subtree, env, s);
             }
         }
 
-        fn disable(&mut self, s: MSlock) {
+        fn disable(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) {
             if self.enabled {
-                self.provider.disable(s);
+                self.provider.disable(subtree, env, s);
                 self.enabled = false;
             }
         }
@@ -1098,25 +1098,25 @@ mod layer_modifier {
               S4: Signal<ScreenUnit>,
               S5: Signal<f32>
     {
-        fn enable(&mut self, s: MSlock) {
+        fn enable(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) {
             if !self.enabled {
                 self.enabled = true;
 
                 // FIXME way to do without this hack in the future?
                 // typically invalidation should be done by the view, not the superview
                 self.view.with_provider(|p| {
-                    p.enable(s)
+                    p.enable(subtree, env, s)
                 }, s);
                 self.view.invalidate(s)
             }
         }
 
-        fn disable(&mut self, s: MSlock) {
+        fn disable(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) {
             if self.enabled {
                 self.enabled = false;
 
                 self.view.with_provider(|p| {
-                    p.disable(s)
+                    p.disable(subtree, env, s)
                 }, s);
                 self.view.invalidate(s)
             }
@@ -1310,23 +1310,23 @@ mod foreback_modifier {
               P: ConditionalVPModifier<E>,
               Q: ViewProvider<E, DownContext=P::DownContext>
     {
-        fn enable(&mut self, s: MSlock) {
+        fn enable(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) {
             if !self.enabled {
                 self.enabled = true;
 
                 self.view.with_provider(|p| {
-                    p.enable(s)
+                    p.enable(subtree, env, s)
                 }, s);
                 self.view.invalidate(s)
             }
         }
 
-        fn disable(&mut self, s: MSlock) {
+        fn disable(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) {
             if self.enabled {
                 self.enabled = false;
 
                 self.view.with_provider(|p| {
-                    p.disable(s)
+                    p.disable(subtree, env, s)
                 }, s);
                 self.view.invalidate(s)
             }
@@ -1484,9 +1484,9 @@ mod when_modifier {
         fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
             if self.last_enabled != self.fully_enabled(s) {
                 if self.fully_enabled(s) {
-                    self.provider.enable(s);
+                    self.provider.enable(subtree, env, s);
                 } else {
-                    self.provider.disable(s);
+                    self.provider.disable(subtree, env, s);
                 }
 
                 self.last_enabled = self.fully_enabled(s);
@@ -1539,13 +1539,14 @@ mod when_modifier {
     impl<E, S, P> ConditionalVPModifier<E> for WhenVP<E, S, P>
         where E: Environment, S: Signal<bool>, P: ConditionalVPModifier<E>
     {
-        fn enable(&mut self, _s: MSlock) {
+        fn enable(&mut self, _subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, _s: MSlock) {
             self.parent_enabled = true;
         }
 
-        fn disable(&mut self, _s: MSlock) {
+        fn disable(&mut self, _subtree: &mut Subtree<E>, _env: &mut EnvRef<E>,  _s: MSlock) {
             self.parent_enabled = false;
-            // will not call layout up and relay change
+            // will not call layout up and relay changes (since that will be done immediately
+            // after this call)
         }
     }
 
@@ -1599,7 +1600,6 @@ mod env_modifier {
             EnvModifierVP {
                 wrapping: self.wrapping.into_view_provider(env, s),
                 modifier: self.modifier,
-                invalidator: None,
                 enabled: true,
                 enabled_during_last_push: false,
                 phantom: PhantomData
@@ -1616,7 +1616,6 @@ mod env_modifier {
             EnvModifierVP {
                 wrapping: self.wrapping.into_conditional_view_provider(env, s),
                 modifier: self.modifier,
-                invalidator: None,
                 enabled: true,
                 enabled_during_last_push: false,
                 phantom: PhantomData
@@ -1627,7 +1626,6 @@ mod env_modifier {
     struct EnvModifierVP<E, P, M> where E: Environment, P: ViewProvider<E>, M: EnvironmentModifier<E> {
         wrapping: P,
         modifier: M,
-        invalidator: Option<Invalidator<E>>,
         enabled: bool,
         enabled_during_last_push: bool,
         phantom: PhantomData<E>
@@ -1663,7 +1661,6 @@ mod env_modifier {
         }
 
         fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
-            self.invalidator = Some(invalidator.clone());
             self.modifier.init(invalidator.clone(), s);
 
             self.wrapping.init_backing(invalidator, subtree, backing_source.map(|(nv, bs)| (nv, bs.wrapping)), env, s)
@@ -1724,16 +1721,26 @@ mod env_modifier {
     impl<E, P, M> ConditionalVPModifier<E> for EnvModifierVP<E, P, M>
         where E: Environment, P: ConditionalVPModifier<E>, M: EnvironmentModifier<E>
     {
-        fn enable(&mut self, s: MSlock) {
-            self.enabled = true;
-            self.wrapping.enable(s);
-            self.invalidator.as_ref().and_then(|u| u.upgrade()).unwrap().invalidate_environment(s)
+        fn enable(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) {
+            // FIXME, we should make it clear whether or not there can be duplicate
+            // enable calls, rather than having all of these separate checks
+            if !self.enabled {
+                self.enabled = true;
+                self.wrapping.enable(subtree, env, s);
+                self.pop_environment(env.0.variable_env_mut(), s);
+                self.push_environment(env.0.variable_env_mut(), s);
+                subtree.invalidate_subtree(env, s);
+            }
         }
 
-        fn disable(&mut self, s: MSlock) {
-            self.enabled = false;
-            self.wrapping.disable(s);
-            self.invalidator.as_ref().and_then(|u| u.upgrade()).unwrap().invalidate_environment(s)
+        fn disable(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) {
+            if self.enabled {
+                self.enabled = false;
+                self.wrapping.disable(subtree, env, s);
+                self.pop_environment(env.0.variable_env_mut(), s);
+                self.push_environment(env.0.variable_env_mut(), s);
+                subtree.invalidate_subtree(env, s);
+            }
         }
     }
 
@@ -1878,8 +1885,8 @@ mod show_hide_modifier {
         }
 
         fn post_hide(&mut self, s: MSlock) {
+            self.wrapping.post_hide(s);
             (self.post_hide)(s);
-            self.wrapping.post_show(s);
         }
 
         fn focused(&mut self, s: MSlock) {
@@ -1916,7 +1923,7 @@ mod show_hide_modifier {
     }
 
     pub(crate) fn pre_show_wrap<E: Environment, I: IntoViewProvider<E>>(ivp: I, f: impl FnMut(MSlock) + 'static)
-        -> impl IntoViewProvider<E>
+        -> impl IntoViewProvider<E, DownContext=I::DownContext, UpContext=I::UpContext>
     {
         ShowHideIVP {
             wrapping: ivp,
@@ -1929,7 +1936,7 @@ mod show_hide_modifier {
     }
 
     pub(crate) fn post_show_wrap<E: Environment, I: IntoViewProvider<E>>(ivp: I, f: impl FnMut(MSlock) + 'static)
-                                                                        -> impl IntoViewProvider<E>
+        -> impl IntoViewProvider<E, DownContext=I::DownContext, UpContext=I::UpContext>
     {
         ShowHideIVP {
             wrapping: ivp,
@@ -1942,7 +1949,7 @@ mod show_hide_modifier {
     }
 
     pub(crate) fn pre_hide_wrap<E: Environment, I: IntoViewProvider<E>>(ivp: I, f: impl FnMut(MSlock) + 'static)
-                                                                        -> impl IntoViewProvider<E>
+        -> impl IntoViewProvider<E, DownContext=I::DownContext, UpContext=I::UpContext>
     {
         ShowHideIVP {
             wrapping: ivp,
@@ -1955,7 +1962,7 @@ mod show_hide_modifier {
     }
 
     pub(crate) fn post_hide_wrap<E: Environment, I: IntoViewProvider<E>>(ivp: I, f: impl FnMut(MSlock) + 'static)
-                                                                        -> impl IntoViewProvider<E>
+        -> impl IntoViewProvider<E, DownContext=I::DownContext, UpContext=I::UpContext>
     {
         ShowHideIVP {
             wrapping: ivp,

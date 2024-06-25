@@ -185,9 +185,10 @@ mod window {
     use std::collections::BinaryHeap;
     use std::ops::{Deref, DerefMut};
     use std::sync::{Arc, Weak};
-    use crate::core::{APP, Environment, MSlock, run_main_maybe_sync, Slock};
+    use crate::core::{APP, Environment, MSlock, run_main_async, run_main_maybe_sync, Slock};
     use crate::native;
     use crate::native::{WindowHandle};
+    use crate::native::window::window_exit;
     use crate::state::{ActionFilter, Bindable, Binding, Signal, Store};
     use crate::state::slock_cell::{MainSlockCell};
     use crate::util::geo::{Rect, Size};
@@ -216,6 +217,7 @@ mod window {
     pub(crate) trait WindowBase {
         /* delegate methods */
         fn can_close(&self, s: MSlock) -> bool;
+        fn hide_root(&self, s: MSlock);
 
         fn handle(&self) -> WindowHandle;
 
@@ -350,7 +352,7 @@ mod window {
             let mut content_borrow = content_copy.borrow_mut_main(s);
 
             // now we must finish the layout down
-            let intrinsic = content_borrow.intrinsic_size(s);
+            let intrinsic = borrow.provider.size().1;
             content_borrow.try_layout_down(
                 &borrow.content_view,
                 stolen_env.deref_mut(),
@@ -394,11 +396,28 @@ mod window {
             native::window::window_set_title(borrow.handle, &current, s);
 
             let open = borrow.provider.is_open(s);
-            open.listen(|a, s| {
+            let handle = borrow.handle();
+            open.listen(move |a, _s| {
                 if !a {
-                    run_main_maybe_sync(|s| {
-                        // window_close
-                    }, s);
+                    // we do not run synchronous
+                    // because theres possibility of multiple borrows
+                    // (once we finally perform the hide)
+                    run_main_async(move |s| {
+                        APP.with(|app| {
+                            let mut windows =  app.get().unwrap().windows.borrow_mut();
+                            if let Some(pos) = windows
+                                .iter()
+                                .position(|w| w.borrow_main(s).handle() == handle)
+                            {
+                                {
+                                    let window = windows[pos].borrow_main(s);
+                                    window.hide_root(s);
+                                }
+                                windows.remove(pos);
+                            }
+                        });
+                        window_exit(handle, s);
+                    });
                 }
                 true
             }, s);
@@ -475,23 +494,6 @@ mod window {
 
             true
         }
-
-        fn remove_from_app(&self, s: MSlock) {
-            /* remove from application window list */
-            APP.with(|app| {
-                app.get().unwrap()
-                    .windows
-                    .borrow_mut()
-                    .retain(|window| window.borrow_main(s).handle() != self.handle);
-            });
-        }
-
-        #[cold]
-        pub fn exit(&self, s: MSlock) {
-            self.remove_from_app(s);
-
-            native::window::window_exit(self.handle, s);
-        }
     }
 
     impl<P> WindowBase for Window<P> where P: WindowProvider {
@@ -499,10 +501,22 @@ mod window {
             // let can_close = self.provider.can_close(s);
             let can_close = true;
             if can_close {
-                self.remove_from_app(s);
+                self.hide_root(s);
+
+                APP.with(|app| {
+                    app.get().unwrap()
+                        .windows
+                        .borrow_mut()
+                        .retain(|w| w.borrow_main(s).handle() != self.handle);
+                });
             }
 
             can_close
+        }
+
+        fn hide_root(&self, s: MSlock) {
+            self.content_view.borrow_mut_main(s)
+                .hide(s);
         }
 
         fn handle(&self) -> WindowHandle {

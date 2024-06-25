@@ -27,19 +27,23 @@ mod into_view_provider {
             -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext>;
 
         // FIXME pre_show, layer methods, and related should be optimized for ShowHideIVP/LayerIVP
-        fn pre_show(self, f: impl FnMut(MSlock) + 'static) -> impl IntoViewProvider<E> {
+        fn pre_show(self, f: impl FnMut(MSlock) + 'static)
+            -> impl IntoViewProvider<E, DownContext=Self::DownContext, UpContext=Self::UpContext> {
             pre_show_wrap(self, f)
         }
 
-        fn post_show(self, f: impl FnMut(MSlock) + 'static) -> impl IntoViewProvider<E> {
+        fn post_show(self, f: impl FnMut(MSlock) + 'static)
+            -> impl IntoViewProvider<E, DownContext=Self::DownContext, UpContext=Self::UpContext> {
             post_show_wrap(self, f)
         }
 
-        fn pre_hide(self, f: impl FnMut(MSlock) + 'static) -> impl IntoViewProvider<E> {
+        fn pre_hide(self, f: impl FnMut(MSlock) + 'static)
+            -> impl IntoViewProvider<E, DownContext=Self::DownContext, UpContext=Self::UpContext> {
             pre_hide_wrap(self, f)
         }
 
-        fn post_hide(self, f: impl FnMut(MSlock) + 'static) -> impl IntoViewProvider<E> {
+        fn post_hide(self, f: impl FnMut(MSlock) + 'static)
+            -> impl IntoViewProvider<E, DownContext=Self::DownContext, UpContext=Self::UpContext> {
             post_hide_wrap(self, f)
         }
 

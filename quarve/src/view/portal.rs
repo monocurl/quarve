@@ -441,15 +441,15 @@ impl<E, U, D, P, W> ConditionalVPModifier<E> for PortalSenderVP<E, U, D, P, W>
           P: ViewProvider<E, UpContext=U, DownContext=D>,
           W: ConditionalVPModifier<E>
 {
-    fn enable(&mut self, s: MSlock) {
+    fn enable(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) {
         self.conditional_enabled = true;
         self.try_mount(s);
-        self.wrapping.enable(s);
+        self.wrapping.enable(subtree, env, s);
     }
 
-    fn disable(&mut self, s: MSlock) {
+    fn disable(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) {
         self.unmount(s);
-        self.wrapping.disable(s);
+        self.wrapping.disable(subtree, env, s);
         self.conditional_enabled = false;
     }
 }

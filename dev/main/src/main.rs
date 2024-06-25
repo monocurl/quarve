@@ -1,9 +1,9 @@
 use quarve::core::{Application, Environment, launch, MSlock};
 use quarve::state::{FixedSignal, Signal};
 use quarve::util::geo::{Direction, Size, VerticalDirection};
-use quarve::view::{ViewProvider, IntoViewProvider};
+use quarve::view::{ViewProvider, IntoViewProvider, Invalidator};
 use quarve::view::layout::*;
-use quarve::view::modifers::{Frame, FrameModifiable, Layer, LayerModifiable};
+use quarve::view::modifers::{EnvironmentModifier, EnvModifiable, Frame, FrameModifiable, Layer, LayerModifiable, WhenModifiable};
 use quarve::view::util::Color;
 
 struct Env(());
@@ -59,6 +59,7 @@ impl quarve::core::WindowProvider for WindowProvider {
                 (0 ..((val / 10.0).sin().abs() * 15.0) as usize)
                     .collect()
             }, s);
+        let count_clone = count.clone();
 
         VStack::hetero_options(VStackOptions::default().direction(VerticalDirection::Up))
             .push(
@@ -90,6 +91,13 @@ impl quarve::core::WindowProvider for WindowProvider {
                 Color::black()
                     .intrinsic(100, 0.5)
             )
+            .post_show(|_| {
+                println!("Showing")
+            })
+            .when(count_clone.map(|x| x.len() > 1, s), |v|
+                v.env_modifier(EnvModifier {} )
+            )
+            .pre_hide(|_| println!("Hiding"))
             .into_view_provider(env, s)
 
         //
@@ -114,6 +122,24 @@ impl quarve::core::WindowProvider for WindowProvider {
             Size::new(400.0, 400.0),
             Size::new(400.0, 400.0)
         )
+    }
+}
+
+struct EnvModifier {
+
+}
+
+impl EnvironmentModifier<Env> for EnvModifier {
+    fn init(&mut self, invalidator: Invalidator<Env>, s: MSlock) {
+
+    }
+
+    fn push_environment(&mut self, env: &mut <Env as Environment>::Variable, s: MSlock) {
+
+    }
+
+    fn pop_environment(&mut self, env: &mut <Env as Environment>::Variable, s: MSlock) {
+
     }
 }
 
