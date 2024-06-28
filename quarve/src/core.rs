@@ -189,7 +189,7 @@ mod window {
     use crate::native;
     use crate::native::{WindowHandle};
     use crate::native::window::window_exit;
-    use crate::state::{ActionFilter, Bindable, Binding, Signal, Store};
+    use crate::state::{Bindable, Binding, Signal, Store};
     use crate::state::slock_cell::{MainSlockCell};
     use crate::util::geo::{Rect, Size};
     use crate::view::{InnerViewBase};

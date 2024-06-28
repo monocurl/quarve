@@ -201,6 +201,9 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
                 env,
                 s
             );
+            if self.graph.backing.0.is_null() {
+                self.graph.backing = NativeView::layout_view(s)
+            }
 
             self.provider.pop_environment(env.0.variable_env_mut(), s);
         }
@@ -512,6 +515,12 @@ pub struct Subtree<'a, E> where E: Environment {
 impl<'a, E> Subtree<'a, E> where E: Environment {
     pub fn len(&self) -> usize {
         self.graph.subviews.len()
+    }
+
+    pub fn contains<P: ViewProvider<E>>(&self, view: &View<E, P>) -> bool {
+        self.graph.subviews.iter()
+            .find(|v| std::ptr::addr_eq(v.as_ptr(), view.0.as_ptr()))
+            .is_some()
     }
 
     fn dfs(curr: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, s: MSlock) {

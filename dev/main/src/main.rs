@@ -2,6 +2,7 @@ use quarve::core::{Application, Environment, launch, MSlock};
 use quarve::state::{FixedSignal, Signal};
 use quarve::util::geo::{Direction, Size, VerticalDirection};
 use quarve::view::{ViewProvider, IntoViewProvider, Invalidator};
+use quarve::view::conditional::{sig_if, SigElseIf};
 use quarve::view::layout::*;
 use quarve::view::modifers::{EnvironmentModifier, EnvModifiable, Frame, FrameModifiable, Layer, LayerModifiable, WhenModifiable};
 use quarve::view::util::Color;
@@ -63,7 +64,7 @@ impl quarve::core::WindowProvider for WindowProvider {
 
         VStack::hetero_options(VStackOptions::default().direction(VerticalDirection::Up))
             .push(
-                count
+                count.clone()
                     .sig_flexmap_options(
                         |val, _| {
                             Color::new(100, 0, 0)
@@ -91,13 +92,11 @@ impl quarve::core::WindowProvider for WindowProvider {
                 Color::black()
                     .intrinsic(100, 0.5)
             )
-            .post_show(|_| {
-                println!("Showing")
-            })
-            .when(count_clone.map(|x| x.len() > 1, s), |v|
-                v.env_modifier(EnvModifier {} )
+            .push(
+                sig_if(count.clone().map(|val| val.len() % 2 == 0, s), Color::black())
+                    .sig_else_if(count.clone().map(|val| val.len() % 3 == 1, s), Color::white())
+                    .intrinsic(100, 100)
             )
-            .pre_hide(|_| println!("Hiding"))
             .into_view_provider(env, s)
 
         //

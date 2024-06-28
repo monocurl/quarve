@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 use crate::core::{Environment, MSlock};
 use crate::event::{Event, EventResult};
 use crate::util::geo::{Rect, Size};
-use crate::view::{EnvRef, InnerView, Invalidator, NativeView, Subtree, View};
+use crate::view::{EnvRef, InnerView, IntoViewProvider, Invalidator, NativeView, Subtree, View};
 use crate::view::util::SizeContainer;
 
 pub trait ViewProvider<E>: Sized + 'static
@@ -393,7 +393,18 @@ mod upcontext_adapter {
 pub use upcontext_adapter::*;
 
 // when need to return None for Option<impl ViewProvider> and need concrete type
-pub(crate) struct DummyProvider<E, U, D>(pub PhantomData<(E, U, D)>);
+pub struct DummyProvider<E, U, D>(pub PhantomData<(E, U, D)>) where E: Environment, U: 'static, D: 'static;
+impl<E, U, D> IntoViewProvider<E> for DummyProvider<E, U, D>
+    where E: Environment, U: 'static, D: 'static
+{
+    type UpContext = U;
+    type DownContext = D;
+
+    fn into_view_provider(self, _env: &E::Const, _s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
+        self
+    }
+}
+
 impl<E, U, D> ViewProvider<E> for DummyProvider<E, U, D>
     where E: Environment, U: 'static, D: 'static
 {
@@ -424,7 +435,7 @@ impl<E, U, D> ViewProvider<E> for DummyProvider<E, U, D>
         unreachable!()
     }
 
-    fn init_backing(&mut self, _invalidator: Invalidator<E>, _subtree: &mut Subtree<E>, _backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, _s: MSlock) -> NativeView {
+    fn init_backing(&mut self, _invalidator: Invalidator<E>, _subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, s: MSlock) -> NativeView {
         unreachable!()
     }
 
