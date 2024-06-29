@@ -24,8 +24,17 @@ impl Resource {
         Resource(resource_root().join(rel_path))
     }
 
+    pub fn named(rel_path: &str) -> Resource {
+        Resource(resource_root().join(rel_path))
+    }
+
     pub fn path(&self) -> &Path {
         self.0.deref()
     }
 }
 
+impl From<&Path> for Resource {
+    fn from(value: &Path) -> Self {
+        Self::new(value)
+    }
+}

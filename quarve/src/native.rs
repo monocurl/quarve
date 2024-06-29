@@ -113,7 +113,6 @@ pub mod global {
     }
 }
 
-/// Makes window handle and spawns it
 pub mod window {
     use std::ffi::{c_void, CString};
     use crate::core::{MSlock, WindowBase};
@@ -318,7 +317,22 @@ pub mod view {
     }
 
     pub mod image {
+        use std::ffi::c_void;
+        use crate::core::MSlock;
+        use crate::native::view::{back_view_image_init, back_view_image_size};
+        use crate::util::geo::Size;
 
+        pub fn init_image_view(path: &[u8], _s: MSlock) -> *mut c_void {
+            unsafe {
+                back_view_image_init(path.as_ptr())
+            }
+        }
+
+        pub fn image_view_size(view: *mut c_void) -> Size {
+            unsafe {
+                back_view_image_size(view)
+            }
+        }
     }
 }
 

@@ -1,8 +1,10 @@
 use quarve::core::{Application, Environment, launch, MSlock};
-use quarve::state::{FixedSignal, Signal};
+use quarve::resource::Resource;
+use quarve::state::{FixedSignal, GeneralSignal, Signal};
 use quarve::util::geo::{Alignment, Direction, Size, VerticalDirection};
 use quarve::view::{ViewProvider, IntoViewProvider, Invalidator};
 use quarve::view::conditional::{view_if, ViewElseIf};
+use quarve::view::image_view::ImageView;
 use quarve::view::layout::*;
 use quarve::view::modifers::{EnvironmentModifier, Frame, FrameModifiable, Layer, LayerModifiable, WhenModifiable};
 use quarve::view::util::Color;
@@ -57,43 +59,14 @@ impl quarve::core::WindowProvider for WindowProvider {
 
     fn root(&self, env: &<Env as Environment>::Const, s: MSlock) -> impl ViewProvider<Env, DownContext=()> {
         let clock = s.clock_signal();
-        let count = clock
+        let count: GeneralSignal<Vec<_>> = clock
             .map(|val| {
                 (0 ..((val / 10.0).sin().abs() * 15.0) as usize)
                     .collect()
             }, s);
         let count_clone = count.clone();
 
-        VStack::hetero_options(VStackOptions::default().direction(VerticalDirection::Up))
-            .push(
-                count.clone()
-                    .sig_flexmap_options(
-                        |val, _| {
-                            Color::new(100, 0, 0)
-                                .frame(
-                                    Frame::default()
-                                        .intrinsic(100, 100.0 + 25.0 * (val % 2) as f64)
-                                        .stretched(150, 150.0)
-                                        .squished(50, 100.0 - 50.0 * (val % 2) as f64)
-                                )
-                                .flex(FlexContext::default()
-                                    .grow(0.5 + (val % 2) as f64)
-                                )
-                        },
-                        FlexStackOptions::default()
-                            .gap(10.0)
-                            .wrap()
-                            .cross_gap(10.0)
-                            .direction(Direction::Left)
-                    )
-                    .layer(Layer::default().border(Color::black(), 1.0))
-                    .intrinsic(550, 500)
-                    .layer(Layer::default().border(Color::new(100, 100, 100), 1.0))
-            )
-            .push(
-                Color::black()
-                    .intrinsic(100, 0.5)
-            )
+        VStack::hetero_options(VStackOptions::default().direction(VerticalDirection::Up).stretch_children())
             .push(
                 view_if(count.clone().map(|val| val.len() % 2 == 0, s), Color::black())
                     .view_else(Color::white())
@@ -106,6 +79,11 @@ impl quarve::core::WindowProvider for WindowProvider {
                     _ => Color::white()
                 )
                     .intrinsic(150, 100)
+            )
+            .push(
+                ImageView::named("rose.png")
+                    .frame(Frame::default().unlimited_stretch())
+                    .layer(Layer::default().radius(20.0).border(Color::black(), 1.0))
             )
             .frame(Frame::default()
                 .unlimited_stretch()
@@ -133,7 +111,7 @@ impl quarve::core::WindowProvider for WindowProvider {
         (
             Size::new(400.0, 400.0),
             Size::new(400.0, 400.0),
-            Size::new(800.0, 600.0)
+            Size::new(800.0, 1000.0)
         )
     }
 }
