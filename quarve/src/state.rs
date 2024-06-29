@@ -2513,14 +2513,14 @@ mod signal {
                   F: Send + 'static + Fn(&T) -> S;
     }
 
-    pub trait ActualDiffSignal<T> : Signal<T> where T: Send + 'static + Copy + Eq {
+    pub trait ActualDiffSignal<T> : Signal<T> where T: Send + 'static + Clone + PartialEq {
         fn diff_listen<F>(&self, mut listener: F, s: Slock<impl ThreadMarker>)
             where F: (FnMut(&T, Slock) -> bool) + Send + 'static
         {
-            let mut last_val = *self.borrow(s);
+            let mut last_val = self.borrow(s).clone();
             self.listen(move |val, s| {
                 if *val != last_val {
-                    last_val = *val;
+                    last_val = val.clone();
                     listener(val, s)
                 }
                 else {
@@ -2529,7 +2529,7 @@ mod signal {
             }, s)
         }
     }
-    impl<T, S> ActualDiffSignal<T> for S where T: Send + Copy + Eq + 'static, S: Signal<T> { }
+    impl<T, S> ActualDiffSignal<T> for S where T: Send + Clone + Eq + 'static, S: Signal<T> { }
 
     trait InnerSignal<T: Send> {
         fn borrow(&self) -> &T;

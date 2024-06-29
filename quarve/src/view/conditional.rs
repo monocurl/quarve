@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 use crate::core::{Environment, MSlock};
 use crate::state::{Signal};
-use crate::view::{DummyProvider, IntoViewProvider, View, ViewProvider};
+use crate::view::{IntoViewProvider, View, ViewProvider};
 
 pub struct IfIVP<S, E, P, N>
     where S: Signal<bool>,
@@ -31,22 +31,22 @@ struct IfVP<S, E, P, N>
     phantom: PhantomData<E>
 }
 
-mod sig_else_if {
+mod view_else_if {
     use std::marker::PhantomData;
     use crate::core::Environment;
     use crate::state::{FixedSignal, Signal};
     use crate::view::conditional::{IfIVP, NullNode};
     use crate::view::{IntoViewProvider};
 
-    pub trait SigElseIf<E>: IntoViewProvider<E> where E: Environment {
-        fn sig_else_if(self, when: impl Signal<bool>, provider: impl IntoViewProvider<E, DownContext=Self::DownContext>)
+    pub trait ViewElseIf<E>: IntoViewProvider<E> where E: Environment {
+        fn view_else_if(self, when: impl Signal<bool>, provider: impl IntoViewProvider<E, DownContext=Self::DownContext>)
                        -> IfIVP<
                            impl Signal<bool>, E,
                            impl IntoViewProvider<E, DownContext=Self::DownContext>,
-                           impl SigElseIf<E, DownContext=Self::DownContext>,
+                           impl ViewElseIf<E, DownContext=Self::DownContext>,
                        >;
 
-        fn sig_else(self, provider: impl IntoViewProvider<E, DownContext=Self::DownContext>)
+        fn view_else(self, provider: impl IntoViewProvider<E, DownContext=Self::DownContext>)
                     -> IfIVP<
                         impl Signal<bool>,
                         E,
@@ -55,37 +55,37 @@ mod sig_else_if {
                     >;
     }
 
-    impl<S, E, P, N> SigElseIf<E> for IfIVP<S, E, P, N>
+    impl<S, E, P, N> ViewElseIf<E> for IfIVP<S, E, P, N>
         where S: Signal<bool>,
               E: Environment,
               P: IntoViewProvider<E>,
-              N: SigElseIf<E, DownContext=P::DownContext>
+              N: ViewElseIf<E, DownContext=P::DownContext>
     {
-        fn sig_else_if(self, when: impl Signal<bool>, provider: impl IntoViewProvider<E, DownContext=Self::DownContext>)
-                       -> IfIVP<impl Signal<bool>, E, impl IntoViewProvider<E, DownContext=Self::DownContext>, impl SigElseIf<E, DownContext=Self::DownContext>> {
+        fn view_else_if(self, when: impl Signal<bool>, provider: impl IntoViewProvider<E, DownContext=Self::DownContext>)
+                       -> IfIVP<impl Signal<bool>, E, impl IntoViewProvider<E, DownContext=Self::DownContext>, impl ViewElseIf<E, DownContext=Self::DownContext>> {
             IfIVP {
                 cond: self.cond,
                 curr: self.curr,
-                next: self.next.sig_else_if(when, provider),
+                next: self.next.view_else_if(when, provider),
                 phantom: PhantomData
             }
         }
 
-        fn sig_else(self, provider: impl IntoViewProvider<E, DownContext=Self::DownContext>)
+        fn view_else(self, provider: impl IntoViewProvider<E, DownContext=Self::DownContext>)
                     -> IfIVP<impl Signal<bool>, E, impl IntoViewProvider<E, DownContext=Self::DownContext>, impl IntoViewProvider<E, DownContext=Self::DownContext>> {
             IfIVP {
                 cond: self.cond,
                 curr: self.curr,
-                next: self.next.sig_else(provider),
+                next: self.next.view_else(provider),
                 phantom: PhantomData
             }
         }
     }
 
-    impl<E, D> SigElseIf<E> for NullNode<E, D>
+    impl<E, D> ViewElseIf<E> for NullNode<E, D>
         where E: Environment, D: 'static
     {
-        fn sig_else_if(self, when: impl Signal<bool>, provider: impl IntoViewProvider<E, DownContext=Self::DownContext>) -> IfIVP<impl Signal<bool>, E, impl IntoViewProvider<E, DownContext=Self::DownContext>, impl SigElseIf<E, DownContext=Self::DownContext>> {
+        fn view_else_if(self, when: impl Signal<bool>, provider: impl IntoViewProvider<E, DownContext=Self::DownContext>) -> IfIVP<impl Signal<bool>, E, impl IntoViewProvider<E, DownContext=Self::DownContext>, impl ViewElseIf<E, DownContext=Self::DownContext>> {
             IfIVP {
                 cond: when,
                 curr: provider,
@@ -94,7 +94,7 @@ mod sig_else_if {
             }
         }
 
-        fn sig_else(self, provider: impl IntoViewProvider<E, DownContext=Self::DownContext>) -> IfIVP<impl Signal<bool>, E, impl IntoViewProvider<E, DownContext=Self::DownContext>, impl IntoViewProvider<E, DownContext=Self::DownContext>> {
+        fn view_else(self, provider: impl IntoViewProvider<E, DownContext=Self::DownContext>) -> IfIVP<impl Signal<bool>, E, impl IntoViewProvider<E, DownContext=Self::DownContext>, impl IntoViewProvider<E, DownContext=Self::DownContext>> {
             IfIVP {
                 cond: FixedSignal::new(true),
                 curr: provider,
@@ -104,7 +104,7 @@ mod sig_else_if {
         }
     }
 }
-pub use sig_else_if::*;
+pub use view_else_if::*;
 
 impl<S, E, P, N> IntoViewProvider<E> for IfIVP<S, E, P, N>
     where S: Signal<bool>,
@@ -211,6 +211,7 @@ mod conditional_vp {
             }, s);
 
             if let Some((nv, this)) = backing_source {
+                self.curr.take_backing(this.curr, env, s);
                 self.next.init_backing(inv, subtree, Some((nv, this.next)), env, s)
             }
             else {
@@ -299,7 +300,7 @@ mod conditional_vp {
 }
 pub use conditional_vp::*;
 
-pub fn sig_if<S, E, P>(cond: S, view: P) -> IfIVP<S, E, P, NullNode<E, P::DownContext>> where S: Signal<bool>, E: Environment, P: IntoViewProvider<E> {
+pub fn view_if<S, E, P>(cond: S, view: P) -> IfIVP<S, E, P, NullNode<E, P::DownContext>> where S: Signal<bool>, E: Environment, P: IntoViewProvider<E> {
     IfIVP {
         cond,
         curr: view,

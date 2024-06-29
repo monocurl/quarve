@@ -1471,9 +1471,6 @@ mod when_modifier {
                     return false;
                 };
 
-                // might have disabled an environment handler
-                // FIXME, we should make it so that only environment
-                // providers actually invalidate the environment
                 inv.invalidate(s);
                 true
             }, s);

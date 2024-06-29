@@ -2,10 +2,12 @@ use quarve::core::{Application, Environment, launch, MSlock};
 use quarve::state::{FixedSignal, Signal};
 use quarve::util::geo::{Direction, Size, VerticalDirection};
 use quarve::view::{ViewProvider, IntoViewProvider, Invalidator};
-use quarve::view::conditional::{sig_if, SigElseIf};
+use quarve::view::conditional::{view_if, ViewElseIf};
 use quarve::view::layout::*;
 use quarve::view::modifers::{EnvironmentModifier, EnvModifiable, Frame, FrameModifiable, Layer, LayerModifiable, WhenModifiable};
 use quarve::view::util::Color;
+use quarve::view::view_match::ViewMatchIVP;
+use quarve::view_match;
 
 struct Env(());
 
@@ -93,9 +95,17 @@ impl quarve::core::WindowProvider for WindowProvider {
                     .intrinsic(100, 0.5)
             )
             .push(
-                sig_if(count.clone().map(|val| val.len() % 2 == 0, s), Color::black())
-                    .sig_else_if(count.clone().map(|val| val.len() % 3 == 1, s), Color::white())
-                    .intrinsic(100, 100)
+                view_if(count.clone().map(|val| val.len() % 2 == 0, s), Color::black())
+                    .view_else(Color::white())
+                    .intrinsic(200, 100)
+            )
+            .push(
+                view_match!(
+                    count.clone().map(|val| val.len(), s);
+                    1 => Color::black(),
+                    _ => Color::white()
+                )
+                    .intrinsic(150, 100)
             )
             .into_view_provider(env, s)
 
