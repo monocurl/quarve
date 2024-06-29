@@ -44,10 +44,10 @@ mod callbacks {
     }
 
     #[no_mangle]
-    extern "C" fn front_window_layout(handle: FatPointer) {
+    extern "C" fn front_window_layout(handle: FatPointer, w: f64, h: f64) {
         let s = slock_main_owner();
 
-        handle.into_window().layout_full(s.marker())
+        handle.into_window().layout_full(w, h, s.marker())
     }
 
     #[no_mangle]
@@ -118,6 +118,7 @@ pub mod window {
     use std::ffi::{c_void, CString};
     use crate::core::{MSlock, WindowBase};
     use crate::native::{FatPointer, WindowHandle};
+    use crate::util::geo::Size;
 
     extern "C" {
         fn back_window_init() -> *mut c_void;
@@ -125,7 +126,7 @@ pub mod window {
         fn back_window_set_title(window: *mut c_void, title: *const u8);
         fn back_window_set_needs_layout(window: *mut c_void);
         fn back_window_set_root(window: *mut c_void, root: *mut c_void);
-        fn back_window_get_size(window: *mut c_void, w: *mut f64, h: *mut f64);
+        fn back_window_get_size(window: *mut c_void) -> Size;
         fn back_window_set_size(window: *mut c_void, w: f64, h: f64);
         fn back_window_set_min_size(window: *mut c_void, w: f64, h: f64);
         fn back_window_set_max_size(window: *mut c_void, w: f64, h: f64);
@@ -156,13 +157,9 @@ pub mod window {
     }
 
     #[allow(unused_variables)]
-    pub fn window_get_size(window: WindowHandle, s: MSlock) -> (f64, f64) {
+    pub fn window_get_size(window: WindowHandle, s: MSlock) -> Size {
         unsafe {
-            let mut w: f64 = 0.0;
-            let mut h: f64 = 0.0;
-            back_window_get_size(window as *mut c_void, &mut w as *mut f64, &mut h as *mut f64);
-
-            (w, h)
+            back_window_get_size(window as *mut c_void)
         }
     }
 
@@ -213,7 +210,7 @@ pub mod window {
 pub mod view {
     use std::ffi::{c_ulonglong, c_void};
     use crate::core::MSlock;
-    use crate::util::geo::Rect;
+    use crate::util::geo::{Rect, Size};
     use crate::view::util::Color;
 
     extern "C" {
@@ -221,14 +218,18 @@ pub mod view {
 
         fn back_view_layout_init() -> *mut c_void;
         fn back_view_clear_children(view: *mut c_void);
-        fn back_view_remove_child(view: *mut c_void, index: std::ffi::c_ulonglong);
-        fn back_view_insert_child(view: *mut c_void, subview: *mut c_void, index: std::ffi::c_ulonglong);
+        fn back_view_remove_child(view: *mut c_void, index: c_ulonglong);
+        fn back_view_insert_child(view: *mut c_void, subview: *mut c_void, index: c_ulonglong);
         fn back_view_set_frame(view: *mut c_void, left: f64, top: f64, width: f64, height: f64);
         fn back_free_view(view: *mut c_void);
 
         /* layer view methods */
         fn back_view_layer_init() -> *mut c_void;
         fn back_view_layer_update(view: *mut c_void, bg_color: Color, border_color: Color, corner_radius: f64, border_width: f64, opacity: f32) -> *mut c_void;
+
+        /* image view methods */
+        fn back_view_image_init(path: *const u8) -> *mut c_void;
+        fn back_view_image_size(image: *mut c_void) -> Size;
     }
 
     pub fn debug_view_init(_s: MSlock) -> *mut c_void {
@@ -314,5 +315,20 @@ pub mod view {
                 );
             }
         }
+    }
+
+    pub mod image {
+
+    }
+}
+
+pub mod path {
+    use std::path::PathBuf;
+
+    #[cfg(target_os = "macos")]
+    pub fn production_resource_root() -> PathBuf {
+        std::env::current_exe().unwrap()
+            .parent().unwrap()
+            .join("Resources/res")
     }
 }

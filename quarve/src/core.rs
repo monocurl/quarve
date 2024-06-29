@@ -195,7 +195,6 @@ mod window {
     use crate::view::{InnerViewBase};
     use crate::view::{ViewProvider};
 
-    // TODO window sizing is a bit iffy right now
     pub trait WindowProvider: 'static {
         type Env: Environment;
 
@@ -221,7 +220,7 @@ mod window {
 
         fn handle(&self) -> WindowHandle;
 
-        fn layout_full(&self, s: MSlock);
+        fn layout_full(&self, w: f64, h: f64, s: MSlock);
     }
 
     pub(crate) trait WindowEnvironmentBase<E>: WindowBase where E: Environment {
@@ -523,7 +522,7 @@ mod window {
             self.handle
         }
 
-        fn layout_full(&self, s: MSlock) {
+        fn layout_full(&self, w: f64, h: f64, s: MSlock) {
             let mut env = self.environment.take().unwrap();
             self.layout_up(env.deref_mut(), None, -1, s);
 
@@ -531,6 +530,12 @@ mod window {
             *self.performing_layout_down.borrow_mut() = true;
             let mut env_spot = None;
             let mut env_depth: i32 = -1;
+
+            // if no screen size change, it will exit early
+            self.content_view.borrow_mut_main(s)
+                .try_layout_down(&self.content_view, env.deref_mut(), Some(Rect::new(0.0, 0.0, w, h)), s)
+                .unwrap();
+
             while let Some(curr) = self.down_views.borrow_mut().pop() {
                 /* ensure that view is still valid */
                 let Some(view) = curr.view.upgrade() else {

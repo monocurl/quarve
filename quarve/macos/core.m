@@ -9,7 +9,7 @@ extern void front_will_spawn(void);
 extern bool front_window_should_close(fat_pointer p);
 
 // fp: &'static dyn WindowBase
-extern void front_window_layout(fat_pointer p);
+extern void front_window_layout(fat_pointer p, double w, double h);
 
 // box: &dyn FnOnce(MSlock) + Send + 'static
 extern void front_execute_box(fat_pointer box);
@@ -43,7 +43,7 @@ extern void front_execute_box(fat_pointer box);
     [super layout];
 
     Window* window = (Window*) self.window;
-    front_window_layout(window->handle);
+    front_window_layout(window->handle, (double) NSWidth(window.frame), (double) NSHeight(window.frame));
 }
 @end
 
@@ -131,19 +131,16 @@ back_window_set_root(void *_window, void *root_view) {
     [[window contentView] addSubview: view];
 }
 
-void
-back_window_get_size(void *_window, double *w, double *h) {
+size
+back_window_get_size(void *_window) {
     Window* window = _window;
     NSRect frame = [window contentView].frame;
-    *w = (double) frame.size.width;
-    *h = (double) frame.size.height;
+    return (size) {(double) frame.size.width, (double) frame.size.height };
 }
 
 void
 back_window_set_size(void *_window, double w, double h) {
     Window* window = _window;
-    w = 1000;
-    h = 1000;
     [window setContentSize: NSMakeSize(w, h)];
 }
 

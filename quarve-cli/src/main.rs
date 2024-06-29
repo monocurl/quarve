@@ -101,6 +101,7 @@ fn platform_run()  {
         std::fs::create_dir_all(&quarve_target).unwrap();
         {
             quarve_target.push(&name);
+            println!("Source {:?}", source);
             std::fs::copy(source, &quarve_target).unwrap();
             quarve_target.pop();
         }

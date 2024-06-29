@@ -401,6 +401,7 @@ pub mod geo {
     }
 
     #[derive(Copy, Clone, Default, Debug, PartialEq)]
+    #[repr(C)]
     pub struct Size {
         pub w: ScreenUnit,
         pub h: ScreenUnit,

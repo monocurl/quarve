@@ -2999,7 +2999,7 @@ mod signal {
 
         struct ParentOwner<C>(Arc<(AtomicU8, SlockCell<CapacitatedInnerSignal<C>>)>) where C: Capacitor;
 
-        // TODO, I think SeqCst is overkill in this scenario
+        // FIXME, I think SeqCst is overkill in this scenario
         // and likewise for JoinedSignal
         impl<C> Drop for ParentOwner<C> where C: Capacitor {
             fn drop(&mut self) {

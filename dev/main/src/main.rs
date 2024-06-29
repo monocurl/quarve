@@ -1,10 +1,10 @@
 use quarve::core::{Application, Environment, launch, MSlock};
 use quarve::state::{FixedSignal, Signal};
-use quarve::util::geo::{Direction, Size, VerticalDirection};
+use quarve::util::geo::{Alignment, Direction, Size, VerticalDirection};
 use quarve::view::{ViewProvider, IntoViewProvider, Invalidator};
 use quarve::view::conditional::{view_if, ViewElseIf};
 use quarve::view::layout::*;
-use quarve::view::modifers::{EnvironmentModifier, EnvModifiable, Frame, FrameModifiable, Layer, LayerModifiable, WhenModifiable};
+use quarve::view::modifers::{EnvironmentModifier, Frame, FrameModifiable, Layer, LayerModifiable, WhenModifiable};
 use quarve::view::util::Color;
 use quarve::view::view_match::ViewMatchIVP;
 use quarve::view_match;
@@ -107,6 +107,10 @@ impl quarve::core::WindowProvider for WindowProvider {
                 )
                     .intrinsic(150, 100)
             )
+            .frame(Frame::default()
+                .unlimited_stretch()
+                .align(Alignment::Center)
+            )
             .into_view_provider(env, s)
 
         //
@@ -129,7 +133,7 @@ impl quarve::core::WindowProvider for WindowProvider {
         (
             Size::new(400.0, 400.0),
             Size::new(400.0, 400.0),
-            Size::new(400.0, 400.0)
+            Size::new(800.0, 600.0)
         )
     }
 }

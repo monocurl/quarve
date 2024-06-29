@@ -961,7 +961,7 @@ mod vec_layout {
         use crate::view::layout::{VecLayoutProvider};
         use crate::view::layout::vec_layout::into_view_provider;
 
-        // TODO make a view buffer to avoid over allocating
+        // FIXME make a view buffer to avoid over allocating
         pub struct VecSignalLayout<E, T, S, M, P, L>
             where E: Environment,
                   T: Send + 'static,
