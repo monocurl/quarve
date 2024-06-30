@@ -243,7 +243,7 @@ mod vec_layout {
         #[macro_export]
         macro_rules! impl_signal_layout_extension {
             (__declare_trait $t: ty, $trait_name: ident, $method_name: ident, $method_name_options: ident) => {
-                pub trait $trait_name<T, S, E> where T: Send + 'static, S: Signal<Vec<T>>, E: Environment {
+                pub trait $trait_name<T, S, E> where T: Send + 'static, S: Signal<Target=Vec<T>>, E: Environment {
                     fn $method_name<P>(self, map: impl FnMut(&T, MSlock) -> P + 'static)
                         -> impl IntoViewProvider<E,
                                         DownContext=<$t as VecLayoutProvider<E>>::DownContext,
@@ -287,7 +287,7 @@ mod vec_layout {
             ($t: ty, $trait_name: ident, $method_name: ident, $method_name_options: ident, where E: $env: path) => {
                 impl_signal_layout_extension!(__declare_trait  $t, $trait_name, $method_name, $method_name_options);
 
-                impl<E, T, S> $trait_name<T, S, E> for S where T: Send + 'static, S: Signal<Vec<T>>, E: $env
+                impl<E, T, S> $trait_name<T, S, E> for S where T: Send + 'static, S: Signal<Target=Vec<T>>, E: $env
                 {
                     impl_signal_layout_extension!(__impl_trait $t, $trait_name, $method_name, $method_name_options);
                 }
@@ -297,7 +297,7 @@ mod vec_layout {
                     type E = $env;
                     impl_signal_layout_extension!(__declare_trait  $t, $trait_name, $method_name, $method_name_options);
 
-                    impl<T, S> $trait_name<T, S, E> for S where T: Send + 'static, S: Signal<Vec<T>>
+                    impl<T, S> $trait_name<T, S, E> for S where T: Send + 'static, S: Signal<Target=Vec<T>>
                     {
                         impl_signal_layout_extension!(__impl_trait $t, $trait_name, $method_name, $method_name_options);
                     }
@@ -309,7 +309,7 @@ mod vec_layout {
         #[macro_export]
         macro_rules! impl_binding_layout_extension {
             (__declare_trait $t: ty, $trait_name: ident, $method_name: ident, $method_name_options: ident) => {
-                pub trait $trait_name<T, S, E> where T: StoreContainer, S: Binding<Vec<T>>, E: Environment {
+                pub trait $trait_name<T, F, S, E> where T: StoreContainer, F: StateFilter<Target=Vec<T>>, S: Binding<F>, E: Environment {
                     fn $method_name<P>(self, map: impl FnMut(&T, MSlock) -> P + 'static)
                         -> impl IntoViewProvider<E,
                                         DownContext=<$t as VecLayoutProvider<E>>::DownContext,
@@ -352,7 +352,7 @@ mod vec_layout {
             ($t: ty, $trait_name: ident, $method_name: ident, $method_name_options: ident, where E: $env: path) => {
                 impl_binding_layout_extension!(__declare_trait  $t, $trait_name, $method_name, $method_name_options);
 
-                impl<E, T, S> $trait_name<T, S, E> for S where T: StoreContainer, S: Binding<Vec<T>>, E: $env
+                impl<E, F, T, S> $trait_name<T, F, S, E> for S where T: StoreContainer, F: StateFilter<Target=Vec<T>>, S: Binding<F>, E: $env
                 {
                     impl_binding_layout_extension!(__impl_trait $t, $trait_name, $method_name, $method_name_options);
                 }
@@ -362,7 +362,7 @@ mod vec_layout {
                     type E = $env;
                     impl_binding_layout_extension!(__declare_trait  $t, $trait_name, $method_name, $method_name_options);
 
-                    impl<T, S> $trait_name<T, S, E> for S where T: StoreContainer, S: Binding<Vec<T>>
+                    impl<F, T, S> $trait_name<T, F, S, E> for S where T: StoreContainer, F: StateFilter<Target=Vec<T>>, S: Binding<F>
                     {
                         impl_binding_layout_extension!(__impl_trait $t, $trait_name, $method_name, $method_name_options);
                     }
@@ -664,16 +664,17 @@ mod vec_layout {
     mod binding_layout {
         use std::marker::PhantomData;
         use crate::core::{Environment, MSlock};
-        use crate::state::{Binding, Buffer, GroupAction, GroupBasis, StoreContainer, VecActionBasis, Word};
+        use crate::state::{StateFilter, Binding, Buffer, GroupAction, GroupBasis, StoreContainer, VecActionBasis, Word};
         use crate::util::geo::{Rect, Size};
         use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, UpContextAdapter, View, ViewProvider};
         use crate::view::layout::vec_layout::into_view_provider;
         use crate::view::layout::VecLayoutProvider;
 
-        pub struct VecBindingLayout<E, S, B, M, U, P, L>
+        pub struct VecBindingLayout<E, S, F, B, M, U, P, L>
             where E: Environment,
                   S: StoreContainer,
-                  B: Binding<Vec<S>>,
+                  F: StateFilter<Target=Vec<S>>,
+                  B: Binding<F>,
                   M: FnMut(&S, MSlock) -> P + 'static,
                   U: Into<L::SubviewUpContext>,
                   P: IntoViewProvider<E,
@@ -686,13 +687,14 @@ mod vec_layout {
             layout: L,
             map: M,
             // everything is static so dont care about variacne too much
-            phantom: PhantomData<(fn(S) -> P, E, S, U)>,
+            phantom: PhantomData<(fn(S) -> P, F, E, S, U)>,
         }
 
-        impl<E, S, B, M, U, P, L> VecBindingLayout<E, S, B, M, U, P, L>
+        impl<E, S, F, B, M, U, P, L> VecBindingLayout<E, S, F, B, M, U, P, L>
             where E: Environment,
                   S: StoreContainer,
-                  B: Binding<Vec<S>>,
+                  F: StateFilter<Target=Vec<S>>,
+                  B: Binding<F>,
                   M: FnMut(&S, MSlock) -> P + 'static,
                   U: Into<L::SubviewUpContext>,
                   P: IntoViewProvider<E,
@@ -710,10 +712,11 @@ mod vec_layout {
             }
         }
 
-        struct VecBindingViewProvider<E, S, B, M, P, L>
+        struct VecBindingViewProvider<E, S, F, B, M, P, L>
             where E: Environment,
                   S: StoreContainer,
-                  B: Binding<Vec<S>>,
+                  F: StateFilter<Target=Vec<S>>,
+                  B: Binding<F>,
                   M: FnMut(&S, &E::Const, MSlock) -> P + 'static,
                   P: ViewProvider<E,
                       DownContext=L::SubviewDownContext,
@@ -726,13 +729,14 @@ mod vec_layout {
             map: M,
             action_buffer: Buffer<Word<VecActionBasis<Option<View<E, P>>>>>,
             subviews: Vec<View<E, P>>,
-            phantom: PhantomData<(fn(S) -> P, E, S)>,
+            phantom: PhantomData<(fn(S) -> P, F, E, S)>,
         }
 
-        impl<E, S, B, M, U, P, L> IntoViewProvider<E> for VecBindingLayout<E, S, B, M, U, P, L>
+        impl<E, S, F, B, M, U, P, L> IntoViewProvider<E> for VecBindingLayout<E, S, F, B, M, U, P, L>
             where E: Environment,
                   S: StoreContainer,
-                  B: Binding<Vec<S>>,
+                  F: StateFilter<Target=Vec<S>>,
+                  B: Binding<F>,
                   M: FnMut(&S, MSlock) -> P + 'static,
                   U: Into<L::SubviewUpContext>,
                   P: IntoViewProvider<E,
@@ -757,10 +761,11 @@ mod vec_layout {
             }
         }
 
-        impl<E, S, B, M, P, L> ViewProvider<E> for VecBindingViewProvider<E, S, B, M, P, L>
+        impl<E, S, F, B, M, P, L> ViewProvider<E> for VecBindingViewProvider<E, S, F, B, M, P, L>
             where E: Environment,
                   S: StoreContainer,
-                  B: Binding<Vec<S>>,
+                  F: StateFilter<Target=Vec<S>>,
+                  B: Binding<F>,
                   M: FnMut(&S, &E::Const, MSlock) -> P + 'static,
                   P: ViewProvider<E,
                       DownContext=L::SubviewDownContext,
@@ -965,7 +970,7 @@ mod vec_layout {
         pub struct VecSignalLayout<E, T, S, M, P, L>
             where E: Environment,
                   T: Send + 'static,
-                  S: Signal<Vec<T>>,
+                  S: Signal<Target=Vec<T>>,
                   M: FnMut(&T, MSlock) -> P + 'static,
                   P: IntoViewProvider<E, DownContext=L::SubviewDownContext>,
                   P::UpContext: Into<L::SubviewUpContext>,
@@ -980,7 +985,7 @@ mod vec_layout {
         impl<E, T, S, M, P, L> VecSignalLayout<E, T, S, M, P, L>
             where E: Environment,
                   T: Send + 'static,
-                  S: Signal<Vec<T>>,
+                  S: Signal<Target=Vec<T>>,
                   M: FnMut(&T, MSlock) -> P + 'static,
                   P: IntoViewProvider<E, DownContext=L::SubviewDownContext>,
                   P::UpContext: Into<L::SubviewUpContext>,
@@ -999,7 +1004,7 @@ mod vec_layout {
         pub struct VecSignalViewProvider<E, T, S, M, P, L>
             where E: Environment,
                   T: Send + 'static,
-                  S: Signal<Vec<T>>,
+                  S: Signal<Target=Vec<T>>,
                   M: FnMut(&T, &E::Const, MSlock) -> View<E, P> + 'static,
                   P: ViewProvider<E, UpContext=L::SubviewUpContext, DownContext=L::SubviewDownContext>,
                   L: VecLayoutProvider<E>
@@ -1014,7 +1019,7 @@ mod vec_layout {
         impl<E, T, S, M, P, L> IntoViewProvider<E> for VecSignalLayout<E, T, S, M, P, L>
             where E: Environment,
                   T: Send + 'static,
-                  S: Signal<Vec<T>>,
+                  S: Signal<Target=Vec<T>>,
                   M: FnMut(&T, MSlock) -> P + 'static,
                   P: IntoViewProvider<E, DownContext=L::SubviewDownContext>,
                   P::UpContext: Into<L::SubviewUpContext>,
@@ -1041,7 +1046,7 @@ mod vec_layout {
         impl<E, T, S, M, P, L> ViewProvider<E> for VecSignalViewProvider<E, T, S, M, P, L>
             where E: Environment,
                   T: Send + 'static,
-                  S: Signal<Vec<T>>,
+                  S: Signal<Target=Vec<T>>,
                   M: FnMut(&T, &E::Const, MSlock) -> View<E, P> + 'static,
                   P: ViewProvider<E, UpContext=L::SubviewUpContext, DownContext=L::SubviewDownContext>,
                   L: VecLayoutProvider<E>
@@ -2181,7 +2186,7 @@ mod vec_layout {
     pub use flex::*;
 
     mod impls {
-        use crate::state::{Signal, StoreContainer, Binding};
+        use crate::state::{Signal, StoreContainer, Binding, StateFilter};
         use crate::core::Environment;
         use crate::view::IntoViewProvider;
         use crate::core::MSlock;

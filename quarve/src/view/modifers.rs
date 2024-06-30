@@ -441,15 +441,15 @@ mod provider_modifier {
         }
     }
 
-    pub struct Offset<U, V> where U: Signal<ScreenUnit>, V: Signal<ScreenUnit> {
-        dx: SignalOrValue<ScreenUnit, U>,
-        dy: SignalOrValue<ScreenUnit, V>,
+    pub struct Offset<U, V> where U: Signal<Target=ScreenUnit>, V: Signal<Target=ScreenUnit> {
+        dx: SignalOrValue<U>,
+        dy: SignalOrValue<V>,
         last_dx: ScreenUnit,
         last_dy: ScreenUnit,
     }
 
     impl<E, U, D, S, T> ProviderModifier<E, U, D> for Offset<S, T>
-        where E: Environment, U: 'static, D: 'static, S: Signal<ScreenUnit>, T: Signal<ScreenUnit>
+        where E: Environment, U: 'static, D: 'static, S: Signal<Target=ScreenUnit>, T: Signal<Target=ScreenUnit>
     {
         fn init(&mut self, invalidator: &Invalidator<E>, _source: Option<Self>, s: MSlock) {
             self.dx.add_invalidator(invalidator, s);
@@ -478,7 +478,7 @@ mod provider_modifier {
 
     pub trait OffsetModifiable<E>: IntoViewProvider<E> where E: Environment {
         fn offset(self, dx: impl Into<ScreenUnit>, dy: impl Into<ScreenUnit>) -> ProviderIVPModifier<E, Self, impl ProviderModifier<E, Self::UpContext, Self::DownContext>>;
-        fn offset_signal(self, dx: impl Signal<ScreenUnit>, dy: impl Signal<ScreenUnit>) -> ProviderIVPModifier<E, Self, impl ProviderModifier<E, Self::UpContext, Self::DownContext>>;
+        fn offset_signal(self, dx: impl Signal<Target=ScreenUnit>, dy: impl Signal<Target=ScreenUnit>) -> ProviderIVPModifier<E, Self, impl ProviderModifier<E, Self::UpContext, Self::DownContext>>;
     }
 
     impl<E, I> OffsetModifiable<E> for I
@@ -495,7 +495,7 @@ mod provider_modifier {
             ProviderIVPModifier::new(self, o)
         }
 
-        fn offset_signal(self, dx: impl Signal<ScreenUnit>, dy: impl Signal<ScreenUnit>) -> ProviderIVPModifier<E, Self, impl ProviderModifier<E, Self::UpContext, Self::DownContext>> {
+        fn offset_signal(self, dx: impl Signal<Target=ScreenUnit>, dy: impl Signal<Target=ScreenUnit>) -> ProviderIVPModifier<E, Self, impl ProviderModifier<E, Self::UpContext, Self::DownContext>> {
             let o = Offset {
                 dx: SignalOrValue::Signal(dx),
                 dy: SignalOrValue::Signal(dy),
@@ -507,13 +507,13 @@ mod provider_modifier {
         }
     }
 
-    pub struct Padding<S: Signal<ScreenUnit>> {
-        amount: SignalOrValue<ScreenUnit, S>,
+    pub struct Padding<S> where S: Signal<Target=ScreenUnit> {
+        amount: SignalOrValue<S>,
         edges: u8,
         last_amount: ScreenUnit
     }
 
-    impl<S: Signal<ScreenUnit>> Padding<S> {
+    impl<S> Padding<S> where S: Signal<Target=ScreenUnit> {
         fn apply_general(&self, to: Size, invert: bool, s: Slock<impl ThreadMarker>) -> Size {
             let amount = if invert {
                 -self.amount.inner(s)
@@ -543,7 +543,7 @@ mod provider_modifier {
         }
     }
     
-    impl<E: Environment, U: 'static, D: 'static, S: Signal<ScreenUnit>> ProviderModifier<E, U, D> for Padding<S> {
+    impl<E, U, D, S> ProviderModifier<E, U, D> for Padding<S> where E: Environment, U: 'static, D: 'static, S: Signal<Target=ScreenUnit> {
         fn init(&mut self, invalidator: &Invalidator<E>, _source: Option<Self>, s: MSlock) {
             self.amount.add_invalidator(invalidator, s);
         }
@@ -605,9 +605,9 @@ mod provider_modifier {
         where E: Environment
     {
         fn padding(self, amount: impl Into<ScreenUnit>) -> ProviderIVPModifier<E, Self, Padding<FixedSignal<ScreenUnit>>>;
-        fn padding_signal<S: Signal<ScreenUnit>>(self, amount: S) -> ProviderIVPModifier<E, Self, Padding<S>>;
+        fn padding_signal<S: Signal<Target=ScreenUnit>>(self, amount: S) -> ProviderIVPModifier<E, Self, Padding<S>>;
         fn padding_edge(self, amount: impl Into<ScreenUnit>, edges: u8) -> ProviderIVPModifier<E, Self, Padding<FixedSignal<ScreenUnit>>>;
-        fn padding_edge_signal<S: Signal<ScreenUnit>>(self, amount: S, edges: u8) -> ProviderIVPModifier<E, Self, Padding<S>>;
+        fn padding_edge_signal<S: Signal<Target=ScreenUnit>>(self, amount: S, edges: u8) -> ProviderIVPModifier<E, Self, Padding<S>>;
     }
     
     impl<E, I> PaddingModifiable<E> for I where E: Environment, I: IntoViewProvider<E> {
@@ -621,7 +621,7 @@ mod provider_modifier {
             ProviderIVPModifier::new(self, padding)
         }
 
-        fn padding_signal<S: Signal<ScreenUnit>>(self, amount: S) -> ProviderIVPModifier<E, Self, Padding<S>> {
+        fn padding_signal<S>(self, amount: S) -> ProviderIVPModifier<E, Self, Padding<S>> where S: Signal<Target=ScreenUnit> {
             let padding = Padding {
                 amount: SignalOrValue::Signal(amount),
                 edges: geo::edge::ALL,
@@ -641,7 +641,7 @@ mod provider_modifier {
             ProviderIVPModifier::new(self, padding)
         }
 
-        fn padding_edge_signal<S: Signal<ScreenUnit>>(self, amount: S, edges: u8) -> ProviderIVPModifier<E, Self, Padding<S>> {
+        fn padding_edge_signal<S>(self, amount: S, edges: u8) -> ProviderIVPModifier<E, Self, Padding<S>> where S: Signal<Target=ScreenUnit> {
             let padding = Padding {
                 amount: SignalOrValue::Signal(amount),
                 edges,
@@ -801,12 +801,13 @@ mod layer_modifier {
     use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, View, ViewProvider, ViewRef};
     use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
 
-    pub struct Layer<S1, S2, S3, S4, S5> where S1: Signal<Color>, S2: Signal<ScreenUnit>, S3: Signal<Color>, S4: Signal<ScreenUnit>, S5: Signal<f32> {
-        background_color: SignalOrValue<Color, S1>,
-        corner_radius: SignalOrValue<ScreenUnit, S2>,
-        border_color: SignalOrValue<Color, S3>,
-        border_width: SignalOrValue<ScreenUnit, S4>,
-        opacity: SignalOrValue<f32, S5>
+    pub struct Layer<S1, S2, S3, S4, S5>
+        where S1: Signal<Target=Color>, S2: Signal<Target=ScreenUnit>, S3: Signal<Target=Color>, S4: Signal<Target=ScreenUnit>, S5: Signal<Target=f32> {
+        background_color: SignalOrValue<S1>,
+        corner_radius: SignalOrValue<S2>,
+        border_color: SignalOrValue<S3>,
+        border_width: SignalOrValue<S4>,
+        opacity: SignalOrValue<S5>
     }
 
     impl Default for Layer<FixedSignal<Color>, FixedSignal<ScreenUnit>, FixedSignal<Color>, FixedSignal<ScreenUnit>, FixedSignal<f32>>
@@ -822,7 +823,8 @@ mod layer_modifier {
         }
     }
 
-    impl<S1, S2, S3, S4, S5> Layer<S1, S2, S3, S4, S5> where S1: Signal<Color>, S2: Signal<ScreenUnit>, S3: Signal<Color>, S4: Signal<ScreenUnit>, S5: Signal<f32> {
+    impl<S1, S2, S3, S4, S5> Layer<S1, S2, S3, S4, S5>
+        where S1: Signal<Target=Color>, S2: Signal<Target=ScreenUnit>, S3: Signal<Target=Color>, S4: Signal<Target=ScreenUnit>, S5: Signal<Target=f32> {
         pub fn bg_color(self, color: Color) -> Layer<FixedSignal<Color>, S2, S3, S4, S5> {
             Layer {
                 background_color: SignalOrValue::value(color),
@@ -833,7 +835,7 @@ mod layer_modifier {
             }
         }
 
-        pub fn bg_color_signal<S: Signal<Color>>(self, color: S) -> Layer<S, S2, S3, S4, S5> {
+        pub fn bg_color_signal<S>(self, color: S) -> Layer<S, S2, S3, S4, S5> where S: Signal<Target=Color> {
             Layer {
                 background_color: SignalOrValue::Signal(color),
                 corner_radius: self.corner_radius,
@@ -864,7 +866,7 @@ mod layer_modifier {
             }
         }
 
-        pub fn border_color_signal<S: Signal<Color>>(self, color: S) -> Layer<S1, S2, S, S4, S5> {
+        pub fn border_color_signal<S>(self, color: S) -> Layer<S1, S2, S, S4, S5> where S: Signal<Target=Color> {
             Layer {
                 background_color: self.background_color,
                 corner_radius: self.corner_radius,
@@ -884,7 +886,7 @@ mod layer_modifier {
             }
         }
 
-        pub fn radius_signal<S: Signal<ScreenUnit>>(self, radius: S) -> Layer<S1, S, S3, S4, S5> {
+        pub fn radius_signal<S>(self, radius: S) -> Layer<S1, S, S3, S4, S5> where S: Signal<Target=ScreenUnit> {
             Layer {
                 background_color: self.background_color,
                 corner_radius: SignalOrValue::Signal(radius),
@@ -904,7 +906,7 @@ mod layer_modifier {
             }
         }
 
-        pub fn border_width_signal<S: Signal<ScreenUnit>>(self, width: S) -> Layer<S1, S2, S3, S, S5> {
+        pub fn border_width_signal<S>(self, width: S) -> Layer<S1, S2, S3, S, S5> where S: Signal<Target=ScreenUnit> {
             Layer {
                 background_color: self.background_color,
                 corner_radius: self.corner_radius,
@@ -924,7 +926,7 @@ mod layer_modifier {
             }
         }
 
-        pub fn opacity_signal<S: Signal<f32>>(self, opacity: S) -> Layer<S1, S2, S3, S4, S> {
+        pub fn opacity_signal<S>(self, opacity: S) -> Layer<S1, S2, S3, S4, S> where S: Signal<Target=f32> {
             Layer {
                 background_color: self.background_color,
                 corner_radius: self.corner_radius,
@@ -939,11 +941,11 @@ mod layer_modifier {
     pub struct LayerIVP<E, I, S1, S2, S3, S4, S5>
         where E: Environment,
               I: IntoViewProvider<E>,
-              S1: Signal<Color>,
-              S2: Signal<ScreenUnit>,
-              S3: Signal<Color>,
-              S4: Signal<ScreenUnit>,
-              S5: Signal<f32>
+              S1: Signal<Target=Color>,
+              S2: Signal<Target=ScreenUnit>,
+              S3: Signal<Target=Color>,
+              S4: Signal<Target=ScreenUnit>,
+              S5: Signal<Target=f32>
     {
         layer: Layer<S1, S2, S3, S4, S5>,
         ivp: I,
@@ -952,11 +954,11 @@ mod layer_modifier {
 
     impl<E, I, S1, S2, S3, S4, S5> IntoViewProvider<E> for LayerIVP<E, I, S1, S2, S3, S4, S5>
         where E: Environment, I: IntoViewProvider<E>,
-              S1: Signal<Color>,
-              S2: Signal<ScreenUnit>,
-              S3: Signal<Color>,
-              S4: Signal<ScreenUnit>,
-              S5: Signal<f32>
+              S1: Signal<Target=Color>,
+              S2: Signal<Target=ScreenUnit>,
+              S3: Signal<Target=Color>,
+              S4: Signal<Target=ScreenUnit>,
+              S5: Signal<Target=f32>
     {
         type UpContext = I::UpContext;
         type DownContext = I::DownContext;
@@ -974,11 +976,11 @@ mod layer_modifier {
 
     impl<E, I, S1, S2, S3, S4, S5> ConditionalIVPModifier<E> for LayerIVP<E, I, S1, S2, S3, S4, S5>
         where E: Environment, I: ConditionalIVPModifier<E>,
-              S1: Signal<Color>,
-              S2: Signal<ScreenUnit>,
-              S3: Signal<Color>,
-              S4: Signal<ScreenUnit>,
-              S5: Signal<f32>
+              S1: Signal<Target=Color>,
+              S2: Signal<Target=ScreenUnit>,
+              S3: Signal<Target=Color>,
+              S4: Signal<Target=ScreenUnit>,
+              S5: Signal<Target=f32>
     {
         type Modifying = I::Modifying;
 
@@ -996,11 +998,11 @@ mod layer_modifier {
 
     struct LayerVP<E, P, S1, S2, S3, S4, S5>
         where E: Environment, P: ViewProvider<E>,
-              S1: Signal<Color>,
-              S2: Signal<ScreenUnit>,
-              S3: Signal<Color>,
-              S4: Signal<ScreenUnit>,
-              S5: Signal<f32>
+              S1: Signal<Target=Color>,
+              S2: Signal<Target=ScreenUnit>,
+              S3: Signal<Target=Color>,
+              S4: Signal<Target=ScreenUnit>,
+              S5: Signal<Target=f32>
     {
         layer: Layer<S1, S2, S3, S4, S5>,
         backing: *mut c_void,
@@ -1011,11 +1013,11 @@ mod layer_modifier {
     impl<E, P, S1, S2, S3, S4, S5> ViewProvider<E> for LayerVP<E, P, S1, S2, S3, S4, S5>
         where E: Environment,
               P: ViewProvider<E>,
-              S1: Signal<Color>,
-              S2: Signal<ScreenUnit>,
-              S3: Signal<Color>,
-              S4: Signal<ScreenUnit>,
-              S5: Signal<f32>
+              S1: Signal<Target=Color>,
+              S2: Signal<Target=ScreenUnit>,
+              S3: Signal<Target=Color>,
+              S4: Signal<Target=ScreenUnit>,
+              S5: Signal<Target=f32>
     {
         type UpContext = P::UpContext;
         type DownContext = P::DownContext;
@@ -1092,11 +1094,11 @@ mod layer_modifier {
 
     impl<E, P, S1, S2, S3, S4, S5> ConditionalVPModifier<E> for LayerVP<E, P, S1, S2, S3, S4, S5>
         where E: Environment, P: ConditionalVPModifier<E>,
-              S1: Signal<Color>,
-              S2: Signal<ScreenUnit>,
-              S3: Signal<Color>,
-              S4: Signal<ScreenUnit>,
-              S5: Signal<f32>
+              S1: Signal<Target=Color>,
+              S2: Signal<Target=ScreenUnit>,
+              S3: Signal<Target=Color>,
+              S4: Signal<Target=ScreenUnit>,
+              S5: Signal<Target=f32>
     {
         fn enable(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) {
             if !self.enabled {
@@ -1127,21 +1129,21 @@ mod layer_modifier {
         where E: Environment
     {
         fn layer<S1, S2, S3, S4, S5>(self, layer: Layer<S1, S2, S3, S4, S5>) -> LayerIVP<E, Self, S1, S2, S3, S4, S5>
-            where S1: Signal<Color>,
-                  S2: Signal<ScreenUnit>,
-                  S3: Signal<Color>,
-                  S4: Signal<ScreenUnit>,
-                  S5: Signal<f32>;
+            where S1: Signal<Target=Color>,
+                  S2: Signal<Target=ScreenUnit>,
+                  S3: Signal<Target=Color>,
+                  S4: Signal<Target=ScreenUnit>,
+                  S5: Signal<Target=f32>;
     }
 
     impl<E, I> LayerModifiable<E> for I where E: Environment, I: IntoViewProvider<E>
     {
         fn layer<S1, S2, S3, S4, S5>(self, layer: Layer<S1, S2, S3, S4, S5>) -> LayerIVP<E, Self, S1, S2, S3, S4, S5>
-            where S1: Signal<Color>,
-                  S2: Signal<ScreenUnit>,
-                  S3: Signal<Color>,
-                  S4: Signal<ScreenUnit>,
-                  S5: Signal<f32>
+            where S1: Signal<Target=Color>,
+                  S2: Signal<Target=ScreenUnit>,
+                  S3: Signal<Target=Color>,
+                  S4: Signal<Target=ScreenUnit>,
+                  S5: Signal<Target=f32>
         {
             LayerIVP {
                 layer,
@@ -1376,14 +1378,14 @@ mod when_modifier {
     // we would be able to use ProviderModifier
     // must be a way to re use code in general
     pub struct WhenIVP<E, S, P>
-        where E: Environment, S: Signal<bool>, P: ConditionalIVPModifier<E> {
+        where E: Environment, S: Signal<Target=bool>, P: ConditionalIVPModifier<E> {
         enabled: S,
         provider: P,
         phantom: PhantomData<E>
     }
 
     impl<E, S, P> IntoViewProvider<E> for WhenIVP<E, S, P>
-        where E: Environment, S: Signal<bool>, P: ConditionalIVPModifier<E>
+        where E: Environment, S: Signal<Target=bool>, P: ConditionalIVPModifier<E>
     {
         type UpContext = P::UpContext;
         type DownContext = P::DownContext;
@@ -1400,7 +1402,7 @@ mod when_modifier {
     }
 
     impl<E, S, P> ConditionalIVPModifier<E> for WhenIVP<E, S, P>
-        where E: Environment, S: Signal<bool>, P: ConditionalIVPModifier<E>
+        where E: Environment, S: Signal<Target=bool>, P: ConditionalIVPModifier<E>
     {
         type Modifying = P::Modifying;
 
@@ -1416,7 +1418,7 @@ mod when_modifier {
         }
     }
 
-    struct WhenVP<E, S, P> where E: Environment, S: Signal<bool>, P: ConditionalVPModifier<E> {
+    struct WhenVP<E, S, P> where E: Environment, S: Signal<Target=bool>, P: ConditionalVPModifier<E> {
         enabled: S,
         parent_enabled: bool,
         last_enabled: bool,
@@ -1425,7 +1427,7 @@ mod when_modifier {
     }
 
     impl<E, S, P> WhenVP<E, S, P>
-        where E: Environment, S: Signal<bool>, P: ConditionalVPModifier<E>
+        where E: Environment, S: Signal<Target=bool>, P: ConditionalVPModifier<E>
     {
         fn fully_enabled(&self, s: MSlock) -> bool {
             self.parent_enabled && *self.enabled.borrow(s)
@@ -1434,7 +1436,7 @@ mod when_modifier {
 
     impl<E, S, P> ViewProvider<E> for WhenVP<E, S, P>
         where E: Environment,
-              S: Signal<bool>,
+              S: Signal<Target=bool>,
               P: ConditionalVPModifier<E>
     {
         type UpContext = P::UpContext;
@@ -1534,7 +1536,7 @@ mod when_modifier {
     }
 
     impl<E, S, P> ConditionalVPModifier<E> for WhenVP<E, S, P>
-        where E: Environment, S: Signal<bool>, P: ConditionalVPModifier<E>
+        where E: Environment, S: Signal<Target=bool>, P: ConditionalVPModifier<E>
     {
         fn enable(&mut self, _subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, _s: MSlock) {
             self.parent_enabled = true;
@@ -1548,7 +1550,7 @@ mod when_modifier {
     }
 
     pub trait WhenModifiable<E>: IntoViewProvider<E> where E: Environment {
-        fn when<S: Signal<bool>, C: ConditionalIVPModifier<E>>(
+        fn when<S: Signal<Target=bool>, C: ConditionalIVPModifier<E>>(
             self,
             cond: S,
             modifier: impl FnOnce(UnmodifiedIVP<E, Self>) -> C,
@@ -1557,7 +1559,7 @@ mod when_modifier {
 
     impl<E, I> WhenModifiable<E> for I
         where E: Environment, I: IntoViewProvider<E> {
-        fn when<S, C>(self, cond: S, modifier: impl FnOnce(UnmodifiedIVP<E, Self>) -> C) -> WhenIVP<E, S, C> where S: Signal<bool>, C: ConditionalIVPModifier<E> {
+        fn when<S, C>(self, cond: S, modifier: impl FnOnce(UnmodifiedIVP<E, Self>) -> C) -> WhenIVP<E, S, C> where S: Signal<Target=bool>, C: ConditionalIVPModifier<E> {
             WhenIVP {
                 enabled: cond,
                 provider: modifier(UnmodifiedIVP::new(self)),

@@ -6,35 +6,32 @@ use crate::state::{ActualDiffSignal, Buffer};
 use crate::util::geo::{Rect, Size};
 use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, ViewProvider, ViewRef};
 
-pub struct ViewMatchIVP<E, T, S, U, D, F>
+pub struct ViewMatchIVP<E, S, U, D, F>
     where E: Environment, U: 'static, D: 'static,
-          T: Clone + Send + PartialEq + 'static,
-          S: ActualDiffSignal<T>,
-          F: FnMut(&T, &mut Subtree<E>, &mut EnvRef<E>, MSlock) -> Box<dyn ViewRef<E, UpContext=U, DownContext=D>> + 'static
+          S: ActualDiffSignal, S::Target: Clone + PartialEq,
+          F: FnMut(&S::Target, &mut Subtree<E>, &mut EnvRef<E>, MSlock) -> Box<dyn ViewRef<E, UpContext=U, DownContext=D>> + 'static
 {
     signal: S,
     func: F,
-    phantom: PhantomData<(E, T, D)>
+    phantom: PhantomData<(E, D)>
 }
 
-struct ViewMatchVP<E, T, S, U, D, F>
+struct ViewMatchVP<E, S, U, D, F>
     where E: Environment, U: 'static, D: 'static,
-          T: Clone + Send + PartialEq + 'static,
-          S: ActualDiffSignal<T>,
-          F: FnMut(&T, &mut Subtree<E>, &mut EnvRef<E>, MSlock) -> Box<dyn ViewRef<E, UpContext=U, DownContext=D>> + 'static
+          S: ActualDiffSignal, S::Target: Clone + PartialEq,
+          F: FnMut(&S::Target, &mut Subtree<E>, &mut EnvRef<E>, MSlock) -> Box<dyn ViewRef<E, UpContext=U, DownContext=D>> + 'static
 {
     signal: S,
     view: Option<Box<dyn ViewRef<E, UpContext=U, DownContext=D>>>,
     dirty: Buffer<bool>,
     func: F,
-    phantom: PhantomData<(E, T, U, D)>
+    phantom: PhantomData<(E, U, D)>
 }
 
-impl<E, T, S, U, D, F> ViewMatchIVP<E, T, S, U, D, F>
+impl<E, S, U, D, F> ViewMatchIVP<E, S, U, D, F>
     where E: Environment, U: 'static, D: 'static,
-          T: Clone + Send + PartialEq + 'static,
-          S: ActualDiffSignal<T>,
-          F: FnMut(&T, &mut Subtree<E>, &mut EnvRef<E>, MSlock) -> Box<dyn ViewRef<E, UpContext=U, DownContext=D>> + 'static
+          S: ActualDiffSignal, S::Target: Clone + PartialEq,
+          F: FnMut(&S::Target, &mut Subtree<E>, &mut EnvRef<E>, MSlock) -> Box<dyn ViewRef<E, UpContext=U, DownContext=D>> + 'static
 {
     pub fn new(sig: S, f: F) -> Self {
         ViewMatchIVP {
@@ -45,11 +42,10 @@ impl<E, T, S, U, D, F> ViewMatchIVP<E, T, S, U, D, F>
     }
 }
 
-impl<E, T, S, U, D, F> IntoViewProvider<E> for ViewMatchIVP<E, T, S, U, D, F>
+impl<E, S, U, D, F> IntoViewProvider<E> for ViewMatchIVP<E, S, U, D, F>
     where E: Environment, U: 'static, D: 'static,
-          T: Clone + Send + PartialEq + 'static,
-          S: ActualDiffSignal<T>,
-          F: FnMut(&T, &mut Subtree<E>, &mut EnvRef<E>, MSlock) -> Box<dyn ViewRef<E, UpContext=U, DownContext=D>> + 'static
+          S: ActualDiffSignal, S::Target: Clone + PartialEq,
+          F: FnMut(&S::Target, &mut Subtree<E>, &mut EnvRef<E>, MSlock) -> Box<dyn ViewRef<E, UpContext=U, DownContext=D>> + 'static
 {
     type UpContext = U;
     type DownContext = D;
@@ -65,11 +61,10 @@ impl<E, T, S, U, D, F> IntoViewProvider<E> for ViewMatchIVP<E, T, S, U, D, F>
     }
 }
 
-impl<E, T, S, U, D, F> ViewProvider<E> for ViewMatchVP<E, T, S, U, D, F>
+impl<E, S, U, D, F> ViewProvider<E> for ViewMatchVP<E, S, U, D, F>
     where E: Environment, U: 'static, D: 'static,
-          T: Clone + Send + PartialEq + 'static,
-          S: ActualDiffSignal<T>,
-          F: FnMut(&T, &mut Subtree<E>, &mut EnvRef<E>, MSlock) -> Box<dyn ViewRef<E, UpContext=U, DownContext=D>> + 'static
+          S: ActualDiffSignal, S::Target: Clone + PartialEq,
+          F: FnMut(&S::Target, &mut Subtree<E>, &mut EnvRef<E>, MSlock) -> Box<dyn ViewRef<E, UpContext=U, DownContext=D>> + 'static
 {
     type UpContext = U;
     type DownContext = D;

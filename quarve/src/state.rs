@@ -333,7 +333,7 @@ mod group {
         use crate::state::{Stateful};
         use crate::util::markers::ThreadMarker;
 
-        pub trait ActionFilter: Send + 'static {
+        pub trait StateFilter: Send + 'static {
             type Target: Stateful;
 
             fn new() -> Self;
@@ -351,7 +351,7 @@ mod group {
         // generic parameter is needed for some weird things...
         pub struct Filterless<S>(PhantomData<S>);
 
-        impl<S> ActionFilter for Filterless<S> where S: Stateful {
+        impl<S> StateFilter for Filterless<S> where S: Stateful {
             type Target = S;
 
             fn new() -> Self {
@@ -368,7 +368,7 @@ mod group {
             }
         }
 
-        impl<S> ActionFilter for Filter<S> where S: Stateful {
+        impl<S> StateFilter for Filter<S> where S: Stateful {
             type Target = S;
 
             fn new() -> Self {
@@ -744,16 +744,16 @@ pub use group::*;
 pub mod coupler {
     use std::marker::PhantomData;
     use std::str::FromStr;
-    use crate::state::{ActionFilter, Filter, Filterless, GroupAction, GroupBasis, IntoAction, SetAction, Stateful, StringActionBasis, Word};
+    use crate::state::{StateFilter, Filter, Filterless, GroupAction, GroupBasis, IntoAction, SetAction, Stateful, StringActionBasis, Word};
     use crate::state::coupler::sealed_base::CouplerBase;
 
     mod sealed_base {
-        use crate::state::{ActionFilter, Stateful};
+        use crate::state::{StateFilter, Stateful};
 
         // Associated types make more sense, but then
         // we get conflicting implementations...
         pub trait CouplerBase<I, M, F>: Send + 'static
-            where I: Stateful, M: Stateful, F: ActionFilter<Target=M>
+            where I: Stateful, M: Stateful, F: StateFilter<Target=M>
         {
 
             fn initial_mapped(&self, initial_intrinsic: &I) -> M;
@@ -775,7 +775,7 @@ pub mod coupler {
     }
 
     pub trait Coupler<I, M, F>: CouplerBase<I, M, F>
-        where I: Stateful, M: Stateful, F: ActionFilter<Target=M>
+        where I: Stateful, M: Stateful, F: StateFilter<Target=M>
     {
 
     }
@@ -1180,8 +1180,9 @@ pub mod capacitor {
 }
 
 mod store {
+    use std::ops::Deref;
     use crate::core::{Slock};
-    use crate::state::{ActionFilter, Filterless, IntoAction, Signal, Stateful};
+    use crate::state::{StateFilter, IntoAction, Signal, Stateful};
     use crate::state::listener::{GeneralListener, InverseListener};
     use crate::util::markers::ThreadMarker;
 
@@ -1197,47 +1198,52 @@ mod store {
         fn subtree_inverse_listener<F: InverseListener + Clone>(&self, f: F, s: Slock<impl ThreadMarker>);
     }
 
-    pub trait ActionDispatcher<S: Stateful, F: ActionFilter<Target=S>> {
-        fn action_listener<G>(&self, listener: G, s: Slock<impl ThreadMarker>)
-            where G: Send + FnMut(&S, &S::Action, Slock) -> bool + 'static;
-    }
-
+    // FIXME at some point, this and RawStore[SharedOwner] should
+    // have F as associated type rather than input parameter
     pub trait Filterable<S: Stateful> {
         fn action_filter<G>(&self, filter: G, s: Slock<impl ThreadMarker>)
             where G: Send + Fn(&S, S::Action, Slock) -> S::Action + 'static;
     }
 
-    pub trait Bindable<S: Stateful, F: ActionFilter<Target=S>> {
-        type Binding: Binding<S, F> + Clone;
-
-        fn binding(&self) -> Self::Binding;
-    }
-
     // Like with signal, I believe it makes more sense for
     // S to be an associated type, but then we can't have default
     // filterless? So, it is done for consistency as a generic parameter
-    pub trait Binding<S: Stateful, F: ActionFilter<Target=S>=Filterless<S>>: ActionDispatcher<S, F> + Signal<S> {
-        fn apply(&self, action: impl IntoAction<S::Action, S>, s: Slock<impl ThreadMarker>);
+    pub trait Binding<F>: Sized + Send + 'static where F: StateFilter {
+        fn action_listener<G>(&self, listener: G, s: Slock<impl ThreadMarker>)
+            where G: Send + FnMut(&F::Target, &<<F as StateFilter>::Target as Stateful>::Action, Slock) -> bool + 'static;
+
+        fn apply(&self, action: impl IntoAction<<<F as StateFilter>::Target as Stateful>::Action, <F as StateFilter>::Target>, s: Slock<impl ThreadMarker>);
+
+        fn as_signal(&self) -> &impl Signal<Target=<F as StateFilter>::Target>;
+
+        fn borrow<'a>(&'a self, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=<F as StateFilter>::Target> {
+            self.as_signal().borrow(s)
+        }
+
+        fn listen<G>(&self, listener: G, s: Slock<impl ThreadMarker>)
+            where G: (FnMut(&F::Target, Slock) -> bool) + Send + 'static
+        {
+            self.as_signal().listen(listener, s)
+        }
     }
 
-    mod sealed_base {
+    mod raw_store {
         use std::sync::Arc;
-        use crate::core::{Slock};
-        use crate::state::{Signal};
+        use crate::core::Slock;
         use crate::state::slock_cell::SlockCell;
+        use crate::state::{IntoAction, StateFilter, Stateful};
         use crate::state::store::store_dispatcher::StoreDispatcher;
         use crate::util::markers::ThreadMarker;
-        use super::{ActionFilter, IntoAction, Stateful};
 
-        pub(super) trait RawStoreBase<S, F>: Sized + Send + 'static where S: Stateful, F: ActionFilter<Target=S> {
+        pub(super) trait RawStore<F: StateFilter>: Sized + Send + 'static {
             type InverseListenerHolder: super::inverse_listener_holder::InverseListenerHolder;
 
-            fn dispatcher(&self) -> &StoreDispatcher<S, F, Self::InverseListenerHolder>;
+            fn dispatcher(&self) -> &StoreDispatcher<F::Target, F, Self::InverseListenerHolder>;
 
-            fn dispatcher_mut(&mut self) -> &mut StoreDispatcher<S, F, Self::InverseListenerHolder>;
+            fn dispatcher_mut(&mut self) -> &mut StoreDispatcher<F::Target, F, Self::InverseListenerHolder>;
 
             // may introduce some additional behavior that the dispatcher does not handle
-            fn apply(inner: &Arc<SlockCell<Self>>, action: impl IntoAction<S::Action, S>, skip_filters: bool, s: Slock<impl ThreadMarker>,);
+            fn apply(inner: &Arc<SlockCell<Self>>, action: impl IntoAction<<F::Target as Stateful>::Action, F::Target>, skip_filters: bool, s: Slock<impl ThreadMarker>);
 
             // Must be careful with these two methods
             // since generally not called with the state lock
@@ -1249,14 +1255,23 @@ mod store {
 
             }
         }
+    }
 
-        /* IMO this is a bad side effect of rust's insistence on
-           having no duplicate implementations. What could be done
-           as impl<R: RawStore...> Binding for R now becomes an awkward
-           derivation, with lots of duplicate code
-         */
-        pub(super) trait RawStoreSharedOwnerBase<S, F> : Send + Sync + Sized + Signal<S> where S: Stateful, F: ActionFilter<Target=S> {
-            type Inner: RawStoreBase<S, F>;
+    mod raw_store_shared_owner {
+        use std::marker::PhantomData;
+        use std::sync::Arc;
+        use crate::core::{Slock};
+        use crate::state::{StateFilter, Binding, Filter, Filterable, IntoAction, Signal, Stateful};
+        use crate::state::listener::StateListener;
+        use crate::state::slock_cell::SlockCell;
+        use crate::state::store::general_binding::GeneralBinding;
+        use crate::state::store::raw_store::RawStore;
+        use crate::util::markers::ThreadMarker;
+
+        pub(super) trait RawStoreSharedOwner<F: StateFilter> : Send + Sync + Sized + 'static {
+            type Inner: RawStore<F>;
+
+            fn as_signal(&self) -> &impl Signal<Target=F::Target>;
 
             fn inner_ref(&self) -> &Arc<SlockCell<Self::Inner>>;
 
@@ -1265,82 +1280,34 @@ mod store {
             // caller is expected to do so
             fn arc_clone(&self) -> Self;
         }
-    }
 
-    mod raw_store {
-        use crate::state::{ActionFilter, Stateful};
-        use crate::state::store::sealed_base::RawStoreBase;
+        impl<I, S: Stateful> Filterable<S> for I where I: RawStoreSharedOwner<Filter<S>> {
 
-        #[allow(private_bounds)]
-        #[doc(hidden)]
-        pub trait RawStore<S, F>: RawStoreBase<S, F>
-            where S: Stateful, F: ActionFilter<Target=S> {}
-
-        impl<S, F, R> RawStore<S, F> for R where S: Stateful, F: ActionFilter<Target=S>, R: RawStoreBase<S, F> {
-
-        }
-    }
-    pub use raw_store::*;
-
-    mod raw_store_shared_owner {
-        use std::marker::PhantomData;
-        use crate::core::{Slock};
-        use crate::state::{ActionDispatcher, ActionFilter, Bindable, Binding, Filter, Filterable, GeneralBinding, IntoAction, Stateful};
-        use crate::state::listener::StateListener;
-        use crate::util::markers::ThreadMarker;
-        use super::sealed_base::{RawStoreBase, RawStoreSharedOwnerBase};
-
-        #[allow(private_bounds)]
-        #[doc(hidden)]
-        pub trait RawStoreSharedOwner<S, F>: RawStoreSharedOwnerBase<S, F>
-            where S: Stateful, F: ActionFilter<Target=S> {}
-
-        impl<S, F, R> RawStoreSharedOwner<S, F> for R
-            where S: Stateful, F: ActionFilter<Target=S>, R: RawStoreSharedOwnerBase<S, F> {
-
-        }
-
-        impl<S, F, I> ActionDispatcher<S, F> for I
-            where S: Stateful, F: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, F> {
-            fn action_listener<G>(&self, listener: G, s: Slock<impl ThreadMarker>)
-                where G: Send + FnMut(&S, &S::Action, Slock) -> bool + 'static {
-                self.inner_ref().borrow_mut(s).dispatcher_mut().add_listener(StateListener::ActionListener(Box::new(listener)));
-            }
-        }
-
-        impl<S: Stateful, I: RawStoreSharedOwner<S, Filter<S>>> Filterable<S> for I {
             fn action_filter<G>(&self, filter: G, s: Slock<impl ThreadMarker>)
                 where G: Send + Fn(&S, S::Action, Slock) -> S::Action + 'static {
                 self.inner_ref().borrow_mut(s).dispatcher_mut().action_filter(filter, s);
             }
         }
 
-        impl<S: Stateful, F: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, F>> Bindable<S, F> for I {
-            type Binding = GeneralBinding<S, F, I>;
-
-            fn binding(&self) -> Self::Binding {
-                I::Inner::strong_count_increment(self.inner_ref());
-
-                GeneralBinding {
-                    inner: self.arc_clone(),
-                    phantom_state: PhantomData,
-                    phantom_filter: PhantomData
-                }
-            }
-
-        }
-
         // Unfortunately can't do this for signal as well
         // Since FixedSignal 'might' implement RawStoreSharedOwnerBase
         // It's therefore done as macros
-        impl<S, F, R> Binding<S, F> for R where
-            S: Stateful, F: ActionFilter<Target=S>, R: RawStoreSharedOwnerBase<S, F> {
-            fn apply(&self, action: impl IntoAction<S::Action, S>, s: Slock<impl ThreadMarker>) {
+        impl<F, R> Binding<F> for R
+            where F: StateFilter, R: RawStoreSharedOwner<F> {
+            fn action_listener<G>(&self, listener: G, s: Slock<impl ThreadMarker>)
+                where G: Send + FnMut(&<F as StateFilter>::Target, &<<F as StateFilter>::Target as Stateful>::Action, Slock) -> bool + 'static {
+                self.inner_ref().borrow_mut(s).dispatcher_mut().add_listener(StateListener::ActionListener(Box::new(listener)));
+            }
+
+            fn apply(&self, action: impl IntoAction<<<F as StateFilter>::Target as Stateful>::Action, <F as StateFilter>::Target>, s: Slock<impl ThreadMarker>) {
                 R::Inner::apply(self.inner_ref(), action, false, s);
+            }
+
+            fn as_signal(&self) -> &impl Signal<Target=<F as StateFilter>::Target> {
+                R::as_signal(self)
             }
         }
     }
-    pub use raw_store_shared_owner::*;
 
     /* MARK: utilities */
     mod action_inverter {
@@ -1349,30 +1316,27 @@ mod store {
         use crate::core::Slock;
         use crate::state::listener::DirectlyInvertible;
         use crate::state::listener::sealed::DirectlyInvertibleBase;
-        use crate::state::{ActionFilter, Stateful};
         use crate::state::slock_cell::SlockCell;
-        use super::RawStore;
+        use crate::state::{StateFilter, Stateful};
+        use crate::state::store::raw_store::RawStore;
 
-        pub(super) struct ActionInverter<S, F, I>
-            where S: Stateful, F: ActionFilter<Target=S>, I: RawStore<S, F> {
-            action: Option<S::Action>,
+        pub(super) struct ActionInverter<F: StateFilter, I> where I: RawStore<F> {
+            action: Option<<F::Target as Stateful>::Action>,
             state: Weak<SlockCell<I>>,
-            filter: PhantomData<F>
+            phantom: PhantomData<F>
         }
 
-        impl<S, F, I> ActionInverter<S, F, I>
-            where S: Stateful, F: ActionFilter<Target=S>, I: RawStore<S, F> {
-            pub(super) fn new(action: S::Action, weak: Weak<SlockCell<I>>) -> Self {
+        impl<F, I> ActionInverter<F, I> where F: StateFilter, I: RawStore<F> {
+            pub(super) fn new(action: <F::Target as Stateful>::Action, weak: Weak<SlockCell<I>>) -> Self {
                 ActionInverter {
                     action: Some(action),
                     state: weak,
-                    filter: PhantomData
+                    phantom: PhantomData,
                 }
             }
         }
 
-        impl<S, F, I> DirectlyInvertibleBase for ActionInverter<S, F, I>
-            where S: Stateful, F: ActionFilter<Target=S>, I: RawStore<S, F> {
+        impl<F, I> DirectlyInvertibleBase for ActionInverter<F, I> where F: StateFilter, I: RawStore<F> {
             fn invert(&mut self, s: Slock) {
                 let Some(state) = self.state.upgrade() else {
                     return;
@@ -1384,7 +1348,7 @@ mod store {
 
             unsafe fn right_multiply(&mut self, mut by: Box<dyn DirectlyInvertible>, s: Slock) {
                 /* we are free to assume by is of type Self, allowing us to do this conversion */
-                let ptr = by.action_pointer(s) as *const S::Action;
+                let ptr = by.action_pointer(s) as *const <F::Target as Stateful>::Action;
                 self.action = Some(self.action.take().unwrap() * std::ptr::read(ptr));
                 /* we have implicitly moved the other's action, now we must tell it to forget to
                    avoid double free
@@ -1393,7 +1357,7 @@ mod store {
             }
 
             unsafe fn action_pointer(&self, _s: Slock) -> *const () {
-                self.action.as_ref().unwrap() as *const S::Action as *const ()
+                self.action.as_ref().unwrap() as *const <F::Target as Stateful>::Action as *const ()
             }
 
             unsafe fn forget_action(&mut self, _s: Slock) {
@@ -1401,9 +1365,7 @@ mod store {
             }
         }
 
-        impl<S, F, I> DirectlyInvertible for ActionInverter<S, F, I>
-            where S: Stateful, F: ActionFilter<Target=S>, I: RawStore<S, F> {
-
+        impl<F, I> DirectlyInvertible for ActionInverter<F, I> where F: StateFilter, I: RawStore<F> {
             fn id(&self) -> usize {
                 self.state.as_ptr() as usize
             }
@@ -1414,20 +1376,18 @@ mod store {
         use std::cell::Ref;
         use std::marker::PhantomData;
         use std::ops::Deref;
-        use crate::state::{ActionFilter, Stateful};
-        use crate::state::store::RawStore;
+        use crate::state::StateFilter;
+        use crate::state::store::raw_store::RawStore;
 
-        pub(super) struct StateRef<'a, S, M, I>
-            where S: Stateful, M: ActionFilter<Target=S>, I: RawStore<S, M> {
+        pub(super) struct StateRef<'a, F, I> where F: StateFilter, I: RawStore<F> {
             pub(super) main_ref: Ref<'a, I>,
-            pub(super) lifetime: PhantomData<&'a S>,
-            pub(super) filter: PhantomData<&'a M>,
+            pub(super) phantom: PhantomData<F>
         }
 
-        impl<'a, S, M, I> Deref for StateRef<'a, S, M, I>
-            where S: Stateful, M: ActionFilter<Target=S>, I: RawStore<S, M> {
-            type Target = S;
-            fn deref(&self) -> &S {
+        impl<'a, F, I> Deref for StateRef<'a, F, I>
+            where F: StateFilter, I: RawStore<F> {
+            type Target = F::Target;
+            fn deref(&self) -> &F::Target {
                 self.main_ref.dispatcher().data()
             }
         }
@@ -1484,14 +1444,14 @@ mod store {
 
     mod store_dispatcher {
         use crate::core::Slock;
-        use crate::state::{ActionFilter, DirectlyInvertible, GeneralListener, GroupBasis, IntoAction, InverseListener, Stateful};
+        use crate::state::{StateFilter, DirectlyInvertible, GeneralListener, GroupBasis, IntoAction, InverseListener, Stateful};
         use crate::state::listener::{ StateListener};
         use crate::state::store::inverse_listener_holder::InverseListenerHolder;
         use crate::util::markers::ThreadMarker;
         use crate::util::test_util::QuarveAllocTag;
 
         pub(crate) struct StoreDispatcher<S, F, I>
-            where S: Stateful, F: ActionFilter, I: InverseListenerHolder
+            where S: Stateful, F: StateFilter, I: InverseListenerHolder
         {
             _quarve_tag: QuarveAllocTag,
             data: S,
@@ -1501,7 +1461,7 @@ mod store {
         }
 
         impl<S, F, I> StoreDispatcher<S, F, I>
-            where S: Stateful, F: ActionFilter<Target=S>, I: InverseListenerHolder {
+            where S: Stateful, F: StateFilter<Target=S>, I: InverseListenerHolder {
 
             #[inline]
             pub(super) fn new(data: S) -> Self {
@@ -1624,11 +1584,12 @@ mod store {
 
         macro_rules! impl_signal_inner {
             ($s:ty) => {
+                type Target=$s;
+
                 fn borrow<'a>(&'a self, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=$s> + 'a {
                     StateRef {
                         main_ref: self.inner_ref().borrow(s),
-                        lifetime: PhantomData,
-                        filter: PhantomData,
+                        phantom: PhantomData
                     }
                 }
 
@@ -1656,27 +1617,29 @@ mod store {
         use std::ops::{Deref, DerefMut};
         use std::sync::Arc;
         use crate::{
-            state::{ActionFilter, Filterless, IntoAction, Signal, Stateful, StoreContainer, GeneralSignal},
+            state::{StateFilter, Filterless, IntoAction, Signal, Stateful, StoreContainer, GeneralSignal},
             core::Slock,
         };
-        use crate::state::{Bindable, StateListener};
+        use crate::state::{Binding, StateListener};
         use crate::state::store::state_ref::StateRef;
         use crate::state::{Filter};
         use crate::state::listener::{GeneralListener, InverseListener};
         use crate::state::slock_cell::SlockCell;
         use crate::state::store::action_inverter::ActionInverter;
+        use crate::state::store::general_binding::GeneralBinding;
         use crate::state::store::inverse_listener_holder::ActualInverseListenerHolder;
         use crate::state::store::macros::{impl_signal_inner, impl_store_container_inner};
+        use crate::state::store::raw_store::RawStore;
+        use crate::state::store::raw_store_shared_owner::RawStoreSharedOwner;
         use crate::state::store::store_dispatcher::StoreDispatcher;
         use crate::util::markers::ThreadMarker;
-        use super::sealed_base::{RawStoreBase, RawStoreSharedOwnerBase};
 
-        pub(super) struct InnerStore<S: Stateful, F: ActionFilter<Target=S>> {
+        pub(super) struct InnerStore<S: Stateful, F: StateFilter<Target=S>> {
             dispatcher: StoreDispatcher<S, F, ActualInverseListenerHolder>
         }
 
-        impl<S, F> RawStoreBase<S, F> for InnerStore<S, F>
-            where S: Stateful, F: ActionFilter<Target=S>
+        impl<S, F> RawStore<F> for InnerStore<S, F>
+            where S: Stateful, F: StateFilter<Target=S>
         {
             type InverseListenerHolder = ActualInverseListenerHolder;
 
@@ -1710,7 +1673,7 @@ mod store {
             }
         }
 
-        pub struct Store<S: Stateful, F: ActionFilter<Target=S>=Filterless<S>>
+        pub struct Store<S: Stateful, F: StateFilter<Target=S>=Filterless<S>>
         {
             pub(super) inner: Arc<SlockCell<InnerStore<S, F>>>
         }
@@ -1748,21 +1711,25 @@ mod store {
         }
 
         impl<S, M> StoreContainer for Store<S, M>
-            where S: Stateful, M: ActionFilter<Target=S>
+            where S: Stateful, M: StateFilter<Target=S>
         {
             impl_store_container_inner!();
         }
 
-        impl<S, A> Signal<S> for Store<S, A>
-            where S: Stateful, A: ActionFilter<Target=S>
+        impl<S, A> Signal for Store<S, A>
+            where S: Stateful, A: StateFilter<Target=S>
         {
             impl_signal_inner!(S);
         }
 
-        impl<S, F> RawStoreSharedOwnerBase<S, F> for Store<S, F>
-            where S: Stateful, F: ActionFilter<Target=S>
+        impl<S, F> RawStoreSharedOwner<F> for Store<S, F>
+            where S: Stateful, F: StateFilter<Target=S>
         {
             type Inner = InnerStore<S, F>;
+
+            fn as_signal(&self) -> &impl Signal<Target=F::Target> {
+                self
+            }
 
             fn inner_ref(&self) -> &Arc<SlockCell<Self::Inner>> {
                 &self.inner
@@ -1775,42 +1742,58 @@ mod store {
             }
         }
 
-        // RPITIT adds an unnecessary lifetime parameter
-        // so this must be implemented manually unfortunately
-        impl<S, F> Store<S, F> where S: Stateful, F: ActionFilter<Target=S> {
-            pub fn signal(&self) -> impl Signal<S> + Clone {
-                self.binding()
+        impl<S, F> Store<S, F>
+            where S: Stateful, F: StateFilter<Target=S>
+        {
+            pub fn binding(&self) -> impl Binding<F> + Clone {
+                InnerStore::strong_count_increment(self.inner_ref());
+
+                GeneralBinding {
+                    inner: self.arc_clone(),
+                    phantom: PhantomData,
+                }
+            }
+
+            pub fn signal(&self) -> impl Signal<Target=F::Target> + Clone {
+                InnerStore::strong_count_increment(self.inner_ref());
+
+                GeneralBinding {
+                    inner: self.arc_clone(),
+                    phantom: PhantomData,
+                }
             }
         }
     }
     pub use store::*;
 
     mod token_store {
+        use std::marker::PhantomData;
         use std::collections::HashMap;
         use std::hash::Hash;
-        use std::marker::PhantomData;
         use std::ops::{Deref, DerefMut};
         use std::sync::Arc;
-        use crate::state::{Bindable, StateListener};
+        use crate::state::{Binding, StateListener};
         use crate::state::store::state_ref::StateRef;
         use crate::core::{Slock};
-        use crate::state::{ActionFilter, Filter, Filterless, GeneralListener, GeneralSignal, IntoAction, Signal, Stateful, StoreContainer};
+        use crate::state::{StateFilter, Filter, Filterless, GeneralListener, GeneralSignal, IntoAction, Signal, Stateful, StoreContainer};
         use crate::state::store::action_inverter::ActionInverter;
         use crate::state::store::inverse_listener_holder::ActualInverseListenerHolder;
         use crate::state::store::macros::{impl_signal_inner, impl_store_container_inner};
-        use crate::state::store::sealed_base::{RawStoreBase, RawStoreSharedOwnerBase};
         use crate::state::store::store_dispatcher::StoreDispatcher;
         use crate::state::InverseListener;
         use crate::state::slock_cell::SlockCell;
+        use crate::state::store::general_binding::GeneralBinding;
+        use crate::state::store::raw_store::RawStore;
+        use crate::state::store::raw_store_shared_owner::RawStoreSharedOwner;
         use crate::util::markers::ThreadMarker;
 
-        pub(super) struct InnerTokenStore<S: Stateful + Copy + Hash + Eq, F: ActionFilter<Target=S>> {
+        pub(super) struct InnerTokenStore<S: Stateful + Copy + Hash + Eq, F: StateFilter<Target=S>> {
             dispatcher: StoreDispatcher<S, F, ActualInverseListenerHolder>,
             equal_listeners: HashMap<S, Vec<Box<dyn FnMut(&S, Slock) -> bool + Send>>>,
         }
-        impl<S, F> RawStoreBase<S, F> for InnerTokenStore<S, F>
+        impl<S, F> RawStore<F> for InnerTokenStore<S, F>
             where S: Stateful + Copy + Hash + Eq,
-                  F: ActionFilter<Target=S>
+                  F: StateFilter<Target=S>
         {
             type InverseListenerHolder = ActualInverseListenerHolder;
 
@@ -1860,12 +1843,12 @@ mod store {
         }
 
         pub struct TokenStore<S, F=Filterless<S>>
-            where S: Stateful + Copy + Hash + Eq, F: ActionFilter<Target=S> {
+            where S: Stateful + Copy + Hash + Eq, F: StateFilter<Target=S> {
             inner: Arc<SlockCell<InnerTokenStore<S, F>>>
         }
 
-        impl<S, F> TokenStore<S, F> where S: Stateful + Copy + Hash + Eq, F: ActionFilter<Target=S> {
-            pub fn equals(&self, target: S, s: Slock) -> impl Signal<bool> + Clone {
+        impl<S, F> TokenStore<S, F> where S: Stateful + Copy + Hash + Eq, F: StateFilter<Target=S> {
+            pub fn equals(&self, target: S, s: Slock) -> impl Signal<Target=bool> + Clone {
                 GeneralSignal::from(self, move |u| *u == target,
                     |this, listener, _s | {
                         this.inner.borrow_mut(s).equal_listeners.entry(target)
@@ -1916,18 +1899,22 @@ mod store {
         }
 
         impl<S, M> StoreContainer for TokenStore<S, M>
-            where S: Stateful + Copy + Hash + Eq, M: ActionFilter<Target=S> {
+            where S: Stateful + Copy + Hash + Eq, M: StateFilter<Target=S> {
             impl_store_container_inner!();
         }
 
-        impl<S, A> Signal<S> for TokenStore<S, A>
-            where S: Stateful + Copy + Hash + Eq, A: ActionFilter<Target=S> {
+        impl<S, A> Signal for TokenStore<S, A>
+            where S: Stateful + Copy + Hash + Eq, A: StateFilter<Target=S> {
             impl_signal_inner!(S);
         }
 
-        impl<S, A> RawStoreSharedOwnerBase<S, A> for TokenStore<S, A>
-            where S: Stateful + Copy + Hash + Eq, A: ActionFilter<Target=S> {
+        impl<S, A> RawStoreSharedOwner<A> for TokenStore<S, A>
+            where S: Stateful + Copy + Hash + Eq, A: StateFilter<Target=S> {
             type Inner = InnerTokenStore<S, A>;
+
+            fn as_signal(&self) -> &impl Signal<Target=S> {
+                self
+            }
 
             fn inner_ref(&self) -> &Arc<SlockCell<Self::Inner>> {
                 &self.inner
@@ -1940,42 +1927,59 @@ mod store {
             }
         }
 
-        impl<S, F> TokenStore<S, F>
-            where S: Stateful + Copy + Hash + Eq, F: ActionFilter<Target=S> {
-            pub fn signal(&self) -> impl Signal<S> + Clone {
-                self.binding()
+        impl<S, A> TokenStore<S, A>
+            where S: Stateful + Copy + Hash + Eq, A: StateFilter<Target=S> {
+            pub fn binding(&self) -> impl Binding<A> + Clone {
+                InnerTokenStore::strong_count_increment(self.inner_ref());
+
+                GeneralBinding {
+                    inner: self.arc_clone(),
+                    phantom: PhantomData,
+                }
+            }
+
+            pub fn signal(&self) -> impl Signal<Target=S> + Clone {
+                InnerTokenStore::strong_count_increment(self.inner_ref());
+
+                GeneralBinding {
+                    inner: self.arc_clone(),
+                    phantom: PhantomData,
+                }
             }
         }
     }
     pub use token_store::*;
 
     mod derived_store {
+        use std::hash::Hash;
+        use std::marker::PhantomData;
         use std::ops::{Deref, DerefMut};
         use std::sync::Arc;
-        use std::marker::PhantomData;
         use crate::state::store::state_ref::StateRef;
         use crate::{
             state::{
-                ActionFilter, Filterless, IntoAction, Signal, Stateful, StoreContainer, GeneralSignal,
+                StateFilter, Filterless, IntoAction, Signal, Stateful, StoreContainer, GeneralSignal,
             },
             core::Slock,
         };
-        use crate::state::{Bindable, StateListener};
+        use crate::state::{Binding, StateListener, TokenStore};
         use crate::state::{Filter};
         use crate::state::listener::{GeneralListener, InverseListener};
         use crate::state::slock_cell::SlockCell;
+        use crate::state::store::general_binding::GeneralBinding;
         use crate::state::store::inverse_listener_holder::NullInverseListenerHolder;
         use crate::state::store::macros::{impl_signal_inner, impl_store_container_inner};
+        use crate::state::store::raw_store::RawStore;
+        use crate::state::store::raw_store_shared_owner::RawStoreSharedOwner;
         use crate::state::store::store_dispatcher::StoreDispatcher;
         use crate::util::markers::ThreadMarker;
-        use super::sealed_base::{RawStoreBase, RawStoreSharedOwnerBase};
 
-        pub(super) struct InnerDerivedStore<S: Stateful, F: ActionFilter<Target=S>> {
+        pub(super) struct InnerDerivedStore<S: Stateful, F: StateFilter<Target=S>> {
             dispatcher: StoreDispatcher<S, F, NullInverseListenerHolder>
         }
 
-        impl<S, F> RawStoreBase<S, F> for InnerDerivedStore<S, F>
-            where S: Stateful, F: ActionFilter<Target=S>
+        impl<S, F> RawStore<F> for InnerDerivedStore<S, F>
+            where S: Stateful, F: StateFilter<Target=S>
         {
             type InverseListenerHolder = NullInverseListenerHolder;
 
@@ -2008,7 +2012,7 @@ mod store {
             }
         }
 
-        pub struct DerivedStore<S: Stateful, F: ActionFilter<Target=S>=Filterless<S>>
+        pub struct DerivedStore<S: Stateful, F: StateFilter<Target=S>=Filterless<S>>
         {
             inner: Arc<SlockCell<InnerDerivedStore<S, F>>>
         }
@@ -2054,21 +2058,25 @@ mod store {
         }
 
         impl<S, M> StoreContainer for DerivedStore<S, M>
-            where S: Stateful, M: ActionFilter<Target=S>
+            where S: Stateful, M: StateFilter<Target=S>
         {
             impl_store_container_inner!();
         }
 
-        impl<S, A> Signal<S> for DerivedStore<S, A>
-            where S: Stateful, A: ActionFilter<Target=S>
+        impl<S, A> Signal for DerivedStore<S, A>
+            where S: Stateful, A: StateFilter<Target=S>
         {
             impl_signal_inner!(S);
         }
 
-        impl<S, F> RawStoreSharedOwnerBase<S, F> for DerivedStore<S, F>
-            where S: Stateful, F: ActionFilter<Target=S>
+        impl<S, F> RawStoreSharedOwner<F> for DerivedStore<S, F>
+            where S: Stateful, F: StateFilter<Target=S>
         {
             type Inner = InnerDerivedStore<S, F>;
+
+            fn as_signal(&self) -> &impl Signal<Target=F::Target> {
+                self
+            }
 
             fn inner_ref(&self) -> &Arc<SlockCell<Self::Inner>> {
                 &self.inner
@@ -2081,10 +2089,24 @@ mod store {
             }
         }
 
-        impl<S, F> DerivedStore<S, F>
-            where S: Stateful, F: ActionFilter<Target=S> {
-            pub fn signal(&self) -> impl Signal<S> + Clone {
-                self.binding()
+        impl<S, F> DerivedStore<S, F> where S: Stateful, F: StateFilter<Target=S>
+        {
+            pub fn binding(&self) -> impl Binding<F> + Clone {
+                InnerDerivedStore::strong_count_increment(self.inner_ref());
+
+                GeneralBinding {
+                    inner: self.arc_clone(),
+                    phantom: PhantomData,
+                }
+            }
+
+            pub fn signal(&self) -> impl Signal<Target=S> + Clone {
+                InnerDerivedStore::strong_count_increment(self.inner_ref());
+
+                GeneralBinding {
+                    inner: self.arc_clone(),
+                    phantom: PhantomData,
+                }
             }
         }
     }
@@ -2096,22 +2118,24 @@ mod store {
         use std::sync::{Arc, Mutex};
         use std::sync::atomic::AtomicUsize;
         use std::sync::atomic::Ordering::Release;
-        use crate::state::{StateListener, GeneralListener, InverseListener,  Bindable};
+        use crate::state::{StateListener, GeneralListener, InverseListener, Filterless, DerivedStore};
         use crate::state::store::state_ref::StateRef;
         use crate::{
             state::{
-                ActionFilter, Filterless, IntoAction, Signal, Stateful, StoreContainer, GeneralSignal,
+                StateFilter, IntoAction, Signal, Stateful, StoreContainer, GeneralSignal,
             },
             core::Slock,
         };
         use crate::state::{Binding};
         use crate::state::coupler::Coupler;
         use crate::state::slock_cell::SlockCell;
+        use crate::state::store::general_binding::GeneralBinding;
         use crate::state::store::inverse_listener_holder::NullInverseListenerHolder;
         use crate::state::store::macros::{impl_signal_inner, impl_store_container_inner};
+        use crate::state::store::raw_store::RawStore;
+        use crate::state::store::raw_store_shared_owner::RawStoreSharedOwner;
         use crate::state::store::store_dispatcher::StoreDispatcher;
         use crate::util::markers::ThreadMarker;
-        use super::sealed_base::{RawStoreBase, RawStoreSharedOwnerBase};
 
         // note that IB is purposefully filterless
         // The reference counting of this is particularly tricky
@@ -2119,7 +2143,7 @@ mod store {
         // has a ref count of 1, at which point the couple removes ownership
         // of the intrinsic, to avoid cycles
         pub(super) struct InnerCoupledStore<I, IB, M, F, C>
-            where I: Stateful, IB: Binding<I, Filterless<I>>, M: Stateful, F: ActionFilter<Target=M>, C: Coupler<I, M, F> {
+            where I: Stateful, IB: Binding<Filterless<I>>, M: Stateful, F: StateFilter<Target=M>, C: Coupler<I, M, F> {
             dispatcher: StoreDispatcher<M, F, NullInverseListenerHolder>,
             coupler: C,
             // intrinsic maintains a weak ownership of us
@@ -2137,7 +2161,7 @@ mod store {
         }
 
         impl<I, IB, M, F, C> InnerCoupledStore<I, IB, M, F, C>
-            where I: Stateful, IB: Binding<I>, M: Stateful, F: ActionFilter<Target=M>, C: Coupler<I, M, F>
+            where I: Stateful, IB: Binding<Filterless<I>>, M: Stateful, F: StateFilter<Target=M>, C: Coupler<I, M, F>
         {
             // logic for this is somewhat convoluted
             // in large part due to the awkwardness of this
@@ -2176,6 +2200,7 @@ mod store {
                                 data,
                                 inner.intrinsic.lock().unwrap()
                                     .as_ref().unwrap()
+                                    .as_signal()
                                     .borrow(s).deref(),
                                 action
                             )
@@ -2215,8 +2240,8 @@ mod store {
             }
         }
 
-        impl<I, IB, M, F, C> RawStoreBase<M, F> for InnerCoupledStore<I, IB, M, F, C>
-            where I: Stateful, IB: Binding<I>, M: Stateful, F: ActionFilter<Target=M>, C: Coupler<I, M, F>
+        impl<I, IB, M, F, C> RawStore<F> for InnerCoupledStore<I, IB, M, F, C>
+            where I: Stateful, IB: Binding<Filterless<I>>, M: Stateful, F: StateFilter<Target=M>, C: Coupler<I, M, F>
         {
             type InverseListenerHolder = NullInverseListenerHolder;
 
@@ -2267,15 +2292,15 @@ mod store {
 
         // IB purposefully filterless
         pub struct CoupledStore<I, IB, M, F, C>
-            where I: Stateful, IB: Binding<I>, M: Stateful, F: ActionFilter<Target=M>, C: Coupler<I, M, F> {
+            where I: Stateful, IB: Binding<Filterless<I>>, M: Stateful, F: StateFilter<Target=M>, C: Coupler<I, M, F> {
             inner: Arc<SlockCell<InnerCoupledStore<I, IB, M, F, C>>>
         }
 
         impl<I, IB, M, F, C> CoupledStore<I, IB, M, F, C>
-            where I: Stateful, IB: Binding<I>, M: Stateful, F: ActionFilter<Target=M>, C: Coupler<I, M, F>
+            where I: Stateful, IB: Binding<Filterless<I>>, M: Stateful, F: StateFilter<Target=M>, C: Coupler<I, M, F>
         {
             pub fn new(intrinsic: IB, coupler: C, s: Slock<impl ThreadMarker>) -> Self {
-                let data = coupler.initial_mapped(intrinsic.borrow(s).deref());
+                let data = coupler.initial_mapped(intrinsic.as_signal().borrow(s).deref());
                 let ret = CoupledStore {
                     inner: Arc::new(SlockCell::new(InnerCoupledStore {
                         dispatcher: StoreDispatcher::new(data),
@@ -2316,7 +2341,7 @@ mod store {
         }
 
         impl<I, IB, M, F, C> Drop for CoupledStore<I, IB, M, F, C>
-            where I: Stateful, IB: Binding<I>, M: Stateful, F: ActionFilter<Target=M>, C: Coupler<I, M, F> {
+            where I: Stateful, IB: Binding<Filterless<I>>, M: Stateful, F: StateFilter<Target=M>, C: Coupler<I, M, F> {
             fn drop(&mut self) {
                 InnerCoupledStore::strong_count_decrement(&self.inner);
             }
@@ -2326,21 +2351,25 @@ mod store {
         // since the respective action should've been handled
         // by the source store
         impl<I, IB, M, F, C> StoreContainer for CoupledStore<I, IB, M, F, C>
-            where I: Stateful, IB: Binding<I>, M: Stateful, F: ActionFilter<Target=M>, C: Coupler<I, M, F>
+            where I: Stateful, IB: Binding<Filterless<I>>, M: Stateful, F: StateFilter<Target=M>, C: Coupler<I, M, F>
         {
             impl_store_container_inner!();
         }
 
-        impl<I, IB, M, F, C> Signal<M> for CoupledStore<I, IB, M, F, C>
-            where I: Stateful, IB: Binding<I>, M: Stateful, F: ActionFilter<Target=M>, C: Coupler<I, M, F>
+        impl<I, IB, M, F, C> Signal for CoupledStore<I, IB, M, F, C>
+            where I: Stateful, IB: Binding<Filterless<I>>, M: Stateful, F: StateFilter<Target=M>, C: Coupler<I, M, F>
         {
             impl_signal_inner!(M);
         }
 
-        impl<I, IB, M, F, C> RawStoreSharedOwnerBase<M, F> for CoupledStore<I, IB, M, F, C>
-            where I: Stateful, IB: Binding<I>, M: Stateful, F: ActionFilter<Target=M>, C: Coupler<I, M, F>
+        impl<I, IB, M, F, C> RawStoreSharedOwner<F> for CoupledStore<I, IB, M, F, C>
+            where I: Stateful, IB: Binding<Filterless<I>>, M: Stateful, F: StateFilter<Target=M>, C: Coupler<I, M, F>
         {
             type Inner = InnerCoupledStore<I, IB, M, F, C>;
+
+            fn as_signal(&self) -> &impl Signal<Target=M> {
+                self
+            }
 
             fn inner_ref(&self) -> &Arc<SlockCell<Self::Inner>> {
                 &self.inner
@@ -2354,10 +2383,24 @@ mod store {
         }
 
         impl<I, IB, M, F, C> CoupledStore<I, IB, M, F, C>
-            where I: Stateful, IB: Binding<I>, M: Stateful, F: ActionFilter<Target=M>, C: Coupler<I, M, F>
+            where I: Stateful, IB: Binding<Filterless<I>>, M: Stateful, F: StateFilter<Target=M>, C: Coupler<I, M, F>
         {
-            pub fn signal(&self) -> impl Signal<M> + Clone {
-                self.binding()
+            pub fn binding(&self) -> impl Binding<F> + Clone {
+                InnerCoupledStore::strong_count_increment(self.inner_ref());
+
+                GeneralBinding {
+                    inner: self.arc_clone(),
+                    phantom: PhantomData,
+                }
+            }
+
+            pub fn signal(&self) -> impl Signal<Target=M> + Clone {
+                InnerCoupledStore::strong_count_increment(self.inner_ref());
+
+                GeneralBinding {
+                    inner: self.arc_clone(),
+                    phantom: PhantomData,
+                }
             }
         }
     }
@@ -2368,44 +2411,42 @@ mod store {
         use std::ops::Deref;
         use std::sync::Arc;
         use crate::core::{Slock};
-        use crate::state::{Bindable, StateListener};
+        use crate::state::{StateFilter, StateListener};
         use crate::state::store::state_ref::StateRef;
-        use crate::state::{RawStoreSharedOwner, Signal};
+        use crate::state::{Signal};
         use crate::state::signal::GeneralSignal;
         use crate::state::slock_cell::SlockCell;
         use crate::state::store::macros::impl_signal_inner;
+        use crate::state::store::raw_store::RawStore;
+        use crate::state::store::raw_store_shared_owner::RawStoreSharedOwner;
         use crate::util::markers::ThreadMarker;
-        use super::{ActionFilter, Stateful};
-        use super::sealed_base::{RawStoreBase, RawStoreSharedOwnerBase};
 
-        pub struct GeneralBinding<S, F, I>
-            where S: Stateful, F: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, F> {
+        pub struct GeneralBinding<F, I> where F: StateFilter, I: RawStoreSharedOwner<F> {
             pub(super) inner: I,
-            pub(super) phantom_state: PhantomData<SlockCell<S>>,
-            pub(super) phantom_filter: PhantomData<SlockCell<F>>,
+            pub(super) phantom: PhantomData<Arc<SlockCell<F>>>,
         }
 
-        impl<S, F, I> Clone for GeneralBinding<S, F, I>
-            where S: Stateful, F: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, F> {
+        impl<F, I> Clone for GeneralBinding<F, I> where F: StateFilter, I: RawStoreSharedOwner<F> {
             fn clone(&self) -> Self {
                 I::Inner::strong_count_increment(self.inner.inner_ref());
 
                 GeneralBinding {
                     inner: self.inner.arc_clone(),
-                    phantom_state: PhantomData,
-                    phantom_filter: PhantomData
+                    phantom: PhantomData
                 }
             }
         }
 
-        impl<S, A, I> Signal<S> for GeneralBinding<S, A, I>
-            where S: Stateful, A: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, A> {
-            impl_signal_inner!(S);
+        impl<F, I> Signal for GeneralBinding<F, I> where F: StateFilter, I: RawStoreSharedOwner<F> {
+            impl_signal_inner!(F::Target);
         }
 
-        impl<S, A, I> RawStoreSharedOwnerBase<S, A> for GeneralBinding<S, A, I>
-            where S: Stateful, A: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, A> {
+        impl<F, I> RawStoreSharedOwner<F> for GeneralBinding<F, I> where F: StateFilter, I: RawStoreSharedOwner<F> {
             type Inner = I::Inner;
+
+            fn as_signal(&self) -> &impl Signal<Target=F::Target> {
+                self
+            }
 
             fn inner_ref(&self) -> &Arc<SlockCell<Self::Inner>> {
                 self.inner.inner_ref()
@@ -2414,28 +2455,17 @@ mod store {
             fn arc_clone(&self) -> Self {
                 GeneralBinding {
                     inner: self.inner.arc_clone(),
-                    phantom_state: PhantomData,
-                    phantom_filter: PhantomData
+                    phantom: PhantomData
                 }
             }
         }
 
-        impl<S, A, I> Drop for GeneralBinding<S, A, I>
-            where S: Stateful, A: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, A> {
+        impl<F, I> Drop for GeneralBinding<F, I> where F: StateFilter, I: RawStoreSharedOwner<F> {
             fn drop(&mut self) {
                 I::Inner::strong_count_decrement(self.inner.inner_ref());
             }
         }
-
-        impl<S, A, I> GeneralBinding<S, A, I>
-            where S: Stateful, A: ActionFilter<Target=S>, I: RawStoreSharedOwner<S, A> {
-            
-            pub fn signal(&self) -> impl Signal<S> + Clone {
-                self.binding()
-            }
-        }
     }
-    pub use general_binding::*;
 }
 pub use store::*;
 
@@ -2495,27 +2525,28 @@ mod signal {
     use crate::core::{Slock};
     use crate::util::markers::ThreadMarker;
 
-    pub trait Signal<T> : Sized + Send + Sync + 'static
-        where T: Send + 'static {
+    pub trait Signal: Sized + Send + Sync + 'static {
+        type Target: Send + 'static;
+
         /// Be careful about calling this method within an
         /// action_listener or related fields. While not bad by itself
         /// This can easily cause retain cycles
         /// Instead, similar logic can usually be done by using JoinedSignals,
         /// DerivedStores, or Buffers
-        fn borrow<'a>(&'a self, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=T> + 'a;
+        fn borrow<'a>(&'a self, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=Self::Target> + 'a;
 
         fn listen<F>(&self, listener: F, s: Slock<impl ThreadMarker>)
-            where F: (FnMut(&T, Slock) -> bool) + Send + 'static;
+            where F: (FnMut(&Self::Target, Slock) -> bool) + Send + 'static;
 
-        type MappedOutput<S: Send + 'static>: Signal<S> + Clone;
+        type MappedOutput<S: Send + 'static>: Signal<Target=S> + Clone;
         fn map<S, F>(&self, map: F, s: Slock<impl ThreadMarker>) -> Self::MappedOutput<S>
             where S: Send + 'static,
-                  F: Send + 'static + Fn(&T) -> S;
+                  F: Send + 'static + Fn(&Self::Target) -> S;
     }
 
-    pub trait ActualDiffSignal<T> : Signal<T> where T: Send + 'static + Clone + PartialEq {
+    pub trait ActualDiffSignal : Signal where Self::Target: Send + 'static + Clone + PartialEq {
         fn diff_listen<F>(&self, mut listener: F, s: Slock<impl ThreadMarker>)
-            where F: (FnMut(&T, Slock) -> bool) + Send + 'static
+            where F: (FnMut(&Self::Target, Slock) -> bool) + Send + 'static
         {
             let mut last_val = self.borrow(s).clone();
             self.listen(move |val, s| {
@@ -2529,21 +2560,22 @@ mod signal {
             }, s)
         }
     }
-    impl<T, S> ActualDiffSignal<T> for S where T: Send + Clone + Eq + 'static, S: Signal<T> { }
+    impl<S> ActualDiffSignal for S where S::Target: Send + Clone + Eq + 'static, S: Signal { }
 
-    trait InnerSignal<T: Send> {
-        fn borrow(&self) -> &T;
+    trait InnerSignal {
+        type Target: Send + 'static;
+        fn borrow(&self) -> &Self::Target;
     }
 
     mod signal_audience {
         use crate::core::{Slock};
         use crate::util::markers::ThreadMarker;
 
-        pub(super) struct SignalAudience<T: Send> {
+        pub(super) struct SignalAudience<T> where T: Send + 'static {
             listeners: Vec<Box<dyn FnMut(&T, Slock) -> bool + Send>>
         }
 
-        impl<T> SignalAudience<T> where T: Send {
+        impl<T> SignalAudience<T> where T: Send + 'static {
             pub(super) fn new() -> SignalAudience<T> {
                 SignalAudience {
                     listeners: Vec::new()
@@ -2577,19 +2609,17 @@ mod signal {
 
     mod signal_ref {
         use std::cell::Ref;
-        use std::marker::PhantomData;
         use std::ops::Deref;
         use super::InnerSignal;
 
-        pub(super) struct SignalRef<'a, T: Send, U: InnerSignal<T>> {
+        pub(super) struct SignalRef<'a, U: InnerSignal> {
             pub(super) src: Ref<'a, U>,
-            pub(super) marker: PhantomData<&'a T>
         }
 
-        impl<'a, T, U> Deref for SignalRef<'a, T, U> where T: Send, U: InnerSignal<T> {
-            type Target = T;
+        impl<'a, U> Deref for SignalRef<'a, U> where U: InnerSignal {
+            type Target = U::Target;
 
-            fn deref(&self) -> &T {
+            fn deref(&self) -> &U::Target {
                 self.src.borrow()
             }
         }
@@ -2597,7 +2627,6 @@ mod signal {
     use signal_ref::*;
 
     mod fixed_signal {
-        use std::marker::PhantomData;
         use std::ops::Deref;
         use std::sync::Arc;
         use crate::core::{Slock};
@@ -2608,15 +2637,17 @@ mod signal {
         use super::SignalRef;
         use super::InnerSignal;
 
-        struct InnerFixedSignal<T: Send>(QuarveAllocTag, T);
+        struct InnerFixedSignal<T: Send + 'static>(QuarveAllocTag, T);
 
-        impl<T> InnerSignal<T> for InnerFixedSignal<T> where T: Send {
-            fn borrow(&self) -> &T {
+        impl<T> InnerSignal for InnerFixedSignal<T> where T: Send + 'static {
+            type Target = T;
+
+            fn borrow(&self) -> &Self::Target {
                 &self.1
             }
         }
 
-        pub struct FixedSignal<T: Send + 'static> {
+        pub struct FixedSignal<T> where T: Send + 'static {
             inner: Arc<SlockCell<InnerFixedSignal<T>>>
         }
 
@@ -2636,11 +2667,12 @@ mod signal {
             }
         }
 
-        impl<T> Signal<T> for FixedSignal<T> where T: Send + 'static {
+        impl<T> Signal for FixedSignal<T> where T: Send + 'static {
+            type Target = T;
+
             fn borrow<'a>(&'a self, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=T> + 'a {
                 SignalRef {
                     src: self.inner.borrow(s),
-                    marker: PhantomData
                 }
             }
 
@@ -2666,7 +2698,6 @@ mod signal {
     pub use fixed_signal::*;
 
     mod general_signal {
-        use std::marker::PhantomData;
         use std::ops::{Deref, DerefMut};
         use std::sync::Arc;
         use crate::core::{Slock};
@@ -2677,19 +2708,21 @@ mod signal {
         use super::SignalRef;
         use super::{InnerSignal, SignalAudience};
 
-        struct GeneralInnerSignal<T: Send> {
+        struct GeneralInnerSignal<T> where T: Send + 'static {
             _quarve_tag: QuarveAllocTag,
             val: T,
             audience: SignalAudience<T>
         }
 
-        impl<T> InnerSignal<T> for GeneralInnerSignal<T> where T: Send {
+        impl<T> InnerSignal for GeneralInnerSignal<T> where T: Send + 'static {
+            type Target = T;
+
             fn borrow(&self) -> &T {
                 &self.val
             }
         }
 
-        pub struct GeneralSignal<T: Send + 'static> {
+        pub struct GeneralSignal<T> where T: Send + 'static {
             inner: Arc<SlockCell<GeneralInnerSignal<T>>>
         }
 
@@ -2704,12 +2737,11 @@ mod signal {
         impl<T> GeneralSignal<T> where T: Send + 'static {
             /// add listener is a function to help out generally handling
             /// TokenStore. Otherwise, .listen is used
-            pub(crate) fn from<S, U, F, G>(source: &S, map: F, add_listener: G, s: Slock<impl ThreadMarker>)
+            pub(crate) fn from<S,  F, G>(source: &S, map: F, add_listener: G, s: Slock<impl ThreadMarker>)
                 -> GeneralSignal<T>
-                where S: Signal<U>,
-                      U: Send + 'static,
-                      F: Send + 'static + Fn(&U) -> T,
-                      G: FnOnce(&S, Box<dyn FnMut(&U, Slock) -> bool + Send>, Slock)
+                where S: Signal,
+                      F: Send + 'static + Fn(&S::Target) -> T,
+                      G: FnOnce(&S, Box<dyn FnMut(&S::Target, Slock) -> bool + Send>, Slock)
             {
                 let inner;
                 {
@@ -2742,11 +2774,12 @@ mod signal {
             }
         }
 
-        impl<T> Signal<T> for GeneralSignal<T> where T: Send + 'static {
+        impl<T> Signal for GeneralSignal<T> where T: Send + 'static {
+            type Target = T;
+
             fn borrow<'a>(&'a self, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=T> + 'a {
                 SignalRef {
                     src: self.inner.borrow(s),
-                    marker: PhantomData,
                 }
             }
 
@@ -2792,11 +2825,13 @@ mod signal {
             audience: SignalAudience<V>,
         }
 
-        impl<T, U, V> InnerSignal<V> for JoinedInnerSignal<T, U, V>
+        impl<T, U, V> InnerSignal for JoinedInnerSignal<T, U, V>
             where T: Send + 'static,
                   U: Send + 'static,
                   V: Send + 'static
         {
+            type Target = V;
+
             fn borrow(&self) -> &V {
                 &self.ours
             }
@@ -2846,7 +2881,7 @@ mod signal {
                   U: Send + Clone + 'static,
                   V: Send + 'static
         {
-            pub fn from<F>(lhs: &impl Signal<T>, rhs: &impl Signal<U>, map: F, s: Slock<impl ThreadMarker>)
+            pub fn from<F>(lhs: &impl Signal<Target=T>, rhs: &impl Signal<Target=U>, map: F, s: Slock<impl ThreadMarker>)
                            -> JoinedSignal<T, U, V>
                 where F: Send + Clone + 'static + Fn(&T, &U) -> V
             {
@@ -2904,15 +2939,16 @@ mod signal {
             }
         }
 
-        impl<T, U, V> Signal<V> for JoinedSignal<T, U, V>
+        impl<T, U, V> Signal for JoinedSignal<T, U, V>
             where T: Send + Clone + 'static,
                   U: Send + Clone + 'static,
                   V: Send + 'static
         {
+            type Target = V;
+
             fn borrow<'a>(&'a self, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=V> + 'a {
                 SignalRef {
                     src: self.inner.1.borrow(s),
-                    marker: Default::default(),
                 }
             }
 
@@ -2950,14 +2986,17 @@ mod signal {
         use crate::util::markers::ThreadMarker;
         use crate::util::test_util::QuarveAllocTag;
 
-        pub trait WithCapacitor<T> where T: Send {
+        pub trait WithCapacitor {
+            type Target: Send;
             fn with_capacitor<C>(&self, capacitor: C, s: Slock<impl ThreadMarker>)
-                                 -> CapacitatedSignal<C> where C: Capacitor<Target=T>;
+                                 -> CapacitatedSignal<C> where C: Capacitor<Target=Self::Target>;
         }
 
-        impl<T, S> WithCapacitor<T> for S where T: Send + 'static, S: Signal<T> {
+        impl<S> WithCapacitor for S where S: Signal {
+            type Target = S::Target;
+
             fn with_capacitor<C>(&self, capacitor: C, s: Slock<impl ThreadMarker>)
-                -> CapacitatedSignal<C> where C: Capacitor<Target=T> {
+                -> CapacitatedSignal<C> where C: Capacitor<Target=S::Target> {
                 CapacitatedSignal::from(self, capacitor, s)
             }
         }
@@ -2977,7 +3016,9 @@ mod signal {
             }
         }
 
-        impl<C> InnerSignal<C::Target> for CapacitatedInnerSignal<C> where C: Capacitor {
+        impl<C> InnerSignal for CapacitatedInnerSignal<C> where C: Capacitor {
+            type Target = C::Target;
+
             fn borrow(&self) -> &C::Target {
                 &self.curr
             }
@@ -3048,7 +3089,7 @@ mod signal {
         }
 
         impl<C> CapacitatedSignal<C> where C: Capacitor {
-            pub fn from(source: &impl Signal<C::Target>, mut capacitor: C, s: Slock<impl ThreadMarker>) -> Self {
+            pub fn from(source: &impl Signal<Target=C::Target>, mut capacitor: C, s: Slock<impl ThreadMarker>) -> Self {
                 capacitor.target_set(&*source.borrow(s), None);
                 let (curr, initial_thread) = capacitor.sample(Duration::from_secs(0));
 
@@ -3093,11 +3134,12 @@ mod signal {
             }
         }
 
-        impl<C> Signal<C::Target> for CapacitatedSignal<C> where C: Capacitor {
+        impl<C> Signal for CapacitatedSignal<C> where C: Capacitor {
+            type Target = C::Target;
+
             fn borrow<'a>(&'a self, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=C::Target> + 'a {
                 SignalRef {
                     src: self.inner.1.borrow(s),
-                    marker: Default::default(),
                 }
             }
 
@@ -3125,18 +3167,18 @@ mod signal {
         use crate::util::markers::ThreadMarker;
         use crate::view::Invalidator;
 
-        pub enum SignalOrValue<T, S> where T: Send + 'static, S: Signal<T> {
-            Value(T),
+        pub enum SignalOrValue<S> where S: Signal {
+            Value(S::Target),
             Signal(S)
         }
 
-        impl<T> SignalOrValue<T, FixedSignal<T>> where T: Send + 'static {
+        impl<T> SignalOrValue<FixedSignal<T>> where T: Send + 'static {
             pub fn value(t: T) -> Self {
                 SignalOrValue::Value(t)
             }
         }
 
-        impl<T, S> SignalOrValue<T, S> where T: Send + 'static, S: Signal<T> {
+        impl<S> SignalOrValue<S> where S: Signal {
             pub fn add_invalidator<E: Environment>(&self, inv: &Invalidator<E>, s: Slock<impl ThreadMarker>) {
                 if let SignalOrValue::Signal(sig) = self  {
                     let weak_inv = inv.clone();
@@ -3151,8 +3193,8 @@ mod signal {
                 }
             }
         }
-        impl<T, S> SignalOrValue<T, S> where T: Send + 'static + Copy, S: Signal<T> {
-            pub fn inner(&self, s: Slock<impl ThreadMarker>) -> T {
+        impl<S> SignalOrValue<S> where S::Target: Copy, S: Signal {
+            pub fn inner(&self, s: Slock<impl ThreadMarker>) -> S::Target {
                 match self {
                     SignalOrValue::Signal(sig) => *sig.borrow(s),
                     SignalOrValue::Value(val) => *val

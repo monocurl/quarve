@@ -7,7 +7,7 @@ use crate::view::util::Color;
 use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, ViewProvider};
 use crate::view::modifers::{Frame, FrameModifiable};
 
-pub struct ColorView<S>(SignalOrValue<Color, S>, *mut c_void) where S: Signal<Color>;
+pub struct ColorView<S>(SignalOrValue<S>, *mut c_void) where S: Signal<Target=Color>;
 
 impl ColorView<FixedSignal<Color>> {
     pub fn new(color: Color) -> Self {
@@ -15,13 +15,13 @@ impl ColorView<FixedSignal<Color>> {
     }
 }
 
-impl<S> ColorView<S> where S: Signal<Color> {
+impl<S> ColorView<S> where S: Signal<Target=Color> {
     pub fn new_signal(color: S) -> Self {
         ColorView(SignalOrValue::Signal(color), 0 as *mut c_void)
     }
 }
 
-impl<E, S: Signal<Color>> ViewProvider<E> for ColorView<S> where E: Environment {
+impl<E, S> ViewProvider<E> for ColorView<S> where E: Environment, S: Signal<Target=Color> {
     type UpContext = ();
     type DownContext = ();
 
@@ -82,7 +82,7 @@ impl<E: Environment> IntoViewProvider<E> for Color {
     }
 }
 
-impl<E: Environment, S: Signal<Color>> IntoViewProvider<E> for ColorView<S> {
+impl<E, S> IntoViewProvider<E> for ColorView<S> where E: Environment, S: Signal<Target=Color> {
     type UpContext = ();
     type DownContext = ();
 

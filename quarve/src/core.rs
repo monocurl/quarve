@@ -189,7 +189,7 @@ mod window {
     use crate::native;
     use crate::native::{WindowHandle};
     use crate::native::window::window_exit;
-    use crate::state::{Bindable, Binding, Signal, Store};
+    use crate::state::{Binding, Filterless, Signal, Store};
     use crate::state::slock_cell::{MainSlockCell};
     use crate::util::geo::{Rect, Size};
     use crate::view::{InnerViewBase};
@@ -198,7 +198,7 @@ mod window {
     pub trait WindowProvider: 'static {
         type Env: Environment;
 
-        fn title(&self, s: MSlock) -> impl Signal<String>;
+        fn title(&self, s: MSlock) -> impl Signal<Target=String>;
 
         fn style(&self, s: MSlock);
 
@@ -208,7 +208,7 @@ mod window {
         fn size(&self) -> (Size, Size, Size);
 
         #[allow(unused_variables)]
-        fn is_open(&self, s: MSlock) -> impl Binding<bool> {
+        fn is_open(&self, s: MSlock) -> impl Binding<Filterless<bool>> {
             Store::new(true).binding()
         }
     }
@@ -701,7 +701,7 @@ mod slock {
     use std::time::Duration;
     use crate::core::{timed_worker};
     use crate::native;
-    use crate::state::{ActionFilter, Binding, FixedSignal, IntoAction, JoinedSignal, CapacitatedSignal, Signal, Stateful};
+    use crate::state::{StateFilter, Binding, FixedSignal, IntoAction, JoinedSignal, CapacitatedSignal, Signal, Stateful};
     use crate::state::capacitor::IncreasingCapacitor;
     use crate::util::markers::{AnyThreadMarker, MainThreadMarker, ThreadMarker};
     use crate::util::rust_util::PhantomUnsendUnsync;
@@ -855,16 +855,15 @@ mod slock {
             timed_worker(f)
         }
 
-        pub fn map<S, T, U, F>(self, signal: &S, map: F) -> S::MappedOutput<U>
-            where S: Signal<T>,
-                  T: Send + 'static,
+        pub fn map<S, U, F>(self, signal: &S, map: F) -> S::MappedOutput<U>
+            where S: Signal,
                   U: Send + 'static,
-                  F: Send + 'static + Fn(&T) -> U
+                  F: Send + 'static + Fn(&S::Target) -> U
         {
             signal.map(map, self.as_general_slock())
         }
 
-        pub fn join<T, U>(self, t: &impl Signal<T>, u: &impl Signal<U>)
+        pub fn join<T, U>(self, t: &impl Signal<Target=T>, u: &impl Signal<Target=U>)
                           -> JoinedSignal<T, U, (T, U)>
             where T: Send + Clone + 'static,
                   U: Send + Clone + 'static
@@ -872,7 +871,7 @@ mod slock {
             JoinedSignal::from(t, u, |t, u| (t.clone(), u.clone()), self.as_general_slock())
         }
 
-        pub fn join_map<T, U, V, F>(self, t: &impl Signal<T>, u: &impl Signal<U>, map: F)
+        pub fn join_map<T, U, V, F>(self, t: &impl Signal<Target=T>, u: &impl Signal<Target=U>, map: F)
                                     -> JoinedSignal<T, U, V>
             where T: Send + Clone + 'static,
                   U: Send + Clone + 'static,
@@ -882,13 +881,13 @@ mod slock {
             JoinedSignal::from(t, u, map, self.as_general_slock())
         }
 
-        pub fn apply<S, F>(self, action: impl IntoAction<S::Action, S>, to: &impl Binding<S, F>)
-            where S: Stateful, F: ActionFilter<Target=S>
+        pub fn apply<F>(self, action: impl IntoAction<<F::Target as Stateful>::Action, F::Target>, to: &impl Binding<F>)
+            where F: StateFilter
         {
             to.apply(action, self.as_general_slock());
         }
 
-        pub fn read<T>(self, from: &'a impl Signal<T>)
+        pub fn read<T>(self, from: &'a impl Signal<Target=T>)
                            -> impl Deref<Target=T> + 'a where T: Send + 'static {
             from.borrow(self.as_general_slock())
         }

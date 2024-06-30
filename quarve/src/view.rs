@@ -6,7 +6,7 @@ pub use view::*;
 
 mod into_view_provider {
     use crate::core::{Environment, MSlock};
-    use crate::state::{FixedSignal, Signal};
+    use crate::state::{Signal};
     use crate::util::geo::ScreenUnit;
     use crate::view::modifers::{Layer, LayerIVP, LayerModifiable, post_hide_wrap, post_show_wrap, pre_hide_wrap, pre_show_wrap};
     use crate::view::util::Color;
@@ -48,7 +48,7 @@ mod into_view_provider {
         }
 
         fn border(self, color: Color, width: impl Into<ScreenUnit>)
-            -> LayerIVP<E, Self, impl Signal<Color>, impl Signal<ScreenUnit>, impl Signal<Color>, impl Signal<ScreenUnit>, impl Signal<f32>>
+            -> LayerIVP<E, Self, impl Signal<Target=Color>, impl Signal<Target=ScreenUnit>, impl Signal<Target=Color>, impl Signal<Target=ScreenUnit>, impl Signal<Target=f32>>
         {
             self.layer(Layer::default()
                 .border(color, width)
@@ -56,7 +56,7 @@ mod into_view_provider {
         }
 
         fn bg_color(self, color: Color)
-            -> LayerIVP<E, Self, impl Signal<Color>, impl Signal<ScreenUnit>, impl Signal<Color>, impl Signal<ScreenUnit>, FixedSignal<f32>>
+            -> LayerIVP<E, Self, impl Signal<Target=Color>, impl Signal<Target=ScreenUnit>, impl Signal<Target=Color>, impl Signal<Target=ScreenUnit>, impl Signal<Target=f32>>
         {
             self.layer(Layer::default()
                 .bg_color(color)
@@ -72,10 +72,6 @@ pub use view_provider::*;
 pub mod layout;
 pub mod modifers;
 pub mod util;
-
-// #[cfg(debug_assertions)]
-#[allow(unused_variables)]
-pub mod dev_views;
 
 pub mod color_view;
 pub mod portal;
