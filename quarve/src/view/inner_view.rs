@@ -1,7 +1,7 @@
 use std::any::Any;
 use std::ffi::c_void;
 use std::sync::{Arc, Weak};
-use crate::core::{Environment, MSlock, Slock, WindowEnvironmentBase};
+use crate::core::{Environment, MSlock, Slock, WindowViewCallback};
 use crate::native;
 use crate::native::view::{view_add_child_at, view_clear_children, view_remove_child, view_set_frame};
 use crate::state::slock_cell::{MainSlockCell};
@@ -54,7 +54,7 @@ pub(crate) trait InnerViewBase<E> where E: Environment {
     fn show(
         &mut self,
         this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>,
-        window: &Weak<MainSlockCell<dyn WindowEnvironmentBase<E>>>,
+        window: &Weak<MainSlockCell<dyn WindowViewCallback<E>>>,
         e: &mut E,
         depth: u32,
         s: MSlock
@@ -90,6 +90,8 @@ pub(crate) struct InnerView<E, P> where E: Environment,
     last_suggested: Rect,
     last_exclusion: Rect,
     last_view_frame: Rect,
+    // union of this view frame and view frame of all others
+    last_bounding_box: Rect,
 
     /* provider */
     provider: P
@@ -341,7 +343,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
     fn show(
         &mut self,
         this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>,
-        window: &Weak<MainSlockCell<dyn WindowEnvironmentBase<E>>>,
+        window: &Weak<MainSlockCell<dyn WindowViewCallback<E>>>,
         e: &mut E,
         depth: u32,
         s: MSlock
@@ -479,7 +481,7 @@ pub(crate) struct Graph<E> where E: Environment {
     backing: NativeView,
 
     superview: Option<Weak<MainSlockCell<dyn InnerViewBase<E>>>>,
-    window: Option<Weak<MainSlockCell<dyn WindowEnvironmentBase<E>>>>,
+    window: Option<Weak<MainSlockCell<dyn WindowViewCallback<E>>>>,
     // u32::MAX indicates detached view
     depth: u32,
 
@@ -685,6 +687,7 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
                 last_suggested: Rect::default(),
                 last_exclusion: Rect::default(),
                 last_view_frame: Rect::default(),
+                last_bounding_box: Rect::default(),
                 provider,
             }, s)
         )

@@ -131,13 +131,6 @@ back_window_set_root(void *_window, void *root_view) {
     [[window contentView] addSubview: view];
 }
 
-size
-back_window_get_size(void *_window) {
-    Window* window = _window;
-    NSRect frame = [window contentView].frame;
-    return (size) {(double) frame.size.width, (double) frame.size.height };
-}
-
 void
 back_window_set_size(void *_window, double w, double h) {
     Window* window = _window;
@@ -169,18 +162,6 @@ back_window_free(void *_window) {
 }
 
 /* view methods */
-void *
-debug_back_view_init() {
-    NSView* t = [[NSView alloc] initWithFrame:NSMakeRect(0,0,100,100)];
-    [t setWantsLayer: YES];
-//     [t.layer setBackgroundColor: [[[NSColor whiteColor] colorWithAlphaComponent: 0.5] CGColor]];
-    t.layer.borderWidth = 2.0;
-//     t.layer.cornerRadius = 10.0;
-    t.layer.borderColor = [NSColor systemBlueColor].CGColor;
-
-    return t;
-}
-
 void *
 back_view_layout_init() {
     return [[NSView alloc] init];

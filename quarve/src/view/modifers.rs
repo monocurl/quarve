@@ -161,7 +161,7 @@ mod identity_modifier {
             self.source.pop_environment(env, s)
         }
 
-        fn handle_event(&mut self, e: Event, s: MSlock) -> EventResult {
+        fn handle_event(&mut self, e: &Event, s: MSlock) -> EventResult {
             self.source.handle_event(e, s)
         }
     }
@@ -397,7 +397,7 @@ mod provider_modifier {
             self.provider.pop_environment(env, s);
         }
 
-        fn handle_event(&mut self, e: Event, s: MSlock) -> EventResult {
+        fn handle_event(&mut self, e: &Event, s: MSlock) -> EventResult {
             self.provider.handle_event(e, s)
         }
     }
@@ -1530,7 +1530,7 @@ mod when_modifier {
             self.provider.pop_environment(env, s);
         }
 
-        fn handle_event(&mut self, e: Event, s: MSlock) -> EventResult {
+        fn handle_event(&mut self, e: &Event, s: MSlock) -> EventResult {
             self.provider.handle_event(e, s)
         }
     }
@@ -1712,7 +1712,7 @@ mod env_modifier {
             }
         }
 
-        fn handle_event(&mut self, e: Event, s: MSlock) -> EventResult {
+        fn handle_event(&mut self, e: &Event, s: MSlock) -> EventResult {
             self.wrapping.handle_event(e, s)
         }
     }
@@ -1904,7 +1904,7 @@ mod show_hide_modifier {
             self.wrapping.pop_environment(env, s);
         }
 
-        fn handle_event(&mut self, e: Event, s: MSlock) -> EventResult {
+        fn handle_event(&mut self, e: &Event, s: MSlock) -> EventResult {
             self.wrapping.handle_event(e, s)
         }
     }

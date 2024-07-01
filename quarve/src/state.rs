@@ -118,39 +118,23 @@ mod listener {
     use crate::core::Slock;
     use crate::state::Stateful;
 
-    pub(super) mod sealed {
-        use crate::core::Slock;
-        use crate::state::listener::DirectlyInvertible;
-
-        // I don't like this
-        // FIXME Maybe it can be done with dyn Any in a better
-        // fashion? I tried but it seems that right_multiply
-        // is hard to take out the action, which may result in
-        // requiring stateful to be clone, which is probably a no go
-        // (basically the issue is actions need to be Box<dyn Invertible>
-        // and box<dyn any> at the same time, hard to work around?)
-        pub(in crate::state) trait DirectlyInvertibleBase {
-            // This function must only be called once per instance
-            // (We cannot take ownership since the caller is often unsized)
-            fn invert(&mut self, s: Slock);
-
-            /// It must be guaranteed by the caller
-            /// the other type is exactly the same as our type
-            /// and with the same id
-            unsafe fn right_multiply(&mut self, by: Box<dyn DirectlyInvertible>, s: Slock);
-
-            // gets a pointer to the action instance
-            // (void pointer)
-            unsafe fn action_pointer(&self, s: Slock) -> *const ();
-
-            // forgets the reference action without dropping it
-            unsafe fn forget_action(&mut self, s: Slock);
-        }
-    }
-
     #[allow(private_bounds)]
-    pub trait DirectlyInvertible: Send + sealed::DirectlyInvertibleBase {
+    pub trait DirectlyInvertible: Send {
+        // This function must only be called once per instance
+        // (We cannot take ownership since the caller is often unsized)
+        fn invert(&mut self, s: Slock);
 
+        /// It must be guaranteed by the caller
+        /// the other type is exactly the same as our type
+        /// and with the same id
+        unsafe fn right_multiply(&mut self, by: Box<dyn DirectlyInvertible>, s: Slock);
+
+        // gets a pointer to the action instance
+        // (void pointer)
+        unsafe fn action_pointer(&self, s: Slock) -> *const ();
+
+        // forgets the reference action without dropping it
+        unsafe fn forget_action(&mut self, s: Slock);
         fn id(&self) -> usize;
     }
 
@@ -1258,13 +1242,11 @@ mod store {
     }
 
     mod raw_store_shared_owner {
-        use std::marker::PhantomData;
         use std::sync::Arc;
         use crate::core::{Slock};
         use crate::state::{StateFilter, Binding, Filter, Filterable, IntoAction, Signal, Stateful};
         use crate::state::listener::StateListener;
         use crate::state::slock_cell::SlockCell;
-        use crate::state::store::general_binding::GeneralBinding;
         use crate::state::store::raw_store::RawStore;
         use crate::util::markers::ThreadMarker;
 
@@ -1315,7 +1297,6 @@ mod store {
         use std::sync::Weak;
         use crate::core::Slock;
         use crate::state::listener::DirectlyInvertible;
-        use crate::state::listener::sealed::DirectlyInvertibleBase;
         use crate::state::slock_cell::SlockCell;
         use crate::state::{StateFilter, Stateful};
         use crate::state::store::raw_store::RawStore;
@@ -1336,7 +1317,7 @@ mod store {
             }
         }
 
-        impl<F, I> DirectlyInvertibleBase for ActionInverter<F, I> where F: StateFilter, I: RawStore<F> {
+        impl<F, I> DirectlyInvertible for ActionInverter<F, I> where F: StateFilter, I: RawStore<F> {
             fn invert(&mut self, s: Slock) {
                 let Some(state) = self.state.upgrade() else {
                     return;
@@ -1363,9 +1344,7 @@ mod store {
             unsafe fn forget_action(&mut self, _s: Slock) {
                 std::mem::forget(self.action.take());
             }
-        }
 
-        impl<F, I> DirectlyInvertible for ActionInverter<F, I> where F: StateFilter, I: RawStore<F> {
             fn id(&self) -> usize {
                 self.state.as_ptr() as usize
             }
@@ -1951,7 +1930,6 @@ mod store {
     pub use token_store::*;
 
     mod derived_store {
-        use std::hash::Hash;
         use std::marker::PhantomData;
         use std::ops::{Deref, DerefMut};
         use std::sync::Arc;
@@ -1962,7 +1940,7 @@ mod store {
             },
             core::Slock,
         };
-        use crate::state::{Binding, StateListener, TokenStore};
+        use crate::state::{Binding, StateListener};
         use crate::state::{Filter};
         use crate::state::listener::{GeneralListener, InverseListener};
         use crate::state::slock_cell::SlockCell;
@@ -2118,7 +2096,7 @@ mod store {
         use std::sync::{Arc, Mutex};
         use std::sync::atomic::AtomicUsize;
         use std::sync::atomic::Ordering::Release;
-        use crate::state::{StateListener, GeneralListener, InverseListener, Filterless, DerivedStore};
+        use crate::state::{StateListener, GeneralListener, InverseListener, Filterless};
         use crate::state::store::state_ref::StateRef;
         use crate::{
             state::{

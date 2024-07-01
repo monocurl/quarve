@@ -131,8 +131,8 @@ pub trait ViewProvider<E>: Sized + 'static
     }
 
     #[allow(unused_variables)]
-    fn handle_event(&mut self, e: Event, s: MSlock) -> EventResult {
-        EventResult::NotHandled(e)
+    fn handle_event(&mut self, e: &Event, s: MSlock) -> EventResult {
+        EventResult::NotHandled
     }
 }
 
@@ -265,7 +265,7 @@ mod upcontext_setter {
                 .pop_environment(env, s);
         }
 
-        fn handle_event(&mut self, e: Event, s: MSlock) -> EventResult {
+        fn handle_event(&mut self, e: &Event, s: MSlock) -> EventResult {
             self.0
                 .handle_event(e, s)
         }
@@ -384,7 +384,7 @@ mod upcontext_adapter {
                 .pop_environment(env, s);
         }
 
-        fn handle_event(&mut self, e: Event, s: MSlock) -> EventResult {
+        fn handle_event(&mut self, e: &Event, s: MSlock) -> EventResult {
             self.0
                 .handle_event(e, s)
         }
@@ -435,7 +435,7 @@ impl<E, U, D> ViewProvider<E> for DummyProvider<E, U, D>
         unreachable!()
     }
 
-    fn init_backing(&mut self, _invalidator: Invalidator<E>, _subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+    fn init_backing(&mut self, _invalidator: Invalidator<E>, _subtree: &mut Subtree<E>, _backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, _s: MSlock) -> NativeView {
         unreachable!()
     }
 

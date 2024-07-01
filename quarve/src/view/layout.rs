@@ -371,6 +371,7 @@ mod vec_layout {
         }
         pub use impl_binding_layout_extension;
     }
+    pub use macros::*;
 
     // FIXME could make more organized
     mod hetero_layout {

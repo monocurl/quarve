@@ -195,7 +195,7 @@ mod conditional_vp {
             }
         }
 
-        fn up_context(&mut self, s: MSlock) -> Self::UpContext {
+        fn up_context(&mut self, _s: MSlock) -> Self::UpContext {
             ()
         }
 
@@ -252,11 +252,11 @@ mod conditional_vp {
         type UpContext = ();
         type DownContext = D;
 
-        fn intrinsic_size(&mut self, s: MSlock) -> Size {
+        fn intrinsic_size(&mut self, _s: MSlock) -> Size {
             Size::new(0.0, 0.0)
         }
 
-        fn xsquished_size(&mut self, s: MSlock) -> Size {
+        fn xsquished_size(&mut self, _s: MSlock) -> Size {
             Size::new(0.0, 0.0)
         }
 
@@ -278,11 +278,11 @@ mod conditional_vp {
 
         fn init_backing(&mut self, _invalidator: Invalidator<E>, _subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, s: MSlock) -> NativeView {
             backing_source
-                .map(|(nv, this)| nv)
+                .map(|(nv, _this)| nv)
                 .unwrap_or_else(|| NativeView::layout_view(s))
         }
 
-        fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
+        fn layout_up(&mut self, subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, s: MSlock) -> bool {
             if subtree.len() != 0 {
                 subtree.clear_subviews(s);
                 true
@@ -298,7 +298,6 @@ mod conditional_vp {
         }
     }
 }
-pub use conditional_vp::*;
 
 pub fn view_if<S, E, P>(cond: S, view: P) -> IfIVP<S, E, P, NullNode<E, P::DownContext>> where S: Signal<Target=bool>, E: Environment, P: IntoViewProvider<E> {
     IfIVP {

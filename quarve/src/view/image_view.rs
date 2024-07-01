@@ -68,7 +68,7 @@ impl<E> ViewProvider<E> for ImageViewVP where E: Environment {
         self.intrinsic
     }
 
-    fn up_context(&mut self, s: MSlock) -> Self::UpContext {
+    fn up_context(&mut self, _s: MSlock) -> Self::UpContext {
         ()
     }
 

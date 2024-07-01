@@ -429,7 +429,7 @@ impl<E, U, D, P, W> ViewProvider<E> for PortalSenderVP<E, U, D, P, W>
         self.wrapping.pop_environment(env, s);
     }
 
-    fn handle_event(&mut self, e: Event, s: MSlock) -> EventResult {
+    fn handle_event(&mut self, e: &Event, s: MSlock) -> EventResult {
         self.wrapping.handle_event(e, s)
     }
 }

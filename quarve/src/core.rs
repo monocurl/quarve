@@ -122,7 +122,7 @@ mod application {
     use std::sync::Arc;
     use crate::core::{MSlock, slock_main_owner};
     use crate::core::life_cycle::setup_timing_thread;
-    use crate::core::window::{Window, WindowBase, WindowProvider};
+    use crate::core::window::{Window, WindowNativeCallback, WindowProvider};
     use crate::native;
     use crate::state::slock_cell::{MainSlockCell};
 
@@ -143,7 +143,7 @@ mod application {
 
     pub struct Application {
         provider: Box<dyn ApplicationProvider>,
-        pub(super) windows: RefCell<Vec<Arc<MainSlockCell<dyn WindowBase>>>>
+        pub(super) windows: RefCell<Vec<Arc<MainSlockCell<dyn WindowNativeCallback>>>>
     }
 
     impl Application {
@@ -181,11 +181,12 @@ pub use application::*;
 
 mod window {
     use std::cell::{Cell, RefCell};
-    use std::cmp::Ordering;
     use std::collections::BinaryHeap;
     use std::ops::{Deref, DerefMut};
     use std::sync::{Arc, Weak};
     use crate::core::{APP, Environment, MSlock, run_main_async, run_main_maybe_sync, Slock};
+    use crate::core::window::invalidated_entry::InvalidatedEntry;
+    use crate::event::Event;
     use crate::native;
     use crate::native::{WindowHandle};
     use crate::native::window::window_exit;
@@ -194,6 +195,46 @@ mod window {
     use crate::util::geo::{Rect, Size};
     use crate::view::{InnerViewBase};
     use crate::view::{ViewProvider};
+
+    mod invalidated_entry {
+        use std::cmp::Ordering;
+        use std::sync::Weak;
+        use crate::core::Environment;
+        use crate::state::slock_cell::MainSlockCell;
+        use crate::view::InnerViewBase;
+
+        pub(super) struct InvalidatedEntry<E> where E: Environment {
+            pub(super) view: Weak<MainSlockCell<dyn InnerViewBase<E>>>,
+            // use negative depth to flip ordering in some cases
+            pub(super) depth: i32
+        }
+
+        impl<E> PartialEq<Self> for InvalidatedEntry<E> where E: Environment {
+            fn eq(&self, other: &Self) -> bool {
+                self.depth == other.depth && std::ptr::addr_eq(self.view.as_ptr(), other.view.as_ptr())
+            }
+        }
+
+        impl<E> Eq for InvalidatedEntry<E> where E: Environment { }
+
+        impl<E> PartialOrd for InvalidatedEntry<E> where E: Environment {
+            fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+                Some(self.cmp(other))
+            }
+        }
+
+        impl<E> Ord for InvalidatedEntry<E> where E: Environment {
+            fn cmp(&self, other: &Self) -> Ordering {
+                if self.depth != other.depth {
+                    self.depth.cmp(&other.depth)
+                }
+                else {
+                    self.view.as_ptr().cast::<()>()
+                        .cmp(&other.view.as_ptr().cast::<()>())
+                }
+            }
+        }
+    }
 
     pub trait WindowProvider: 'static {
         type Env: Environment;
@@ -213,7 +254,7 @@ mod window {
         }
     }
 
-    pub(crate) trait WindowBase {
+    pub(crate) trait WindowNativeCallback {
         /* delegate methods */
         fn can_close(&self, s: MSlock) -> bool;
         fn hide_root(&self, s: MSlock);
@@ -221,52 +262,27 @@ mod window {
         fn handle(&self) -> WindowHandle;
 
         fn layout_full(&self, w: f64, h: f64, s: MSlock);
+
+        fn dispatch_native_event(&self, event: Event, s: MSlock);
     }
 
-    pub(crate) trait WindowEnvironmentBase<E>: WindowBase where E: Environment {
+    pub(crate) trait WindowViewCallback<E> where E: Environment {
         // depth = only consider nodes with strictly greater depth (use -1 for all)
         fn layout_up(&self, env: &mut E, right_below: Option<Arc<MainSlockCell<dyn InnerViewBase<E>>>>, depth: i32, s: MSlock);
 
         // this method is guaranteed to only touch
         // Send parts of self
         // handle is because of some async operations
-        fn invalidate_view(&self, handle: Weak<MainSlockCell<dyn WindowEnvironmentBase<E>>>, view: Weak<MainSlockCell<dyn InnerViewBase<E>>>, depth: u32, s: Slock);
-    }
-
-    struct InvalidatedEntry<E> where E: Environment {
-        view: Weak<MainSlockCell<dyn InnerViewBase<E>>>,
-        // use negative depth to flip ordering in some cases
-        depth: i32
-    }
-
-    impl<E> PartialEq<Self> for InvalidatedEntry<E> where E: Environment {
-        fn eq(&self, other: &Self) -> bool {
-            self.depth == other.depth && std::ptr::addr_eq(self.view.as_ptr(), other.view.as_ptr())
-        }
-    }
-
-    impl<E> Eq for InvalidatedEntry<E> where E: Environment { }
-
-    impl<E> PartialOrd for InvalidatedEntry<E> where E: Environment {
-        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-            Some(self.cmp(other))
-        }
-    }
-
-    impl<E> Ord for InvalidatedEntry<E> where E: Environment {
-        fn cmp(&self, other: &Self) -> Ordering {
-            if self.depth != other.depth {
-                self.depth.cmp(&other.depth)
-            }
-            else {
-                self.view.as_ptr().cast::<()>()
-                    .cmp(&other.view.as_ptr().cast::<()>())
-            }
-        }
+        fn invalidate_view(&self, handle: Weak<MainSlockCell<dyn WindowViewCallback<E>>>, view: Weak<MainSlockCell<dyn InnerViewBase<E>>>, depth: u32, s: Slock);
     }
 
     pub struct Window<P> where P: WindowProvider {
         provider: P,
+
+        /* current state */
+        focus: RefCell<Option<Weak<MainSlockCell<dyn InnerViewBase<P::Env>>>>>,
+        default_focus: RefCell<Vec<Weak<MainSlockCell<dyn InnerViewBase<P::Env>>>>>,
+        key_listeners: RefCell<Vec<Weak<MainSlockCell<dyn InnerViewBase<P::Env>>>>>,
 
         // to prevent reentry
         // it is common to take out the environment
@@ -276,7 +292,7 @@ mod window {
         // when invalidating
         up_views: RefCell<BinaryHeap<InvalidatedEntry<P::Env>>>,
         down_views: RefCell<BinaryHeap<InvalidatedEntry<P::Env>>>,
-        performing_layout_down: RefCell<bool>,
+        performing_layout_down: Cell<bool>,
 
         /* native */
         handle: WindowHandle,
@@ -286,7 +302,7 @@ mod window {
     impl<P> Window<P> where P: WindowProvider {
         // order things are done is a bit awkward
         // but need to coordinate between many things
-        pub(super) fn new(provider: P, s: MSlock) -> Arc<MainSlockCell<dyn WindowBase>> {
+        pub(super) fn new(provider: P, s: MSlock) -> Arc<MainSlockCell<dyn WindowNativeCallback>> {
             let root_env = P::Env::root_environment();
 
             let handle = native::window::window_init(s);
@@ -295,10 +311,13 @@ mod window {
 
             let window = Window {
                 provider,
+                focus: RefCell::new(None),
+                default_focus: RefCell::new(Vec::new()),
+                key_listeners: RefCell::new(Vec::new()),
                 environment: Cell::new(Some(Box::new(root_env))),
                 up_views: RefCell::new(BinaryHeap::new()),
                 down_views: RefCell::new(BinaryHeap::new()),
-                performing_layout_down: RefCell::new(false),
+                performing_layout_down: Cell::new(false),
                 handle,
                 content_view
             };
@@ -311,7 +330,7 @@ mod window {
             // set handle of backing as well as root view
             {
                 let borrow = b.borrow_main(s);
-                native::window::window_set_handle(handle, borrow.deref() as &dyn WindowBase, s);
+                native::window::window_set_handle(handle, borrow.deref() as &dyn WindowNativeCallback, s);
 
                 let content_borrow = borrow.content_view.borrow_main(s);
                 debug_assert!(!content_borrow.backing().is_null());
@@ -338,7 +357,7 @@ mod window {
         // due to reentry
         fn mount_content_view(this: &Arc<MainSlockCell<Window<P>>>, s: MSlock, borrow: &Window<P>) {
             let weak_window = Arc::downgrade(this)
-                as Weak<MainSlockCell<dyn WindowEnvironmentBase<P::Env>>>;
+                as Weak<MainSlockCell<dyn WindowViewCallback<P::Env>>>;
 
             let mut stolen_env = borrow.environment.take().unwrap();
             let content_copy = borrow.content_view.clone();
@@ -495,7 +514,7 @@ mod window {
         }
     }
 
-    impl<P> WindowBase for Window<P> where P: WindowProvider {
+    impl<P> WindowNativeCallback for Window<P> where P: WindowProvider {
         fn can_close(&self, s: MSlock) -> bool {
             // let can_close = self.provider.can_close(s);
             let can_close = true;
@@ -527,7 +546,7 @@ mod window {
             self.layout_up(env.deref_mut(), None, -1, s);
 
             // handle layout down
-            *self.performing_layout_down.borrow_mut() = true;
+            self.performing_layout_down.set(true);
             let mut env_spot = None;
             let mut env_depth: i32 = -1;
 
@@ -572,11 +591,15 @@ mod window {
 
             Self::walk_env(env.deref_mut(), &mut env_spot, None, &mut env_depth, -1, s);
             self.environment.set(Some(env));
-            *self.performing_layout_down.borrow_mut() = false;
+            self.performing_layout_down.set(false);
+        }
+
+        fn dispatch_native_event(&self, event: Event, s: MSlock) {
+            todo!()
         }
     }
 
-    impl<P> WindowEnvironmentBase<P::Env> for Window<P> where P: WindowProvider {
+    impl<P> WindowViewCallback<P::Env> for Window<P> where P: WindowProvider {
         fn layout_up(&self, env: &mut P::Env, right_below: Option<Arc<MainSlockCell<dyn InnerViewBase<P::Env>>>>, depth: i32, s: MSlock) {
             // the environment is right above this node
             let mut env_spot = right_below.clone();
@@ -662,8 +685,8 @@ mod window {
             Self::walk_env(env, &mut env_spot, None, &mut env_depth, depth, s);
         }
 
-        fn invalidate_view(&self, handle: Weak<MainSlockCell<dyn WindowEnvironmentBase<P::Env>>>, view: Weak<MainSlockCell<dyn InnerViewBase<P::Env>>>, depth: u32, s: Slock) {
-            assert!(!*self.performing_layout_down.borrow(), "Cannot call invalidator while performing layout down (try to move to layout_up instead)!");
+        fn invalidate_view(&self, handle: Weak<MainSlockCell<dyn WindowViewCallback<P::Env>>>, view: Weak<MainSlockCell<dyn InnerViewBase<P::Env>>>, depth: u32, s: Slock) {
+            assert!(!self.performing_layout_down.get(), "Cannot call invalidator while performing layout down (try to move to layout_up instead)!");
 
             // note that we're only touching send parts of self
             let mut borrow = self.up_views.borrow_mut();

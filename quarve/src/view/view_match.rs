@@ -96,7 +96,7 @@ impl<E, S, U, D, F> ViewProvider<E> for ViewMatchVP<E, S, U, D, F>
     fn init_backing(&mut self, invalidator: Invalidator<E>, _subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, s: MSlock) -> NativeView {
         let dirty = self.dirty.weak_buffer();
         self.signal.diff_listen(move |_val, s| {
-            let (Some(invalidator), Some(mut dirty)) =
+            let (Some(invalidator), Some(dirty)) =
                 (invalidator.upgrade(), dirty.upgrade()) else {
                 return false;
             };

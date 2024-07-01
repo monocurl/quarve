@@ -1,12 +1,12 @@
-use crate::core::{WindowBase};
+use crate::core::{WindowNativeCallback};
 
 pub type WindowHandle = usize;
 
 #[repr(C)]
 struct FatPointer(usize, usize);
 
-impl From<&dyn WindowBase> for FatPointer {
-    fn from(value: &dyn WindowBase) -> Self {
+impl From<&dyn WindowNativeCallback> for FatPointer {
+    fn from(value: &dyn WindowNativeCallback) -> Self {
         unsafe {
             std::mem::transmute(value)
         }
@@ -14,7 +14,7 @@ impl From<&dyn WindowBase> for FatPointer {
 }
 
 impl FatPointer {
-    fn into_window(self) -> &'static dyn WindowBase {
+    fn into_window(self) -> &'static dyn WindowNativeCallback {
         unsafe {
             std::mem::transmute(self)
         }
@@ -115,9 +115,8 @@ pub mod global {
 
 pub mod window {
     use std::ffi::{c_void, CString};
-    use crate::core::{MSlock, WindowBase};
+    use crate::core::{MSlock, WindowNativeCallback};
     use crate::native::{FatPointer, WindowHandle};
-    use crate::util::geo::Size;
 
     extern "C" {
         fn back_window_init() -> *mut c_void;
@@ -125,7 +124,6 @@ pub mod window {
         fn back_window_set_title(window: *mut c_void, title: *const u8);
         fn back_window_set_needs_layout(window: *mut c_void);
         fn back_window_set_root(window: *mut c_void, root: *mut c_void);
-        fn back_window_get_size(window: *mut c_void) -> Size;
         fn back_window_set_size(window: *mut c_void, w: f64, h: f64);
         fn back_window_set_min_size(window: *mut c_void, w: f64, h: f64);
         fn back_window_set_max_size(window: *mut c_void, w: f64, h: f64);
@@ -141,7 +139,7 @@ pub mod window {
         }
     }
 
-    pub fn window_set_handle(window: WindowHandle, handle: &dyn WindowBase, _s: MSlock) {
+    pub fn window_set_handle(window: WindowHandle, handle: &dyn WindowNativeCallback, _s: MSlock) {
         unsafe {
             back_window_set_handle(window as *mut c_void, std::mem::transmute(handle));
         }
@@ -152,13 +150,6 @@ pub mod window {
             let cstring = CString::new(title).unwrap();
             let bytes = cstring.as_bytes().as_ptr();
             back_window_set_title(window as *mut c_void, bytes)
-        }
-    }
-
-    #[allow(unused_variables)]
-    pub fn window_get_size(window: WindowHandle, s: MSlock) -> Size {
-        unsafe {
-            back_window_get_size(window as *mut c_void)
         }
     }
 
@@ -213,8 +204,6 @@ pub mod view {
     use crate::view::util::Color;
 
     extern "C" {
-        fn debug_back_view_init() -> *mut c_void;
-
         fn back_view_layout_init() -> *mut c_void;
         fn back_view_clear_children(view: *mut c_void);
         fn back_view_remove_child(view: *mut c_void, index: c_ulonglong);
@@ -229,12 +218,6 @@ pub mod view {
         /* image view methods */
         fn back_view_image_init(path: *const u8) -> *mut c_void;
         fn back_view_image_size(image: *mut c_void) -> Size;
-    }
-
-    pub fn debug_view_init(_s: MSlock) -> *mut c_void {
-        unsafe {
-            debug_back_view_init()
-        }
     }
 
     pub fn view_clear_children(view: *mut c_void, _s: MSlock) {
@@ -339,7 +322,7 @@ pub mod view {
 pub mod path {
     use std::path::PathBuf;
 
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", not(debug_assertions)))]
     pub fn production_resource_root() -> PathBuf {
         std::env::current_exe().unwrap()
             .parent().unwrap()
