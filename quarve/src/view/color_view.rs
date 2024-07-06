@@ -59,7 +59,7 @@ impl<E, S> ViewProvider<E> for ColorView<S> where E: Environment, S: Signal<Targ
             NativeView::layer_view(s)
         };
 
-        self.1 = nv.view();
+        self.1 = nv.backing();
         nv
     }
 

@@ -2,6 +2,7 @@ use std::any::Any;
 use std::ffi::c_void;
 use std::sync::{Arc, Weak};
 use crate::core::{Environment, MSlock, Slock, WindowViewCallback};
+use crate::event::{Event, EventResult};
 use crate::native;
 use crate::native::view::{view_add_child_at, view_clear_children, view_remove_child, view_set_frame};
 use crate::state::slock_cell::{MainSlockCell};
@@ -16,7 +17,7 @@ pub(crate) trait InnerViewBase<E> where E: Environment {
 
     // must be called after show was called at least once
     // (otherwise will likely be null)
-    fn backing(&self) -> *mut c_void;
+    fn native_view(&self) -> *mut c_void;
 
     /* tree methods */
     fn superview(&self) -> Option<Arc<MainSlockCell<dyn InnerViewBase<E>>>>;
@@ -24,6 +25,14 @@ pub(crate) trait InnerViewBase<E> where E: Environment {
     fn graph(&mut self) -> &mut Graph<E>;
 
     fn depth(&self) -> u32;
+
+    // true if handled
+    fn handle_mouse_event(&mut self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, event: &mut Event, prev_position: Point, s: MSlock) -> bool;
+    // does not recurse
+    fn handle_key_event(&mut self, event: &mut Event, s: MSlock) -> EventResult;
+
+    fn unfocused(&mut self, rel_depth: u32, s: MSlock);
+    fn focused(&mut self, rel_depth: u32, s: MSlock);
 
     /* layout methods */
     fn needs_layout_up(&self) -> bool;
@@ -40,8 +49,10 @@ pub(crate) trait InnerViewBase<E> where E: Environment {
     // the last frame is valid
     fn try_layout_down(&mut self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, env: &mut E, frame: Option<Rect>, s: MSlock) -> Result<(), ()>;
     fn translate(&mut self, by: Point, s: MSlock);
-    fn used_rect(&mut self, s: MSlock) -> Rect;
-    fn suggested_rect(&mut self, _s: MSlock) -> Rect;
+    fn view_rect(&self, s: MSlock) -> Rect;
+    fn used_rect(&self, s: MSlock) -> Rect;
+    fn suggested_rect(&self, _s: MSlock) -> Rect;
+    fn bounding_rect(&self, _s: MSlock) -> Rect;
 
     fn intrinsic_size(&mut self, s: MSlock) -> Size;
     fn xsquished_size(&mut self, s: MSlock) -> Size;
@@ -49,8 +60,8 @@ pub(crate) trait InnerViewBase<E> where E: Environment {
     fn ysquished_size(&mut self, s: MSlock) -> Size;
     fn ystretched_size(&mut self, s: MSlock) -> Size;
     fn sizes(&mut self, s: MSlock) -> SizeContainer;
-    /* mounting and unmounting */
 
+    /* mounting and unmounting */
     fn show(
         &mut self,
         this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>,
@@ -72,7 +83,6 @@ pub(crate) trait InnerViewBase<E> where E: Environment {
     fn invalidate(&mut self, this: Weak<MainSlockCell<dyn InnerViewBase<E>>>, s: Slock);
 
     /* environment */
-
     fn push_environment(&mut self, env: &mut E, s: MSlock);
     fn pop_environment(&mut self, env: &mut E, s: MSlock);
 }
@@ -91,7 +101,7 @@ pub(crate) struct InnerView<E, P> where E: Environment,
     last_exclusion: Rect,
     last_view_frame: Rect,
     // union of this view frame and view frame of all others
-    last_bounding_box: Rect,
+    last_bounding_rect: Rect,
 
     /* provider */
     provider: P
@@ -99,7 +109,7 @@ pub(crate) struct InnerView<E, P> where E: Environment,
 
 impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
     pub(super) fn into_backing_and_provider(self) -> (NativeView, P) {
-        (self.graph.backing, self.provider)
+        (self.graph.native_view, self.provider)
     }
 
     #[inline]
@@ -164,10 +174,18 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
         self.last_suggested = suggested;
         self.last_exclusion = exclusion;
         self.last_view_frame = view_frame;
+        self.last_bounding_rect = view_frame;
+        if !self.graph.native_view.clips_subviews {
+            for sub in &self.graph.subviews {
+                let in_our_frame = sub.borrow_main(s).bounding_rect(s);
+                self.last_bounding_rect = self.last_bounding_rect
+                    .union(in_our_frame.translate(view_frame.origin()))
+            }
+        }
 
         self.needs_layout_down = false;
 
-        view_set_frame(self.backing(), view_frame, s);
+        view_set_frame(self.native_view(), view_frame, s);
 
         exclusion
     }
@@ -179,10 +197,10 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
         env: &mut EnvRef<E>,
         s: MSlock
     ) {
-        if !self.backing().is_null() {
+        if !self.native_view().is_null() {
             panic!("May not take backing from alt view when this backing has already been inited")
         }
-        else if !source.0.0.is_null() {
+        else if !source.0.backing.is_null() {
             // since our backing was not inited
             // we are guaranteed to have had zero children
             // and that we cannot have been shown already
@@ -196,15 +214,15 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
                 graph: &mut self.graph,
                 owner: this
             };
-            self.graph.backing = self.provider.init_backing(
+            self.graph.native_view = self.provider.init_backing(
                 invalidator,
                 &mut subtree,
                 Some(source),
                 env,
                 s
             );
-            if self.graph.backing.0.is_null() {
-                self.graph.backing = NativeView::layout_view(s)
+            if self.graph.native_view.backing.is_null() {
+                self.graph.native_view = NativeView::layout_view(s)
             }
 
             self.provider.pop_environment(env.0.variable_env_mut(), s);
@@ -216,8 +234,8 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
 impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewProvider<E> {
 
     // unowned
-    fn backing(&self) -> *mut c_void {
-        self.graph.backing.0
+    fn native_view(&self) -> *mut c_void {
+        self.graph.native_view.backing
     }
 
     fn superview(&self) -> Option<Arc<MainSlockCell<dyn InnerViewBase<E>>>> {
@@ -239,6 +257,59 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
 
     fn depth(&self) -> u32 {
         self.graph.depth
+    }
+
+    fn handle_mouse_event(&mut self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, event: &mut Event, prev_position: Point, s: MSlock) -> bool {
+        let position = event.cursor();
+
+        let prev_contains = self.last_bounding_rect.contains(prev_position);
+        let curr_contains = self.last_bounding_rect.contains(position);
+        if !curr_contains && !prev_contains {
+            return false;
+        }
+
+        // note that window handles sending out
+        // key events, not us
+        match self.provider.handle_event(event, s) {
+            EventResult::Handled => return true,
+            EventResult::FocusAcquire => {
+                if let Some(window) = self.graph.window.as_ref().and_then(|w| w.upgrade()) {
+                    window.borrow_main(s)
+                        .request_focus(Arc::downgrade(this))
+                }
+                return true;
+            },
+            EventResult::NotHandled => (),
+            EventResult::FocusRelease => {
+                if let Some(window) = self.graph.window.as_ref().and_then(|w| w.upgrade()) {
+                    window.borrow_main(s)
+                        .unrequst_focus(Arc::downgrade(this))
+                }
+            }
+        }
+
+        self.graph.subviews.iter().rev()
+            .any(|sv| {
+                let borrow = sv.borrow_mut_main(s);
+                let delta = -borrow.view_rect(s).origin();
+                let prev = prev_position.translate(delta);
+
+                event.set_cursor(position.translate(delta));
+
+                sv.borrow_mut_main(s).handle_mouse_event(sv, event, prev, s)
+            })
+    }
+
+    fn handle_key_event(&mut self, event: &mut Event, s: MSlock) -> EventResult {
+        self.provider.handle_event(event, s)
+    }
+
+    fn unfocused(&mut self, rel_depth: u32, s: MSlock) {
+        self.provider.unfocused(rel_depth, s)
+    }
+
+    fn focused(&mut self, rel_depth: u32, s: MSlock) {
+        self.provider.focused(rel_depth, s)
     }
 
     fn needs_layout_up(&self) -> bool {
@@ -285,17 +356,28 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         self.last_suggested = self.last_suggested.translate(by);
         self.last_exclusion = self.last_exclusion.translate(by);
         self.last_view_frame = self.last_view_frame.translate(by);
-        view_set_frame(self.backing(), self.last_view_frame, s);
+        self.last_bounding_rect = self.last_bounding_rect.translate(by);
+        view_set_frame(self.native_view(), self.last_view_frame, s);
     }
 
-    fn used_rect(&mut self, _s: MSlock) -> Rect {
+    fn view_rect(&self, _s: MSlock) -> Rect {
+        debug_assert!(!self.needs_layout_down);
+        self.last_view_frame
+    }
+
+    fn used_rect(&self, _s: MSlock) -> Rect {
         debug_assert!(!self.needs_layout_down);
         self.last_exclusion
     }
 
-    fn suggested_rect(&mut self, _s: MSlock) -> Rect {
+    fn suggested_rect(&self, _s: MSlock) -> Rect {
         debug_assert!(!self.needs_layout_down);
         self.last_suggested
+    }
+
+    fn bounding_rect(&self, _s: MSlock) -> Rect {
+        debug_assert!(!self.needs_layout_down);
+        self.last_bounding_rect
     }
 
     fn intrinsic_size(&mut self, s: MSlock) -> Size {
@@ -361,7 +443,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         self.push_environment(e, s);
 
         /* init backing if necessary */
-        let first_mount = self.backing().is_null();
+        let first_mount = self.native_view().is_null();
         if first_mount {
             let invalidator = Invalidator {
                 view: Arc::downgrade(this)
@@ -371,7 +453,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
                 graph: &mut self.graph,
                 owner: this,
             };
-            self.graph.backing = self.provider.init_backing(invalidator, &mut subtree, None, &mut handle, s);
+            self.graph.native_view = self.provider.init_backing(invalidator, &mut subtree, None, &mut handle, s);
         }
 
         /* main notifications to provider and subtree */
@@ -388,7 +470,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
 
             /* add subview if this first time backing allocated */
             if first_mount {
-                view_add_child_at(self.graph.backing.0, borrow.backing(), i, s);
+                view_add_child_at(self.graph.native_view.backing, borrow.native_view(), i, s);
             }
         }
         self.provider.post_show(s);
@@ -444,11 +526,17 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
     }
 }
 
-pub struct NativeView(*mut c_void);
+pub struct NativeView {
+    backing: *mut c_void,
+    clips_subviews: bool
+}
 
 impl NativeView {
     pub unsafe fn new(owned_view: *mut c_void) -> NativeView {
-        NativeView(owned_view)
+        NativeView {
+            backing: owned_view,
+            clips_subviews: false
+        }
     }
 
     pub fn layout_view(s: MSlock) -> NativeView {
@@ -463,22 +551,26 @@ impl NativeView {
         }
     }
 
-    pub fn view(&self) -> *mut c_void {
-        self.0
+    pub fn backing(&self) -> *mut c_void {
+        self.backing
+    }
+
+    pub fn set_clips_subviews(&mut self) {
+        self.clips_subviews = true;
     }
 }
 
 impl Drop for NativeView {
     fn drop(&mut self) {
-        if !self.0.is_null() {
+        if !self.backing.is_null() {
             assert!(native::global::is_main());
-            native::view::free_view(self.0)
+            native::view::free_view(self.backing)
         }
     }
 }
 
 pub(crate) struct Graph<E> where E: Environment {
-    backing: NativeView,
+    native_view: NativeView,
 
     superview: Option<Weak<MainSlockCell<dyn InnerViewBase<E>>>>,
     window: Option<Weak<MainSlockCell<dyn WindowViewCallback<E>>>>,
@@ -493,8 +585,8 @@ pub(crate) struct Graph<E> where E: Environment {
 // and then have subtree delegate to graph
 impl<E> Graph<E> where E: Environment {
     pub(crate) fn clear_subviews(&mut self, s: MSlock) {
-        if !self.backing.0.is_null() {
-            view_clear_children(self.backing.0, s);
+        if !self.native_view.backing.is_null() {
+            view_clear_children(self.native_view.backing, s);
         }
 
         for subview in std::mem::take(&mut self.subviews) {
@@ -562,8 +654,8 @@ impl<'a, E> Subtree<'a, E> where E: Environment {
 
     pub fn remove_subview_at(&mut self, index: usize, env: &mut EnvRef<E>, s: MSlock) {
         // remove from backing
-        if !self.graph.backing.0.is_null() {
-            view_remove_child(self.graph.backing.0, index, s);
+        if !self.graph.native_view.backing.is_null() {
+            view_remove_child(self.graph.native_view.backing, index, s);
         }
 
         let removed = self.graph.subviews.remove(index);
@@ -615,8 +707,8 @@ impl<'a, E> Subtree<'a, E> where E: Environment {
         self.graph.subviews.insert(index, subview.clone());
 
         // add to backing
-        if !self.graph.backing.0.is_null() {
-            view_add_child_at(self.graph.backing.0, borrow.backing(), index, s);
+        if !self.graph.native_view.backing.is_null() {
+            view_add_child_at(self.graph.native_view.backing, borrow.native_view(), index, s);
         }
 
         drop(borrow);
@@ -639,8 +731,8 @@ impl<'a, E> Subtree<'a, E> where E: Environment {
         }
 
         // add to backing
-        if !self.graph.backing.0.is_null() {
-            view_add_child_at(self.graph.backing.0, borrow.backing(), index, s);
+        if !self.graph.native_view.backing.is_null() {
+            view_add_child_at(self.graph.native_view.backing, borrow.native_view(), index, s);
         }
 
         drop(borrow);
@@ -676,7 +768,10 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
                     depth: u32::MAX,
                     window: None,
                     superview: None,
-                    backing: NativeView(0 as *mut c_void),
+                    native_view: NativeView {
+                        backing: 0 as *mut c_void,
+                        clips_subviews: false
+                    },
                     subviews: vec![],
                     unsend_unsync: Default::default(),
                 },
@@ -687,7 +782,7 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
                 last_suggested: Rect::default(),
                 last_exclusion: Rect::default(),
                 last_view_frame: Rect::default(),
-                last_bounding_box: Rect::default(),
+                last_bounding_rect: Rect::default(),
                 provider,
             }, s)
         )

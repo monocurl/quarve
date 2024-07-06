@@ -145,12 +145,12 @@ mod identity_modifier {
             self.source.post_hide(s)
         }
 
-        fn focused(&mut self, s: MSlock) {
-            self.source.focused(s)
+        fn focused(&mut self, rel_depth: u32, s: MSlock) {
+            self.source.focused(rel_depth, s)
         }
 
-        fn unfocused(&mut self, s: MSlock) {
-            self.source.unfocused(s)
+        fn unfocused(&mut self, rel_depth: u32, s: MSlock) {
+            self.source.unfocused(rel_depth, s)
         }
 
         fn push_environment(&mut self, env: &mut E::Variable, s: MSlock) {
@@ -377,16 +377,16 @@ mod provider_modifier {
             self.provider.post_hide(s)
         }
 
-        fn focused(&mut self, s: MSlock) {
-            self.provider.focused(s);
+        fn focused(&mut self, rel_depth: u32, s: MSlock) {
+            self.provider.focused(rel_depth, s);
             // currently it gets notifications regardless of enabled status
             // i think this makes most sense?
             self.modifier.focused(s);
         }
 
-        fn unfocused(&mut self, s: MSlock) {
+        fn unfocused(&mut self, rel_depth: u32, s: MSlock) {
             self.modifier.unfocused(s);
-            self.provider.unfocused(s);
+            self.provider.unfocused(rel_depth, s);
         }
 
         fn push_environment(&mut self, env: &mut E::Variable, s: MSlock) {
@@ -1057,12 +1057,12 @@ mod layer_modifier {
 
             if let Some((nv, layer)) = backing_source {
                 self.view.take_backing(layer.view, env, s);
-                self.backing = nv.view();
+                self.backing = nv.backing();
                 nv
             }
             else {
                 let nv = NativeView::layer_view(s);
-                self.backing = nv.view();
+                self.backing = nv.backing();
                 nv
             }
         }
@@ -1514,12 +1514,12 @@ mod when_modifier {
             self.provider.post_hide(s)
         }
 
-        fn focused(&mut self, s: MSlock) {
-            self.provider.focused(s);
+        fn focused(&mut self, rel_depth: u32, s: MSlock) {
+            self.provider.focused(rel_depth, s);
         }
 
-        fn unfocused(&mut self, s: MSlock) {
-            self.provider.unfocused(s);
+        fn unfocused(&mut self, rel_depth: u32, s: MSlock) {
+            self.provider.unfocused(rel_depth, s);
         }
 
         fn push_environment(&mut self, env: &mut E::Variable, s: MSlock) {
@@ -1689,12 +1689,12 @@ mod env_modifier {
             self.wrapping.post_hide(s)
         }
 
-        fn focused(&mut self, s: MSlock) {
-            self.wrapping.focused(s)
+        fn focused(&mut self, rel_depth: u32, s: MSlock) {
+            self.wrapping.focused(rel_depth, s)
         }
 
-        fn unfocused(&mut self, s: MSlock) {
-            self.wrapping.unfocused(s)
+        fn unfocused(&mut self, rel_depth: u32, s: MSlock) {
+            self.wrapping.unfocused(rel_depth, s)
         }
 
         fn push_environment(&mut self, env: &mut E::Variable, s: MSlock) {
@@ -1888,12 +1888,12 @@ mod show_hide_modifier {
             (self.post_hide)(s);
         }
 
-        fn focused(&mut self, s: MSlock) {
-            self.wrapping.focused(s);
+        fn focused(&mut self, rel_depth: u32, s: MSlock) {
+            self.wrapping.focused(rel_depth, s);
         }
 
-        fn unfocused(&mut self, s: MSlock) {
-            self.wrapping.unfocused(s);
+        fn unfocused(&mut self, rel_depth: u32, s: MSlock) {
+            self.wrapping.unfocused(rel_depth, s);
         }
 
         fn push_environment(&mut self, env: &mut E::Variable, s: MSlock) {

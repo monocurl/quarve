@@ -111,12 +111,12 @@ pub trait ViewProvider<E>: Sized + 'static
 
     // focus and unfocused state...
     #[allow(unused_variables)]
-    fn focused(&mut self, s: MSlock) {
+    fn focused(&mut self, rel_depth: u32, s: MSlock) {
 
     }
 
     #[allow(unused_variables)]
-    fn unfocused(&mut self, s: MSlock) {
+    fn unfocused(&mut self, rel_depth: u32, s: MSlock) {
 
     }
 
@@ -245,14 +245,14 @@ mod upcontext_setter {
                 .post_hide(s)
         }
 
-        fn focused(&mut self, s: MSlock) {
+        fn focused(&mut self, rel_depth: u32, s: MSlock) {
             self.0
-                .focused(s)
+                .focused(rel_depth, s)
         }
 
-        fn unfocused(&mut self, s: MSlock) {
+        fn unfocused(&mut self, rel_depth: u32, s: MSlock) {
             self.0
-                .unfocused(s)
+                .unfocused(rel_depth, s)
         }
 
         fn push_environment(&mut self, env: &mut E::Variable, s: MSlock) {
@@ -364,14 +364,14 @@ mod upcontext_adapter {
                 .post_hide(s)
         }
 
-        fn focused(&mut self, s: MSlock) {
+        fn focused(&mut self, rel_depth: u32, s: MSlock) {
             self.0
-                .focused(s)
+                .focused(rel_depth, s)
         }
 
-        fn unfocused(&mut self, s: MSlock) {
+        fn unfocused(&mut self, rel_depth: u32, s: MSlock) {
             self.0
-                .unfocused(s)
+                .unfocused(rel_depth, s)
         }
 
         fn push_environment(&mut self, env: &mut E::Variable, s: MSlock) {

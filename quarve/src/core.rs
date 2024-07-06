@@ -186,13 +186,13 @@ mod window {
     use std::sync::{Arc, Weak};
     use crate::core::{APP, Environment, MSlock, run_main_async, run_main_maybe_sync, Slock};
     use crate::core::window::invalidated_entry::InvalidatedEntry;
-    use crate::event::Event;
-    use crate::native;
+    use crate::event::{Event, EventPayload, EventResult};
+    use crate::{native, util};
     use crate::native::{WindowHandle};
     use crate::native::window::window_exit;
     use crate::state::{Binding, Filterless, Signal, Store};
     use crate::state::slock_cell::{MainSlockCell};
-    use crate::util::geo::{Rect, Size};
+    use crate::util::geo::{Point, Rect, Size};
     use crate::view::{InnerViewBase};
     use crate::view::{ViewProvider};
 
@@ -274,13 +274,24 @@ mod window {
         // Send parts of self
         // handle is because of some async operations
         fn invalidate_view(&self, handle: Weak<MainSlockCell<dyn WindowViewCallback<E>>>, view: Weak<MainSlockCell<dyn InnerViewBase<E>>>, depth: u32, s: Slock);
+
+        fn request_focus(&self, view: Weak<MainSlockCell<dyn InnerViewBase<E>>>);
+        fn unrequst_focus(&self, view: Weak<MainSlockCell<dyn InnerViewBase<E>>>);
+
+        fn request_default_focus(&self, view: Weak<MainSlockCell<dyn InnerViewBase<E>>>);
+        fn unrequest_default_focus(&self, view: Weak<MainSlockCell<dyn InnerViewBase<E>>>);
+
+        fn request_key_listener(&self, view: Weak<MainSlockCell<dyn InnerViewBase<E>>>);
+        fn unrequest_key_listener(&self, view: Weak<MainSlockCell<dyn InnerViewBase<E>>>);
     }
 
     pub struct Window<P> where P: WindowProvider {
         provider: P,
 
-        /* current state */
+        /* event state */
+        last_cursor: Cell<Point>,
         focus: RefCell<Option<Weak<MainSlockCell<dyn InnerViewBase<P::Env>>>>>,
+        scheduled_focus: Cell<Option<Weak<MainSlockCell<dyn InnerViewBase<P::Env>>>>>,
         default_focus: RefCell<Vec<Weak<MainSlockCell<dyn InnerViewBase<P::Env>>>>>,
         key_listeners: RefCell<Vec<Weak<MainSlockCell<dyn InnerViewBase<P::Env>>>>>,
 
@@ -311,7 +322,9 @@ mod window {
 
             let window = Window {
                 provider,
+                last_cursor: Cell::new(Point::new(util::geo::UNBOUNDED, util::geo::UNBOUNDED)),
                 focus: RefCell::new(None),
+                scheduled_focus: Cell::new(None),
                 default_focus: RefCell::new(Vec::new()),
                 key_listeners: RefCell::new(Vec::new()),
                 environment: Cell::new(Some(Box::new(root_env))),
@@ -333,8 +346,8 @@ mod window {
                 native::window::window_set_handle(handle, borrow.deref() as &dyn WindowNativeCallback, s);
 
                 let content_borrow = borrow.content_view.borrow_main(s);
-                debug_assert!(!content_borrow.backing().is_null());
-                native::window::window_set_root(handle, content_borrow.backing(), s);
+                debug_assert!(!content_borrow.native_view().is_null());
+                native::window::window_set_root(handle, content_borrow.native_view(), s);
             }
 
             b
@@ -377,7 +390,6 @@ mod window {
                 Some(Rect::new(0.0, 0.0, intrinsic.w, intrinsic.h)),
                 s
             ).unwrap();
-
 
             // give back env
             borrow.environment.set(Some(stolen_env));
@@ -512,6 +524,41 @@ mod window {
 
             true
         }
+
+        fn clear_focus_request(&self, s: MSlock) {
+            // if different, notify ancestors
+            let scheduled = self.scheduled_focus.take();
+            let curr = self.focus.borrow().as_ref().map(|o| o.as_ptr());
+            if scheduled.as_ref().map(|s| s.as_ptr()) != curr {
+                let mut depth = 0u32;
+                let mut it = self.focus.borrow().as_ref().and_then(|a| a.upgrade());
+                while let Some(curr) = &it {
+                    it = {
+                        let mut borrow = curr.borrow_mut_main(s);
+                        borrow.unfocused(depth, s);
+                        borrow.superview()
+                    };
+                    depth += 1
+                }
+
+                depth = 0u32;
+                it = scheduled.as_ref().and_then(|a| a.upgrade());
+                while let Some(curr) = &it {
+                    it = {
+                        let mut borrow = curr.borrow_mut_main(s);
+                        borrow.focused(depth, s);
+                        borrow.superview()
+                    };
+                    depth += 1
+                }
+
+                *self.focus.borrow_mut() = scheduled.clone();
+                self.scheduled_focus.set(scheduled);
+            }
+            else {
+                self.scheduled_focus.set(scheduled);
+            }
+        }
     }
 
     impl<P> WindowNativeCallback for Window<P> where P: WindowProvider {
@@ -592,10 +639,63 @@ mod window {
             Self::walk_env(env.deref_mut(), &mut env_spot, None, &mut env_depth, -1, s);
             self.environment.set(Some(env));
             self.performing_layout_down.set(false);
+
+            self.clear_focus_request(s);
         }
 
-        fn dispatch_native_event(&self, event: Event, s: MSlock) {
-            todo!()
+        // FIXME, when weak fails to upgrade make the option None
+        fn dispatch_native_event(&self, mut event: Event, s: MSlock) {
+            match event.payload {
+                EventPayload::Mouse(_, at) => {
+                    println!("At {:?}", at);
+                    self.content_view.borrow_mut_main(s)
+                        .handle_mouse_event(&self.content_view, &mut event, self.last_cursor.take(), s);
+
+                    self.last_cursor.set(at);
+                },
+                EventPayload::Key(_) => 'key: {
+                    let mut handled_key_event = |target: Arc<MainSlockCell<dyn InnerViewBase<P::Env>>>| {
+                        match target.borrow_mut_main(s)
+                            .handle_key_event(&mut event, s) {
+                            EventResult::NotHandled => false,
+                            EventResult::Handled => true,
+                            EventResult::FocusRelease => {
+                                self.unrequst_focus(Arc::downgrade(&target));
+                                false
+                            },
+                            EventResult::FocusAcquire => {
+                                self.request_focus(Arc::downgrade(&target));
+                                true
+                            }
+                        }
+                    };
+
+                    if let Some(focus) = self.focus.borrow().deref().as_ref().and_then(|f| f.upgrade()) {
+                        // 1. focus
+                        if handled_key_event(focus) {
+                            break 'key;
+                        }
+                    }
+                    else if let Some(default_focus) = self.default_focus.borrow().deref()
+                        .first().and_then(|f| f.upgrade()) {
+                        // 2. autofocus
+                        if handled_key_event(default_focus) {
+                            break 'key;
+                        }
+                    }
+
+                    // 3. key listeners
+                    for listener in self.key_listeners.borrow().iter() {
+                        if let Some(listener) = listener.upgrade() {
+                            // you cannot acquire focus by being a key listener (at least for now)
+                            listener.borrow_mut_main(s)
+                                .handle_key_event(&mut event, s);
+                        }
+                    }
+                }
+            }
+
+            self.clear_focus_request(s)
         }
     }
 
@@ -705,6 +805,44 @@ mod window {
                 view,
                 depth: depth as i32
             });
+        }
+
+        fn request_focus(&self, view: Weak<MainSlockCell<dyn InnerViewBase<P::Env>>>) {
+            self.scheduled_focus.set(Some(view));
+        }
+
+        fn unrequst_focus(&self, view: Weak<MainSlockCell<dyn InnerViewBase<P::Env>>>) {
+            let comp = self.scheduled_focus.take();
+            if comp.as_ref().map(|w| w.as_ptr()) == Some(view.as_ptr()) {
+                self.scheduled_focus.set(None)
+            }
+            else {
+                self.scheduled_focus.set(comp);
+            }
+        }
+
+        fn request_default_focus(&self, view: Weak<MainSlockCell<dyn InnerViewBase<P::Env>>>) {
+            let mut borrow = self.default_focus.borrow_mut();
+            if !borrow.iter().any(|w| std::ptr::addr_eq(w.as_ptr(), view.as_ptr())) {
+                borrow.push(view)
+            }
+        }
+
+        fn unrequest_default_focus(&self, view: Weak<MainSlockCell<dyn InnerViewBase<P::Env>>>) {
+            self.default_focus.borrow_mut()
+                .retain(|w| !std::ptr::addr_eq(w.as_ptr(), view.as_ptr()))
+        }
+
+        fn request_key_listener(&self, view: Weak<MainSlockCell<dyn InnerViewBase<P::Env>>>) {
+            let mut borrow = self.key_listeners.borrow_mut();
+            if !borrow.iter().any(|w| std::ptr::addr_eq(w.as_ptr(), view.as_ptr())) {
+                borrow.push(view)
+            }
+        }
+
+        fn unrequest_key_listener(&self, view: Weak<MainSlockCell<dyn InnerViewBase<P::Env>>>) {
+            self.key_listeners.borrow_mut()
+                .retain(|w| !std::ptr::eq(w.as_ptr(), view.as_ptr()))
         }
     }
 

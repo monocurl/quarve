@@ -1,9 +1,30 @@
+use std::ffi::{c_char, c_void, CStr, CString};
 use crate::core::{WindowNativeCallback};
+use crate::event::{Event, EventModifiers, EventPayload, Key, KeyEvent, MouseEvent};
+use crate::util::geo::{Point, ScreenUnit};
 
 pub type WindowHandle = usize;
 
 #[repr(C)]
 struct FatPointer(usize, usize);
+
+#[repr(C)]
+struct BufferEvent {
+    is_mouse: bool,
+    is_scroll: bool,
+    is_up: bool,
+    is_down: bool,
+    is_left_button: bool,
+    is_right_button: bool,
+    modifiers: u8,
+    cursor_x: ScreenUnit,
+    cursor_y: ScreenUnit,
+    // scroll or mouse delta
+    delta_x: ScreenUnit,
+    delta_y: ScreenUnit,
+    key_characters: *const u8,
+    native_event: *mut c_void,
+}
 
 impl From<&dyn WindowNativeCallback> for FatPointer {
     fn from(value: &dyn WindowNativeCallback) -> Self {
@@ -21,10 +42,66 @@ impl FatPointer {
     }
 }
 
+impl From<BufferEvent> for Event {
+    fn from(value: BufferEvent) -> Self {
+        let payload = if value.is_mouse {
+            let mouse = if value.is_scroll {
+                MouseEvent::Scroll(value.delta_x, value.delta_y)
+            } else if value.is_left_button {
+                if value.is_down {
+                    MouseEvent::LeftDown
+                }
+                else if value.is_up {
+                    MouseEvent::LeftUp
+                }
+                else {
+                    MouseEvent::LeftDrag(value.delta_x, value.delta_y)
+                }
+            } else if value.is_right_button {
+                if value.is_down {
+                    MouseEvent::RightDown
+                }
+                else if value.is_up {
+                    MouseEvent::RightUp
+                }
+                else {
+                    MouseEvent::RightDrag(value.delta_x, value.delta_y)
+                }
+            } else {
+                MouseEvent::Move(value.delta_x, value.delta_y)
+            };
+
+            EventPayload::Mouse(mouse, Point::new(value.cursor_x, value.cursor_y))
+        }
+        else {
+            let cstr = unsafe { CStr::from_ptr(value.key_characters as *const c_char) };
+            let characters = CString::from(cstr).into_string().unwrap();
+            let key = Key::new(characters);
+            let key = if value.is_down {
+                KeyEvent::Press(key)
+            } else if value.is_up {
+                KeyEvent::Release(key)
+            } else {
+                KeyEvent::Repeat(key)
+            };
+
+            EventPayload::Key(key)
+        };
+
+        Event {
+            payload,
+            modifiers: EventModifiers {
+                modifiers: value.modifiers
+            },
+            native_event: value.native_event,
+        }
+    }
+}
+
 /* back -> front call backs */
 mod callbacks {
     use crate::core::{APP, Slock, slock_main_owner};
-    use crate::native::FatPointer;
+    use crate::native::{BufferEvent, FatPointer};
     use crate::util::markers::MainThreadMarker;
 
     #[no_mangle]
@@ -48,6 +125,14 @@ mod callbacks {
         let s = slock_main_owner();
 
         handle.into_window().layout_full(w, h, s.marker())
+    }
+
+    #[no_mangle]
+    extern "C" fn front_window_dispatch_event(handle: FatPointer, event: BufferEvent) {
+        let s = slock_main_owner();
+
+        handle.into_window()
+            .dispatch_native_event(event.into(), s.marker());
     }
 
     #[no_mangle]

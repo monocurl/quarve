@@ -345,6 +345,8 @@ pub mod markers {
 }
 
 pub mod geo {
+    use std::ops::Neg;
+
     pub type ScreenUnit = f64;
     pub const UNBOUNDED: f64 = 1e7;
 
@@ -379,12 +381,31 @@ pub mod geo {
                 h: self.h,
             }
         }
+
+        pub fn union(self, with: Rect) -> Rect {
+            let x = self.x.min(with.x);
+            let y = self.y.min(with.y);
+            Rect {
+                x,
+                y,
+                w: self.x.max(with.x) - x,
+                h: self.y.max(with.y) - y,
+            }
+        }
+
         pub fn origin(self) -> Point {
             Point::new(self.x, self.y)
         }
 
         pub fn size(self) -> Size {
             Size::new(self.w, self.h)
+        }
+
+        pub fn contains(self, point: Point) -> bool {
+            point.x >= self.x &&
+                point.x <= self.x + self.w &&
+                point.y >= self.y &&
+                point.y <= self.y + self.h
         }
     }
 
@@ -394,9 +415,24 @@ pub mod geo {
         pub y: ScreenUnit,
     }
 
+    impl Neg for Point {
+        type Output = Self;
+
+        fn neg(self) -> Self::Output {
+            Point {
+                x: -self.x,
+                y: -self.y
+            }
+        }
+    }
+
     impl Point {
         pub fn new(x: ScreenUnit, y: ScreenUnit) -> Self {
             Point { x, y }
+        }
+
+        pub fn translate(self, by: Point) -> Self {
+            Point { x: self.x + by.x, y: self.y + by.y }
         }
     }
 

@@ -413,12 +413,12 @@ impl<E, U, D, P, W> ViewProvider<E> for PortalSenderVP<E, U, D, P, W>
         self.wrapping.post_hide(s)
     }
 
-    fn focused(&mut self, s: MSlock) {
-        self.wrapping.focused(s);
+    fn focused(&mut self, rel_depth: u32, s: MSlock) {
+        self.wrapping.focused(rel_depth, s);
     }
 
-    fn unfocused(&mut self, s: MSlock) {
-        self.wrapping.unfocused(s);
+    fn unfocused(&mut self, rel_depth: u32, s: MSlock) {
+        self.wrapping.unfocused(rel_depth, s);
     }
 
     fn push_environment(&mut self, env: &mut E::Variable, s: MSlock) {

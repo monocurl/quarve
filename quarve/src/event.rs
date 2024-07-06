@@ -13,32 +13,29 @@ pub enum MouseEvent {
     Move(ScreenUnit, ScreenUnit),
 }
 
-#[derive(Copy, Clone)]
-pub enum Key {
-    A, B, C, D, E, F, G, H, I, J, K, L, M,
-    N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
-    Zero, One, Two, Three, Four, Five, Six, Seven, Eight, Nine,
-    Backquote, Tilde, ExclamationMark, At, Hash, Dollar, Percent, Caret, Ampersand, Star,
-    LeftParenthesis, RightParenthesis, LeftSquareBracket, RightSquareBracket,
-    LeftFlowerBracket, RightFlowerBracket, Backslash, Pipe,
-    Minus, Underscore, Equals, Plus,
-    Period, Comma, LessThan, GreaterThan, Slash, QuestionMark,
-    SemiColon, Colon, SingleQuote, DoubleQuote,
+#[derive(Clone)]
+pub struct Key(String);
 
-    Tab, Esc, Delete, Backspace, Enter, Shift,
-    Function, AltOption, Control, Command
+impl Key {
+    pub fn new(characters: String) -> Key {
+        Key(characters)
+    }
+
+    pub fn chars(&self) -> &str {
+        &self.0
+    }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub enum KeyEvent {
     Press(Key),
     Repeat(Key),
     Release(Key),
 }
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub enum EventPayload {
-    Mouse(MouseEvent),
+    Mouse(MouseEvent, Point),
     Key(KeyEvent)
 }
 
@@ -75,17 +72,30 @@ impl EventModifiers {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub struct Event {
     pub payload: EventPayload,
     pub modifiers: EventModifiers,
-    pub cursor: Point,
     pub(crate) native_event: *mut c_void
 }
 
 impl Event {
     pub fn is_mouse(&self) -> bool {
-        matches!(self.payload, EventPayload::Mouse(_))
+        matches!(self.payload, EventPayload::Mouse(_, _))
+    }
+
+    pub fn cursor(&self) -> Point {
+        match self.payload {
+            EventPayload::Mouse(_, at) => at,
+            EventPayload::Key(_) => panic!("Must only be accessed on mouse events")
+        }
+    }
+
+    pub fn set_cursor(&mut self, cursor: Point) {
+        match self.payload {
+            EventPayload::Mouse(_, ref mut at) => *at = cursor,
+            EventPayload::Key(_) => panic!("Must only be accessed on mouse events")
+        }
     }
 }
 

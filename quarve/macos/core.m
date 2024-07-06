@@ -11,6 +11,9 @@ extern bool front_window_should_close(fat_pointer p);
 // fp: &'static dyn WindowBase
 extern void front_window_layout(fat_pointer p, double w, double h);
 
+// fp: &'static dyn WindowBase
+extern void front_window_dispatch_event(fat_pointer handle, buffer_event event);
+
 // box: &dyn FnOnce(MSlock) + Send + 'static
 extern void front_execute_box(fat_pointer box);
 
@@ -36,6 +39,7 @@ extern void front_execute_box(fat_pointer box);
 - (void)setHandle:(fat_pointer) handle;
 - (instancetype)init;
 - (BOOL)windowShouldClose:(id)sender;
+- (void)sendEvent:(NSEvent*)event;
 @end
 
 @implementation ContentView
@@ -66,6 +70,80 @@ extern void front_execute_box(fat_pointer box);
 
 - (BOOL)windowShouldClose:(id)sender {
     return (BOOL) front_window_should_close(handle);
+}
+
+- (void)sendEvent:(NSEvent*)event {
+    buffer_event be = {
+        .native_event = event
+    };
+
+    be.cursor_x = event.locationInWindow.x;
+    be.cursor_y = event.locationInWindow.y;
+    if (be.cursor_y > [self contentRectForFrameRect: self.frame].size.height) {
+        [super sendEvent: event];
+        return;
+    }
+
+    // TODO
+    be.modifiers = 0;
+
+    if (event.type == NSEventTypeKeyUp) {
+        be.is_up = 1;
+        be.key_characters = (unsigned char const *) event.charactersIgnoringModifiers.UTF8String;
+    }
+    else if (event.type == NSEventTypeKeyDown) {
+        be.is_down = 1;
+        be.key_characters = (unsigned char const *) event.charactersIgnoringModifiers.UTF8String;
+    }
+    else if (event.type == NSEventTypeScrollWheel) {
+        be.is_mouse = 1;
+        be.is_scroll = 1;
+        be.delta_x = event.scrollingDeltaX;
+        be.delta_y = event.scrollingDeltaY;
+    }
+    else if (event.type == NSEventTypeLeftMouseDown) {
+        be.is_mouse = 1;
+        be.is_left_button = 1;
+        be.is_down = 1;
+    }
+    else if (event.type == NSEventTypeLeftMouseUp) {
+        be.is_mouse = 1;
+        be.is_left_button = 1;
+        be.is_up = 1;
+    }
+    else if (event.type == NSEventTypeLeftMouseDragged) {
+        be.is_mouse = 1;
+        be.is_left_button = 1;
+        be.delta_x = event.deltaX;
+        be.delta_y = event.deltaY;
+    }
+    else if (event.type == NSEventTypeRightMouseDown) {
+        be.is_mouse = 1;
+        be.is_right_button = 1;
+        be.is_down = 1;
+    }
+    else if (event.type == NSEventTypeRightMouseUp) {
+        be.is_mouse = 1;
+        be.is_right_button = 1;
+        be.is_up = 1;
+    }
+    else if (event.type == NSEventTypeRightMouseDragged) {
+        be.is_mouse = 1;
+        be.is_right_button = 1;
+        be.delta_x = event.deltaX;
+        be.delta_y = event.deltaY;
+    }
+    else if (event.type == NSEventTypeMouseMoved) {
+        be.is_mouse = 1;
+        be.delta_x = event.deltaX;
+        be.delta_y = event.deltaY;
+    }
+    else {
+        [super sendEvent: event];
+        return;
+    }
+
+    front_window_dispatch_event(handle, be);
 }
 @end
 
