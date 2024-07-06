@@ -190,7 +190,8 @@ mod window {
     use crate::{native, util};
     use crate::native::{WindowHandle};
     use crate::native::window::window_exit;
-    use crate::state::{Binding, Filterless, Signal, Store};
+    use crate::state::{ActualDiffSignal, Binding, Filterless, Signal, Store};
+    use crate::state::SetAction::Set;
     use crate::state::slock_cell::{MainSlockCell};
     use crate::util::geo::{Point, Rect, Size};
     use crate::view::{InnerViewBase};
@@ -239,18 +240,22 @@ mod window {
     pub trait WindowProvider: 'static {
         type Env: Environment;
 
-        fn title(&self, s: MSlock) -> impl Signal<Target=String>;
+        fn title(&self, env: &<Self::Env as Environment>::Const, s: MSlock) -> impl Signal<Target=String>;
 
-        fn style(&self, s: MSlock);
 
         fn root(&self, env: &<Self::Env as Environment>::Const, s: MSlock)
                 -> impl ViewProvider<Self::Env, DownContext=()>;
 
-        fn size(&self) -> (Size, Size, Size);
+        fn size(&self, env: &<Self::Env as Environment>::Const, s: MSlock) -> (Size, Size, Size);
 
         #[allow(unused_variables)]
-        fn is_open(&self, s: MSlock) -> impl Binding<Filterless<bool>> {
-            Store::new(true).binding()
+        fn is_open(&self, env: &<Self::Env as Environment>::Const, s: MSlock) -> impl Binding<Filterless<bool>> {
+            Store::new(true)
+        }
+
+        #[allow(unused_variables)]
+        fn is_fullscreen(&self, env: &<Self::Env as Environment>::Const, s: MSlock) -> impl Binding<Filterless<bool>> {
+            Store::new(false)
         }
     }
 
@@ -264,6 +269,7 @@ mod window {
         fn layout_full(&self, w: f64, h: f64, s: MSlock);
 
         fn dispatch_native_event(&self, event: Event, s: MSlock);
+        fn set_fullscreen(&self, fs: bool, s: MSlock);
     }
 
     pub(crate) trait WindowViewCallback<E> where E: Environment {
@@ -383,7 +389,7 @@ mod window {
             let mut content_borrow = content_copy.borrow_mut_main(s);
 
             // now we must finish the layout down
-            let intrinsic = borrow.provider.size().1;
+            let intrinsic = borrow.provider.size(stolen_env.const_env(), s).1;
             content_borrow.try_layout_down(
                 &borrow.content_view,
                 stolen_env.deref_mut(),
@@ -396,61 +402,97 @@ mod window {
         }
 
         fn apply_window_style(s: MSlock, borrow: &Window<P>) {
-            let _style = borrow.provider.style(s);
+            let stolen_env = borrow.environment.take().unwrap();
 
             // set window size (note no recursive layout call can happen since handle not mounted yet)
-            let sizes = borrow.provider.size();
+            let sizes = borrow.provider.size(stolen_env.const_env(), s);
             native::window::window_set_min_size(borrow.handle, sizes.0.w, sizes.0.h, s);
             native::window::window_set_size(borrow.handle, sizes.1.w, sizes.1.h, s);
             native::window::window_set_max_size(borrow.handle, sizes.2.w, sizes.2.h, s);
+
+            borrow.environment.set(Some(stolen_env));
         }
 
         fn window_listeners(this: &Arc<MainSlockCell<Window<P>>>, borrow: &Window<P>, s: MSlock) {
-            let title = borrow.provider.title(s);
-            let weak = Arc::downgrade(&this);
-            title.listen(move |val, s| {
-                let Some(this) = weak.upgrade() else {
-                    return false;
-                };
+            let stolen_env = borrow.environment.take().unwrap();
 
-                let title_copy = val.to_owned();
-                run_main_maybe_sync(move |s| {
-                    let borrow = this.borrow_main(s);
-                    native::window::window_set_title(borrow.handle, &title_copy, s);
+            // title
+            {
+                let title = borrow.provider.title(stolen_env.const_env(), s);
+                let weak = Arc::downgrade(&this);
+                title.diff_listen(move |val, s| {
+                    let Some(this) = weak.upgrade() else {
+                        return false;
+                    };
+
+                    let title_copy = val.to_owned();
+                    run_main_maybe_sync(move |s| {
+                        let borrow = this.borrow_main(s);
+                        native::window::window_set_title(borrow.handle, &title_copy, s);
+                    }, s);
+
+                    true
                 }, s);
 
-                true
-            }, s);
+                let current = title.borrow(s).to_owned();
+                native::window::window_set_title(borrow.handle, &current, s);
+            }
 
-            let current = title.borrow(s).to_owned();
-            native::window::window_set_title(borrow.handle, &current, s);
-
-            let open = borrow.provider.is_open(s);
-            let handle = borrow.handle();
-            open.listen(move |a, _s| {
-                if !a {
-                    // we do not run synchronous
-                    // because theres possibility of multiple borrows
-                    // (once we finally perform the hide)
-                    run_main_async(move |s| {
-                        APP.with(|app| {
-                            let mut windows =  app.get().unwrap().windows.borrow_mut();
-                            if let Some(pos) = windows
-                                .iter()
-                                .position(|w| w.borrow_main(s).handle() == handle)
-                            {
+            // open
+            {
+                let open = borrow.provider.is_open(stolen_env.const_env(), s);
+                let handle = borrow.handle();
+                open.as_signal().diff_listen(move |a, _s| {
+                    if !a {
+                        // we do not run synchronous
+                        // because theres possibility of multiple borrows
+                        // (once we finally perform the hide)
+                        run_main_async(move |s| {
+                            APP.with(|app| {
+                                let mut windows = app.get().unwrap().windows.borrow_mut();
+                                if let Some(pos) = windows
+                                    .iter()
+                                    .position(|w| w.borrow_main(s).handle() == handle)
                                 {
-                                    let window = windows[pos].borrow_main(s);
-                                    window.hide_root(s);
+                                    {
+                                        let window = windows[pos].borrow_main(s);
+                                        window.hide_root(s);
+                                    }
+                                    windows.remove(pos);
                                 }
-                                windows.remove(pos);
-                            }
+                            });
+                            window_exit(handle, s);
                         });
-                        window_exit(handle, s);
+                    }
+                    true
+                }, s);
+            }
+
+            // fullscreen
+            {
+                let fs = borrow.provider.is_fullscreen(stolen_env.const_env(), s);
+                let weak = Arc::downgrade(&this);
+                fs.as_signal().diff_listen(move |val, _s| {
+                    let Some(this) = weak.upgrade() else {
+                        return false;
+                    };
+
+                    // avoid reentry of layout by delayed call
+                    let fs = *val;
+                    run_main_async(move |s| {
+                        let borrow = this.borrow_main(s);
+                        native::window::window_set_fullscreen(borrow.handle, fs, s);
                     });
+
+                    true
+                }, s);
+
+                if *fs.as_signal().borrow(s) {
+                    native::window::window_set_fullscreen(borrow.handle, true, s);
                 }
-                true
-            }, s);
+            }
+
+            borrow.environment.set(Some(stolen_env));
         }
 
         // env is currently right below from
@@ -647,7 +689,6 @@ mod window {
         fn dispatch_native_event(&self, mut event: Event, s: MSlock) {
             match event.payload {
                 EventPayload::Mouse(_, at) => {
-                    println!("At {:?}", at);
                     self.content_view.borrow_mut_main(s)
                         .handle_mouse_event(&self.content_view, &mut event, self.last_cursor.take(), s);
 
@@ -696,6 +737,17 @@ mod window {
             }
 
             self.clear_focus_request(s)
+        }
+
+        fn set_fullscreen(&self, fs: bool, s: MSlock) {
+            let stolen_env = self.environment.take().unwrap();
+
+            let binding = self.provider.is_fullscreen(stolen_env.const_env(), s);
+            if *binding.as_signal().borrow(s) != fs {
+                binding.apply(Set(fs), s);
+            }
+
+            self.environment.set(Some(stolen_env));
         }
     }
 
@@ -958,11 +1010,39 @@ mod slock {
     #[inline]
     pub fn slock_main_owner() -> SlockOwner<MainThreadMarker> {
         if !native::global::is_main() {
-            panic!("Cannot call slock_main")
+            panic!("Cannot call slock_main_owner outside of main thread")
         }
 
         SlockOwner {
             _guard: global_guard(),
+            debug_info: DebugInfo::new(),
+            unsend_unsync: PhantomData,
+            thread_marker: PhantomData,
+        }
+    }
+
+    // some ffi makes it awkward to pass slock arround
+    // t
+    pub(crate) unsafe fn slock_force_main_owner() -> SlockOwner<MainThreadMarker> {
+        static FAKE_GLOBAL_STATE_LOCK: Mutex<()> = Mutex::new(());
+
+        // even with these checks, it's still unsafe due to lifetimes
+        if !native::global::is_main() {
+            panic!("Cannot force slock owner")
+        }
+
+        let current =  LOCKED_THREAD.lock().unwrap();
+        if current.is_none() {
+            drop(current);
+            return slock_main_owner();
+        }
+        else if *current != Some(thread::current().id()) {
+            panic!("Cannot force slock owner")
+        }
+
+
+        SlockOwner {
+            _guard: FAKE_GLOBAL_STATE_LOCK.lock().unwrap(),
             debug_info: DebugInfo::new(),
             unsend_unsync: PhantomData,
             thread_marker: PhantomData,

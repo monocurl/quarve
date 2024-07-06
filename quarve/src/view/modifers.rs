@@ -1974,3 +1974,25 @@ mod show_hide_modifier {
     }
 }
 pub use show_hide_modifier::*;
+
+mod key_listener {
+    use std::marker::PhantomData;
+    use crate::core::Environment;
+    use crate::event::{EventModifiers};
+    use crate::view::IntoViewProvider;
+
+    struct KeyListenerIVP<E, I, F> where E: Environment, I: IntoViewProvider<E>, F: FnMut(&str, EventModifiers) {
+        source: I,
+        listener: F,
+        phantom: PhantomData<E>
+    }
+
+    struct KeyListenerVP {
+
+    }
+
+    pub trait KeyListener<E> : IntoViewProvider<E> where E: Environment {
+        fn key_listener(self, listener: impl FnMut(&str, EventModifiers)) -> impl IntoViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext>;
+    }
+}
+pub use key_listener::*;

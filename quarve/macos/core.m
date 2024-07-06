@@ -14,6 +14,9 @@ extern void front_window_layout(fat_pointer p, double w, double h);
 // fp: &'static dyn WindowBase
 extern void front_window_dispatch_event(fat_pointer handle, buffer_event event);
 
+// fp: &'static dyn WindowBase
+extern void front_window_will_fullscreen(fat_pointer p, uint8_t fs);
+
 // box: &dyn FnOnce(MSlock) + Send + 'static
 extern void front_execute_box(fat_pointer box);
 
@@ -32,14 +35,10 @@ extern void front_execute_box(fat_pointer box);
 - (void)layout;
 @end
 
-@interface Window : NSWindow {
+@interface Window : NSWindow<NSWindowDelegate> {
     /* callbacks */
     @public fat_pointer handle;
 }
-- (void)setHandle:(fat_pointer) handle;
-- (instancetype)init;
-- (BOOL)windowShouldClose:(id)sender;
-- (void)sendEvent:(NSEvent*)event;
 @end
 
 @implementation ContentView
@@ -56,6 +55,7 @@ extern void front_execute_box(fat_pointer box);
     [super initWithContentRect:NSMakeRect(0, 0, 2, 2) styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
     [self setIsVisible:YES];
 
+    self.delegate = self;
     self.releasedWhenClosed = NO;
 
     return self;
@@ -71,11 +71,8 @@ extern void front_execute_box(fat_pointer box);
 - (BOOL)windowShouldClose:(id)sender {
     return (BOOL) front_window_should_close(handle);
 }
-
 - (void)sendEvent:(NSEvent*)event {
-    buffer_event be = {
-        .native_event = event
-    };
+    buffer_event be = { .native_event = event };
 
     be.cursor_x = event.locationInWindow.x;
     be.cursor_y = event.locationInWindow.y;
@@ -84,16 +81,31 @@ extern void front_execute_box(fat_pointer box);
         return;
     }
 
-    // TODO
-    be.modifiers = 0;
+    if (event.modifierFlags & NSEventModifierFlagCommand) {
+        be.modifiers |= EVENT_MODIFIER_COMMAND;
+    }
+    if (event.modifierFlags & NSEventModifierFlagControl) {
+        be.modifiers |= EVENT_MODIFIER_CONTROL;
+    }
+    if (event.modifierFlags & NSEventModifierFlagShift) {
+        be.modifiers |= EVENT_MODIFIER_SHIFT;
+    }
+    if (event.modifierFlags & NSEventModifierFlagFunction) {
+        be.modifiers |= EVENT_MODIFIER_FN;
+    }
+    if (event.modifierFlags & NSEventModifierFlagOption) {
+        be.modifiers |= EVENT_MODIFIER_ALT_OPTION;
+    }
 
     if (event.type == NSEventTypeKeyUp) {
         be.is_up = 1;
-        be.key_characters = (unsigned char const *) event.charactersIgnoringModifiers.UTF8String;
+        be.key_characters = (unsigned char const *) event.characters.UTF8String;
     }
     else if (event.type == NSEventTypeKeyDown) {
-        be.is_down = 1;
-        be.key_characters = (unsigned char const *) event.charactersIgnoringModifiers.UTF8String;
+        if (!event.ARepeat) {
+            be.is_down = 1;
+        }
+        be.key_characters = (unsigned char const *) event.characters.UTF8String;
     }
     else if (event.type == NSEventTypeScrollWheel) {
         be.is_mouse = 1;
@@ -144,6 +156,13 @@ extern void front_execute_box(fat_pointer box);
     }
 
     front_window_dispatch_event(handle, be);
+}
+
+- (void)windowWillEnterFullScreen:(NSNotification *)notification {
+    front_window_will_fullscreen(handle, YES);
+}
+- (void)windowWillExitFullScreen:(NSNotification *)notification {
+    front_window_will_fullscreen(handle, NO);
 }
 @end
 
@@ -225,6 +244,14 @@ void
 back_window_set_max_size(void *_window, double w, double h) {
     Window* window = _window;
     window.contentMaxSize = NSMakeSize(w, h);
+}
+
+void
+back_window_set_fullscreen(void *_window, uint8_t fs) {
+    Window* window = _window;
+    if (!!(window.styleMask & NSWindowStyleMaskFullScreen) != fs) {
+        [window toggleFullScreen:nil];
+    }
 }
 
 void

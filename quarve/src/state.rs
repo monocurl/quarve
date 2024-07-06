@@ -1164,7 +1164,6 @@ pub mod capacitor {
 }
 
 mod store {
-    use std::ops::Deref;
     use crate::core::{Slock};
     use crate::state::{StateFilter, IntoAction, Signal, Stateful};
     use crate::state::listener::{GeneralListener, InverseListener};
@@ -1199,16 +1198,6 @@ mod store {
         fn apply(&self, action: impl IntoAction<<<F as StateFilter>::Target as Stateful>::Action, <F as StateFilter>::Target>, s: Slock<impl ThreadMarker>);
 
         fn as_signal(&self) -> &impl Signal<Target=<F as StateFilter>::Target>;
-
-        fn borrow<'a>(&'a self, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=<F as StateFilter>::Target> {
-            self.as_signal().borrow(s)
-        }
-
-        fn listen<G>(&self, listener: G, s: Slock<impl ThreadMarker>)
-            where G: (FnMut(&F::Target, Slock) -> bool) + Send + 'static
-        {
-            self.as_signal().listen(listener, s)
-        }
     }
 
     mod raw_store {
@@ -3192,11 +3181,10 @@ mod test {
     use std::time::Duration;
     use rand::Rng;
     use crate::core::{setup_timing_thread, slock_owner, timed_worker};
-    use crate::state::{Store, Signal, TokenStore, Binding, Bindable, ActionDispatcher, StoreContainer, NumericAction, DirectlyInvertible, Filterable, DerivedStore, Stateful, CoupledStore, StringActionBasis, Buffer, Word, GroupAction, WithCapacitor, FixedSignal};
+    use crate::state::{Store, Signal, TokenStore, Binding, StoreContainer, NumericAction, DirectlyInvertible, Filterable, DerivedStore, Stateful, CoupledStore, StringActionBasis, Buffer, Word, GroupAction, WithCapacitor};
     use crate::state::capacitor::{ConstantSpeedCapacitor, ConstantTimeCapacitor, SmoothCapacitor};
     use crate::state::coupler::{FilterlessCoupler, NumericStringCoupler};
     use crate::state::SetAction::{Identity, Set};
-    use crate::state::slock_cell::SlockCell;
     use crate::state::VecActionBasis::{Insert, Remove, Swap};
     use crate::util::numeric::Norm;
     use crate::util::test_util::HeapChecker;
@@ -3323,27 +3311,27 @@ mod test {
             let equals = token.equals(i as i32, s.marker());
             let c = counts[i].binding();
             equals.listen(move |_, s| {
-                let curr = *c.borrow(s);
+                let curr = *c.as_signal().borrow(s);
 
                 c.apply(Set(curr + 1), s);
                 true
             }, s.marker());
             listeners.push(equals);
         }
-        assert_eq!(*counts[1].binding().borrow(s.marker()), 0);
+        assert_eq!(*counts[1].binding().as_signal().borrow(s.marker()), 0);
         token.apply(Set(1), s.marker());
-        assert_eq!(*counts[1].binding().borrow(s.marker()), 0);
+        assert_eq!(*counts[1].binding().as_signal().borrow(s.marker()), 0);
         token.apply(Set(2), s.marker());
-        assert_eq!(*counts[1].binding().borrow(s.marker()), 1);
-        assert_eq!(*counts[2].binding().borrow(s.marker()), 1);
+        assert_eq!(*counts[1].binding().as_signal().borrow(s.marker()), 1);
+        assert_eq!(*counts[2].binding().as_signal().borrow(s.marker()), 1);
         token.apply(Set(4), s.marker());
-        assert_eq!(*counts[1].binding().borrow(s.marker()), 1);
-        assert_eq!(*counts[2].binding().borrow(s.marker()), 2);
-        assert_eq!(*counts[4].binding().borrow(s.marker()), 1);
+        assert_eq!(*counts[1].binding().as_signal().borrow(s.marker()), 1);
+        assert_eq!(*counts[2].binding().as_signal().borrow(s.marker()), 2);
+        assert_eq!(*counts[4].binding().as_signal().borrow(s.marker()), 1);
         token.apply(Set(1), s.marker());
-        assert_eq!(*counts[1].binding().borrow(s.marker()), 2);
-        assert_eq!(*counts[2].binding().borrow(s.marker()), 2);
-        assert_eq!(*counts[4].binding().borrow(s.marker()), 2);
+        assert_eq!(*counts[1].binding().as_signal().borrow(s.marker()), 2);
+        assert_eq!(*counts[2].binding().as_signal().borrow(s.marker()), 2);
+        assert_eq!(*counts[4].binding().as_signal().borrow(s.marker()), 2);
     }
 
     #[test]

@@ -100,7 +100,7 @@ impl From<BufferEvent> for Event {
 
 /* back -> front call backs */
 mod callbacks {
-    use crate::core::{APP, Slock, slock_main_owner};
+    use crate::core::{APP, Slock, slock_force_main_owner, slock_main_owner};
     use crate::native::{BufferEvent, FatPointer};
     use crate::util::markers::MainThreadMarker;
 
@@ -133,6 +133,18 @@ mod callbacks {
 
         handle.into_window()
             .dispatch_native_event(event.into(), s.marker());
+    }
+
+    #[no_mangle]
+    extern "C" fn front_window_will_fullscreen(p: FatPointer, fs: bool) {
+        let s = unsafe {
+            slock_force_main_owner()
+        };
+
+        println!("Fullscreen {:?}", fs);
+
+        p.into_window()
+            .set_fullscreen(fs, s.marker());
     }
 
     #[no_mangle]
@@ -212,6 +224,7 @@ pub mod window {
         fn back_window_set_size(window: *mut c_void, w: f64, h: f64);
         fn back_window_set_min_size(window: *mut c_void, w: f64, h: f64);
         fn back_window_set_max_size(window: *mut c_void, w: f64, h: f64);
+        fn back_window_set_fullscreen(window: *mut c_void, fs: bool);
         // Note that this should NOT call front_window_should_close even though it's performed by front
         fn back_window_exit(window: *mut c_void);
         fn back_window_free(window: *mut c_void);
@@ -265,6 +278,12 @@ pub mod window {
     pub fn window_set_needs_layout(window: WindowHandle, _s: MSlock) {
         unsafe {
             back_window_set_needs_layout(window as *mut c_void);
+        }
+    }
+
+    pub fn window_set_fullscreen(window: WindowHandle, fs: bool, _s: MSlock) {
+        unsafe {
+            back_window_set_fullscreen(window as *mut c_void, fs);
         }
     }
 
@@ -405,6 +424,7 @@ pub mod view {
 }
 
 pub mod path {
+    #[cfg(not(debug_assertions))]
     use std::path::PathBuf;
 
     #[cfg(all(target_os = "macos", not(debug_assertions)))]

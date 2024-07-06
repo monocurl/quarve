@@ -1,6 +1,7 @@
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 
+#[cfg(not(debug_assertions))]
 use crate::native;
 
 fn resource_root() -> PathBuf {

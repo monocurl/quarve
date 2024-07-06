@@ -1,5 +1,5 @@
 use quarve::core::{Application, Environment, launch, MSlock};
-use quarve::state::{FixedSignal, GeneralSignal, Signal};
+use quarve::state::{Binding, Filterless, FixedSignal, GeneralSignal, Signal, Store};
 use quarve::util::geo::{Alignment, Size, VerticalDirection};
 use quarve::view::{ViewProvider, IntoViewProvider, Invalidator};
 use quarve::view::conditional::{view_if, ViewElseIf};
@@ -46,14 +46,10 @@ impl quarve::core::ApplicationProvider for ApplicationProvider {
 impl quarve::core::WindowProvider for WindowProvider {
     type Env = Env;
 
-    fn title(&self, _s: MSlock) -> impl Signal<Target=String> {
+    fn title(&self, _env: &<Env as Environment>::Const, _s: MSlock) -> impl Signal<Target=String> {
         // s.clock_signal()
         //     .map(|time| format!("Time {}", time), s)
         FixedSignal::new("Hello".to_owned())
-    }
-
-    fn style(&self, _s: MSlock) {
-
     }
 
     fn root(&self, env: &<Env as Environment>::Const, s: MSlock) -> impl ViewProvider<Env, DownContext=()> {
@@ -107,12 +103,22 @@ impl quarve::core::WindowProvider for WindowProvider {
         //     .into_view_provider(env, s)
     }
 
-    fn size(&self) -> (Size, Size, Size) {
+    fn size(&self, _env: &<Env as Environment>::Const, _s: MSlock) -> (Size, Size, Size) {
         (
             Size::new(400.0, 400.0),
             Size::new(400.0, 400.0),
             Size::new(800.0, 1000.0)
         )
+    }
+
+    fn is_fullscreen(&self, env: &<Self::Env as Environment>::Const, s: MSlock) -> impl Binding<Filterless<bool>> {
+        let ret = Store::new(false);
+        ret.listen(|_, s| {
+            println!("Called");
+            true
+        }, s);
+
+        ret
     }
 }
 
