@@ -844,7 +844,7 @@ mod vec_layout {
                     true
                 }, s);
 
-                self.subviews = self.binding.as_signal().borrow(s)
+                self.subviews = self.binding.borrow(s)
                     .iter()
                     .map(|r| {
                         (self.map)(r, env.const_env(), s).into_view(s)
@@ -898,7 +898,7 @@ mod vec_layout {
                     matches!(action.iter().next().unwrap(), VecActionBasis::InsertMany(_, _) | VecActionBasis::Insert(_, _)) {
                     // single increases are easy
                     for act in action {
-                        let binding = self.binding.as_signal().borrow(s);
+                        let binding = self.binding.borrow(s);
                         match act {
                             VecActionBasis::InsertMany(elems, at) => {
                                 // hm technically n^2? we'll have to optimize at some point
@@ -931,7 +931,7 @@ mod vec_layout {
                     action.apply(&mut view_buffer);
 
                     // fill in unfilled views
-                    let current = self.binding.as_signal().borrow(s);
+                    let current = self.binding.borrow(s);
                     self.subviews = std::iter::zip(view_buffer.into_iter(), current.iter())
                         .map(|(view, src)| {
                             if let Some(view) = view {

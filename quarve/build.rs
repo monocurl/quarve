@@ -7,6 +7,8 @@ fn build() {
     cc::Build::new()
         .file("macos/core.m")
         .file("macos/cursor_view.m")
+        .file("macos/image_view.m")
+        .file("macos/layer_view.m")
         .compile("backend");
 }
 

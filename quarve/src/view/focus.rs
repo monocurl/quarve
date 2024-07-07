@@ -1,7 +1,7 @@
 use std::hash::Hash;
 use crate::core::{Environment, MSlock};
 use crate::state::{Stateful, TokenStore};
-use crate::view::{IntoViewProvider, ViewProvider};
+use crate::view::{ViewProvider};
 
 // Don't like this all that much
 // Might be a better way to go about htings

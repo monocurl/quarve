@@ -251,11 +251,13 @@ mod window {
         #[allow(unused_variables)]
         fn is_open(&self, env: &<Self::Env as Environment>::Const, s: MSlock) -> impl Binding<Filterless<bool>> {
             Store::new(true)
+                .binding()
         }
 
         #[allow(unused_variables)]
         fn is_fullscreen(&self, env: &<Self::Env as Environment>::Const, s: MSlock) -> impl Binding<Filterless<bool>> {
             Store::new(false)
+                .binding()
         }
     }
 
@@ -442,7 +444,7 @@ mod window {
             {
                 let open = borrow.provider.is_open(stolen_env.const_env(), s);
                 let handle = borrow.handle();
-                open.as_signal().diff_listen(move |a, _s| {
+                open.diff_listen(move |a, _s| {
                     if !a {
                         // we do not run synchronous
                         // because theres possibility of multiple borrows
@@ -472,7 +474,7 @@ mod window {
             {
                 let fs = borrow.provider.is_fullscreen(stolen_env.const_env(), s);
                 let weak = Arc::downgrade(&this);
-                fs.as_signal().diff_listen(move |val, _s| {
+                fs.diff_listen(move |val, _s| {
                     let Some(this) = weak.upgrade() else {
                         return false;
                     };
@@ -487,7 +489,7 @@ mod window {
                     true
                 }, s);
 
-                if *fs.as_signal().borrow(s) {
+                if *fs.borrow(s) {
                     native::window::window_set_fullscreen(borrow.handle, true, s);
                 }
             }
@@ -755,7 +757,7 @@ mod window {
             let stolen_env = self.environment.take().unwrap();
 
             let binding = self.provider.is_fullscreen(stolen_env.const_env(), s);
-            if *binding.as_signal().borrow(s) != fs {
+            if *binding.borrow(s) != fs {
                 binding.apply(Set(fs), s);
             }
 
@@ -920,14 +922,10 @@ pub use window::*;
 
 mod slock {
     use std::marker::PhantomData;
-    use std::ops::Deref;
     use std::sync::{Mutex, MutexGuard};
     use std::thread;
-    use std::time::Duration;
-    use crate::core::{timed_worker};
     use crate::native;
-    use crate::state::{StateFilter, Binding, FixedSignal, IntoAction, JoinedSignal, CapacitatedSignal, Signal, Stateful};
-    use crate::state::capacitor::IncreasingCapacitor;
+    use crate::state::{StateFilter};
     use crate::util::markers::{AnyThreadMarker, MainThreadMarker, ThreadMarker};
     use crate::util::rust_util::PhantomUnsendUnsync;
     use crate::core::debug_stats::DebugInfo;
@@ -1034,8 +1032,9 @@ mod slock {
     }
 
     // some ffi makes it awkward to pass slock arround
-    // t
-    pub(crate) unsafe fn slock_force_main_owner() -> SlockOwner<MainThreadMarker> {
+    // If you are sure the thread currently owns the slock
+    // you can call this method
+    pub unsafe fn slock_force_main_owner() -> SlockOwner<MainThreadMarker> {
         static FAKE_GLOBAL_STATE_LOCK: Mutex<()> = Mutex::new(());
 
         // even with these checks, it's still unsafe due to lifetimes
@@ -1052,7 +1051,6 @@ mod slock {
             panic!("Cannot force slock owner")
         }
 
-
         SlockOwner {
             _guard: FAKE_GLOBAL_STATE_LOCK.lock().unwrap(),
             debug_info: DebugInfo::new(),
@@ -1061,7 +1059,7 @@ mod slock {
         }
     }
 
-    impl<M: ThreadMarker> SlockOwner<M> {
+    impl<M> SlockOwner<M> where M: ThreadMarker {
         // note that the global state lock is kept for entire
         // lifetime of slockowner; calling marker does not acquire the state lock
         // and dropping the marker does not relenquish it
@@ -1086,65 +1084,13 @@ mod slock {
     }
 
     #[cfg(debug_assertions)]
-    impl<M: ThreadMarker> Drop for SlockOwner<M> {
+    impl<M> Drop for SlockOwner<M> where M: ThreadMarker {
         fn drop(&mut self) {
             *LOCKED_THREAD.lock().unwrap() = None;
         }
     }
 
-    impl<'a, M: ThreadMarker> Slock<'a, M> {
-        pub fn fixed_signal<T: Send + 'static>(self, val: T) -> FixedSignal<T> {
-            FixedSignal::new(val)
-        }
-
-        pub fn clock_signal(self) -> CapacitatedSignal<IncreasingCapacitor> {
-            let constant = FixedSignal::new(0.0);
-            CapacitatedSignal::from(&constant, IncreasingCapacitor, self)
-        }
-
-        pub fn timed_worker<F>(self, f: F)
-            where F: for<'b> FnMut(Duration, Slock<'b>) -> bool + Send + 'static
-        {
-            timed_worker(f)
-        }
-
-        pub fn map<S, U, F>(self, signal: &S, map: F) -> S::MappedOutput<U>
-            where S: Signal,
-                  U: Send + 'static,
-                  F: Send + 'static + Fn(&S::Target) -> U
-        {
-            signal.map(map, self.as_general_slock())
-        }
-
-        pub fn join<T, U>(self, t: &impl Signal<Target=T>, u: &impl Signal<Target=U>)
-                          -> JoinedSignal<T, U, (T, U)>
-            where T: Send + Clone + 'static,
-                  U: Send + Clone + 'static
-        {
-            JoinedSignal::from(t, u, |t, u| (t.clone(), u.clone()), self.as_general_slock())
-        }
-
-        pub fn join_map<T, U, V, F>(self, t: &impl Signal<Target=T>, u: &impl Signal<Target=U>, map: F)
-                                    -> JoinedSignal<T, U, V>
-            where T: Send + Clone + 'static,
-                  U: Send + Clone + 'static,
-                  V: Send + 'static,
-                  F: Send + Clone + 'static + Fn(&T, &U) -> V
-        {
-            JoinedSignal::from(t, u, map, self.as_general_slock())
-        }
-
-        pub fn apply<F>(self, action: impl IntoAction<<F::Target as Stateful>::Action, F::Target>, to: &impl Binding<F>)
-            where F: StateFilter
-        {
-            to.apply(action, self.as_general_slock());
-        }
-
-        pub fn read<T>(self, from: &'a impl Signal<Target=T>)
-                           -> impl Deref<Target=T> + 'a where T: Send + 'static {
-            from.borrow(self.as_general_slock())
-        }
-
+    impl<'a, M> Slock<'a, M> where M: ThreadMarker {
         pub fn try_as_main_slock(self) -> Option<MSlock<'a>> {
             if !native::global::is_main() {
                 None
@@ -1185,6 +1131,9 @@ mod global {
     use std::time::{Duration, Instant};
     use crate::core::application::{Application, ApplicationProvider};
     use crate::native;
+    use crate::state::{CapacitatedSignal, FixedSignal};
+    use crate::state::capacitor::IncreasingCapacitor;
+    use crate::util::markers::ThreadMarker;
     use super::{APP, MSlock, Slock, TIMER_WORKER};
 
     pub fn timed_worker<F: for<'a> FnMut(Duration, Slock<'a>) -> bool + Send + 'static>(func: F) {
@@ -1192,6 +1141,11 @@ mod global {
             .expect("Cannot call quarve functions before launch!")
             .send((Box::new(func), Instant::now()))
             .unwrap()
+    }
+
+    pub fn clock_signal(s: Slock<impl ThreadMarker>) -> CapacitatedSignal<IncreasingCapacitor> {
+        let constant = FixedSignal::new(0.0);
+        CapacitatedSignal::from(&constant, IncreasingCapacitor, s)
     }
 
 

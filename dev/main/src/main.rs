@@ -80,6 +80,7 @@ impl quarve::core::WindowProvider for WindowProvider {
                 EmptyView
                     .padding(10)
                     .cursor(Cursor::Arrow)
+
             )
             .push(
                 ImageView::named("rose.png")

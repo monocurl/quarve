@@ -47,7 +47,6 @@ extern void front_execute_box(fat_pointer box);
     Window* window = (Window*) self.window;
     front_window_layout(window->handle, (double) NSWidth(window.frame), (double) NSHeight(window.frame));
 }
-
 @end
 
 @implementation Window
@@ -344,46 +343,4 @@ void
 back_free_view(void *view) {
     NSView *nsView = view;
     [nsView release];
-}
-
-void *
-back_view_layer_init() {
-    NSView* ret = [[NSView alloc] init];
-    [ret setWantsLayer: YES];
-    return ret;
-}
-
-void
-back_view_layer_update(void *_view, color background_color, color border_color, double corner_radius, double border_width, float opacity)
-{
-    NSView* view = _view;
-    view.layer.borderWidth = border_width;
-    view.layer.cornerRadius = corner_radius;
-    view.layer.backgroundColor = color_to_cg_color(background_color);
-    view.layer.borderColor = color_to_cg_color(border_color);
-    view.layer.opacity = opacity;
-}
-
-void *
-back_view_image_init(uint8_t const* path)
-{
-    NSString* const nsPath = [NSString stringWithUTF8String:(char const*) path];
-    NSImage* const image = [[NSImage alloc] initByReferencingFile:nsPath];
-    if (!image || !image.valid) {
-        return NULL;
-    }
-
-    NSImageView *const imageView = [[NSImageView alloc] init];
-    imageView.image = image;
-    imageView.imageScaling = NSImageScaleProportionallyUpOrDown;
-    return imageView;
-}
-
-size
-back_view_image_size(void *_image)
-{
-    NSImageView* const image = _image;
-    NSSize const intrinsic = image.intrinsicContentSize;
-
-    return (size) { (double) intrinsic.width, (double) intrinsic.height };
 }

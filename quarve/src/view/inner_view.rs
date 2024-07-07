@@ -540,15 +540,11 @@ impl NativeView {
     }
 
     pub fn layout_view(s: MSlock) -> NativeView {
-        unsafe {
-            NativeView::new(native::view::init_layout_view(s))
-        }
+        NativeView::new(native::view::init_layout_view(s))
     }
 
     pub fn layer_view(s: MSlock) -> NativeView {
-        unsafe {
-            NativeView::new(native::view::layer::init_layer_view(s))
-        }
+        NativeView::new(native::view::layer::init_layer_view(s))
     }
 
     pub fn backing(&self) -> *mut c_void {
