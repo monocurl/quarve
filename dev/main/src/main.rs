@@ -2,10 +2,11 @@ use quarve::core::{Application, Environment, launch, MSlock};
 use quarve::state::{Binding, Filterless, FixedSignal, GeneralSignal, Signal, Store};
 use quarve::util::geo::{Alignment, Size, VerticalDirection};
 use quarve::view::{ViewProvider, IntoViewProvider, Invalidator};
+use quarve::view::color_view::EmptyView;
 use quarve::view::conditional::{view_if, ViewElseIf};
 use quarve::view::image_view::ImageView;
 use quarve::view::layout::*;
-use quarve::view::modifers::{EnvironmentModifier, Frame, FrameModifiable, Layer, LayerModifiable, WhenModifiable};
+use quarve::view::modifers::{Cursor, CursorModifiable, EnvironmentModifier, Frame, FrameModifiable, KeyListener, Layer, LayerModifiable, PaddingModifiable, WhenModifiable};
 use quarve::view::util::Color;
 use quarve::view::view_match::ViewMatchIVP;
 use quarve::view_match;
@@ -76,15 +77,23 @@ impl quarve::core::WindowProvider for WindowProvider {
                     .intrinsic(150, 100)
             )
             .push(
+                EmptyView
+                    .padding(10)
+                    .cursor(Cursor::Arrow)
+            )
+            .push(
                 ImageView::named("rose.png")
                     .frame(Frame::default().unlimited_stretch())
                     .layer(Layer::default().radius(20.0).border(Color::black(), 1.0))
+                    .padding(10.0)
+                    .cursor(Cursor::IBeam)
             )
             .frame(
                 Frame::default()
                     .unlimited_stretch()
                     .align(Alignment::Center)
             )
+            .key_listener(|chr, k, s| println!("Pressed {:?}", chr))
             .into_view_provider(env, s)
 
         //

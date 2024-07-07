@@ -50,11 +50,11 @@ pub mod slock_cell {
             self.0.borrow_mut()
         }
 
-        pub fn as_ptr(&self) -> *const T {
+        pub unsafe fn as_ptr(&self) -> *const T {
             self.0.as_ptr()
         }
 
-        pub fn as_mut_ptr(&self) -> *mut T {
+        pub unsafe fn as_mut_ptr(&self) -> *mut T {
             self.0.as_ptr()
         }
     }
@@ -380,14 +380,14 @@ mod group {
 
             #[derive(Clone)]
             pub enum SetAction<T>
-                where T: Stateful + Copy
+                where T: Copy
             {
                 Set(T),
                 Identity
             }
 
             impl<T> Mul for SetAction<T>
-                where T: Stateful + Copy
+                where T: Copy
             {
                 type Output = Self;
 
@@ -401,7 +401,7 @@ mod group {
             }
 
             impl<T> GroupBasis<T> for SetAction<T>
-                where T: Stateful + Copy + 'static
+                where T: Send + Copy + 'static
             {
                 fn apply(self, to: &mut T) -> Self {
                     match self {
@@ -417,7 +417,7 @@ mod group {
             }
 
             impl<T> GroupAction<T> for SetAction<T>
-                where T: Stateful + Copy + 'static
+                where T: Send + Copy + 'static
             {
                 fn identity() -> Self {
                     SetAction::Identity
@@ -443,7 +443,10 @@ mod group {
                 i32, u32,
                 i64, u64,
                 isize, usize,
-                f32, f64
+                f32, f64,
+                Option<i32>, Option<u32>,
+                Option<f32>, Option<f64>,
+                Option<isize>, Option<usize>
             );
         }
         pub use set_action::*;

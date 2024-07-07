@@ -84,6 +84,19 @@ impl Event {
         matches!(self.payload, EventPayload::Mouse(_, _))
     }
 
+    pub fn chars(&self) -> Option<&str> {
+        if let EventPayload::Key(ref ke)  = self.payload {
+            Some(match ke {
+                KeyEvent::Press(k) => k.chars(),
+                KeyEvent::Repeat(k) => k.chars(),
+                KeyEvent::Release(k) => k.chars(),
+            })
+        }
+        else {
+            None
+        }
+    }
+
     pub fn cursor(&self) -> Point {
         match self.payload {
             EventPayload::Mouse(_, at) => at,

@@ -305,6 +305,7 @@ pub mod view {
     use std::ffi::{c_ulonglong, c_void};
     use crate::core::MSlock;
     use crate::util::geo::{Rect, Size};
+    use crate::view::modifers::Cursor;
     use crate::view::util::Color;
 
     extern "C" {
@@ -322,6 +323,10 @@ pub mod view {
         /* image view methods */
         fn back_view_image_init(path: *const u8) -> *mut c_void;
         fn back_view_image_size(image: *mut c_void) -> Size;
+
+        /* Cursor View */
+        fn back_view_cursor_init(cursor_type: std::ffi::c_int) -> *mut c_void;
+        fn back_view_cursor_update(view: *mut c_void, cursor_type: std::ffi::c_int);
     }
 
     pub fn view_clear_children(view: *mut c_void, _s: MSlock) {
@@ -366,6 +371,25 @@ pub mod view {
     pub fn init_layout_view(_s: MSlock) -> *mut c_void {
         unsafe {
             back_view_layout_init()
+        }
+    }
+
+    pub mod cursor {
+        use std::ffi::c_void;
+        use crate::core::MSlock;
+        use crate::native::view::{back_view_cursor_init, back_view_cursor_update};
+        use crate::view::modifers::Cursor;
+
+        pub fn init_cursor_view(cursor: Cursor, _s: MSlock) -> *mut c_void {
+            unsafe {
+                back_view_cursor_init(cursor as i32 as std::ffi::c_int)
+            }
+        }
+
+        pub fn update_cursor_view(view: *mut c_void, cursor: Cursor) {
+            unsafe {
+                back_view_cursor_update(view, cursor as i32 as std::ffi::c_int);
+            }
         }
     }
 

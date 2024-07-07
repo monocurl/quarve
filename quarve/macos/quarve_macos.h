@@ -31,6 +31,13 @@ enum event_modifiers {
     EVENT_MODIFIER_ALT_OPTION = 16
 };
 
+// matches modifiers/Cursor
+enum cursor {
+    CURSOR_ARROW  = 0,
+    CURSOR_POINTER= 1,
+    CURSOR_IBEAM  = 2
+};
+
 typedef struct size {
     double w, h;
 } size;

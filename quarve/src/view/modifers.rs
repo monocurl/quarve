@@ -1977,22 +1977,277 @@ pub use show_hide_modifier::*;
 
 mod key_listener {
     use std::marker::PhantomData;
-    use crate::core::Environment;
-    use crate::event::{EventModifiers};
-    use crate::view::IntoViewProvider;
+    use std::sync::{Arc, Weak};
+    use crate::core::{Environment, MSlock, WindowViewCallback};
+    use crate::event::{Event, EventModifiers, EventResult};
+    use crate::state::slock_cell::MainSlockCell;
+    use crate::util::geo::{Rect, Size};
+    use crate::view::{EnvRef, InnerViewBase, IntoViewProvider, Invalidator, NativeView, Subtree, ViewProvider};
 
-    struct KeyListenerIVP<E, I, F> where E: Environment, I: IntoViewProvider<E>, F: FnMut(&str, EventModifiers) {
+    struct KeyListenerIVP<E, I, F>
+        where E: Environment,
+              I: IntoViewProvider<E>,
+              F: FnMut(&str, EventModifiers, MSlock) + 'static
+    {
         source: I,
         listener: F,
         phantom: PhantomData<E>
     }
 
-    struct KeyListenerVP {
+    impl<E, I, F> IntoViewProvider<E> for KeyListenerIVP<E, I, F>
+        where E: Environment,
+              I: IntoViewProvider<E>,
+              F: FnMut(&str, EventModifiers, MSlock) + 'static
+    {
+        type UpContext = I::UpContext;
+        type DownContext = I::DownContext;
 
+        fn into_view_provider(self, env: &E::Const, s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
+            KeyListenerVP {
+                source: self.source.into_view_provider(env, s),
+                listener: self.listener,
+                window: None,
+                owner: None,
+                phantom: Default::default(),
+            }
+        }
+    }
+
+    struct KeyListenerVP<E, V, F>
+        where E: Environment,
+              V: ViewProvider<E>,
+              F: FnMut(&str, EventModifiers, MSlock) + 'static
+    {
+        source: V,
+        listener: F,
+        window: Option<Weak<MainSlockCell<dyn WindowViewCallback<E>>>>,
+        owner: Option<Weak<MainSlockCell<dyn InnerViewBase<E>>>>,
+        phantom: PhantomData<E>
+    }
+
+    impl<E, V, F> ViewProvider<E> for KeyListenerVP<E, V, F>
+        where E: Environment,
+              V: ViewProvider<E>,
+              F: FnMut(&str, EventModifiers, MSlock) + 'static
+    {
+        type UpContext = V::UpContext;
+        type DownContext = V::DownContext;
+
+        fn intrinsic_size(&mut self, s: MSlock) -> Size {
+            self.source.intrinsic_size(s)
+        }
+
+        fn xsquished_size(&mut self, s: MSlock) -> Size {
+            self.source.xsquished_size(s)
+        }
+
+        fn xstretched_size(&mut self, s: MSlock) -> Size {
+            self.source.xstretched_size(s)
+        }
+
+        fn ysquished_size(&mut self, s: MSlock) -> Size {
+            self.source.ysquished_size(s)
+        }
+
+        fn ystretched_size(&mut self, s: MSlock) -> Size {
+            self.source.ystretched_size(s)
+        }
+
+        fn up_context(&mut self, s: MSlock) -> Self::UpContext {
+            self.source.up_context(s)
+        }
+
+        fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+            if let Some((nv, bs)) = backing_source {
+                self.source.init_backing(invalidator, subtree, Some((nv, bs.source)), env, s)
+            }
+            else {
+                self.source.init_backing(invalidator, subtree, None, env, s)
+            }
+        }
+
+        fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
+            if self.window.is_none() {
+                self.window = subtree.window();
+                let owner = Arc::downgrade(subtree.owner());
+                self.owner = Some(owner.clone());
+                if let Some(w) = self.window.as_ref().and_then(|w| w.upgrade()) {
+                    w.borrow_main(s)
+                        .request_key_listener(owner);
+                }
+            }
+            self.source.layout_up(subtree, env, s)
+        }
+
+        fn layout_down(&mut self, subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
+            self.source.layout_down(subtree, frame, layout_context, env, s)
+        }
+
+        fn pre_show(&mut self, s: MSlock) {
+            if let Some(w) = self.window.as_ref().and_then(|w| w.upgrade()) {
+                w.borrow_main(s)
+                    .request_key_listener(self.owner.clone().unwrap());
+            }
+            self.source.pre_show(s)
+        }
+
+        fn post_show(&mut self, s: MSlock) {
+            self.source.post_show(s)
+        }
+
+        fn pre_hide(&mut self, s: MSlock) {
+
+            self.source.pre_hide(s)
+        }
+
+        fn post_hide(&mut self, s: MSlock) {
+            self.source.post_hide(s)
+        }
+
+        fn focused(&mut self, rel_depth: u32, s: MSlock) {
+            self.source.focused(rel_depth, s)
+        }
+
+        fn unfocused(&mut self, rel_depth: u32, s: MSlock) {
+            self.source.focused(rel_depth, s)
+        }
+
+        fn push_environment(&mut self, env: &mut E::Variable, s: MSlock) {
+            self.source.push_environment(env, s)
+        }
+
+        fn pop_environment(&mut self, env: &mut E::Variable, s: MSlock) {
+            self.source.pop_environment(env, s)
+        }
+
+        fn handle_event(&mut self, e: &Event, s: MSlock) -> EventResult {
+            let res = self.source.handle_event(e, s);
+            if let Some(chars) = e.chars() {
+                (self.listener)(chars, e.modifiers, s)
+            }
+
+            res
+        }
     }
 
     pub trait KeyListener<E> : IntoViewProvider<E> where E: Environment {
-        fn key_listener(self, listener: impl FnMut(&str, EventModifiers)) -> impl IntoViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext>;
+        fn key_listener(self, listener: impl FnMut(&str, EventModifiers, MSlock) + 'static) -> impl IntoViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext>;
+    }
+
+    impl<E, I> KeyListener<E> for I
+        where E: Environment,
+              I: IntoViewProvider<E> {
+        fn key_listener(self, listener: impl FnMut(&str, EventModifiers, MSlock) + 'static) -> impl IntoViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
+            KeyListenerIVP {
+                source: self,
+                listener,
+                phantom: Default::default(),
+            }
+        }
     }
 }
 pub use key_listener::*;
+
+mod cursor {
+    use std::marker::PhantomData;
+    use crate::core::{Environment, MSlock};
+    use crate::native;
+    use crate::util::geo::{Rect, Size};
+    use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, View, ViewProvider, ViewRef};
+
+    #[derive(Copy, Clone)]
+    pub enum Cursor {
+        Arrow = 0,
+        Pointer = 1,
+        IBeam = 2
+    }
+
+    pub struct CursorIVP<E, I> where E: Environment, I: IntoViewProvider<E> {
+        source: I,
+        cursor: Cursor,
+        phantom: PhantomData<E>
+    }
+
+    impl<E, I> IntoViewProvider<E> for CursorIVP<E, I> where E: Environment, I: IntoViewProvider<E> {
+        type UpContext = I::UpContext;
+        type DownContext = I::DownContext;
+
+        fn into_view_provider(self, env: &E::Const, s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
+            CursorVP {
+                source: self.source.into_view_provider(env, s).into_view(s),
+                cursor: self.cursor,
+            }
+        }
+    }
+
+    pub struct CursorVP<E, P> where E: Environment, P: ViewProvider<E> {
+        source: View<E, P>,
+        cursor: Cursor
+    }
+
+    impl<E, P> ViewProvider<E> for CursorVP<E, P> where E: Environment, P: ViewProvider<E> {
+        type UpContext = P::UpContext;
+        type DownContext = P::DownContext;
+
+        fn intrinsic_size(&mut self, s: MSlock) -> Size {
+            self.source.intrinsic_size(s)
+        }
+
+        fn xsquished_size(&mut self, s: MSlock) -> Size {
+            self.source.xsquished_size(s)
+        }
+
+        fn xstretched_size(&mut self, s: MSlock) -> Size {
+            self.source.xstretched_size(s)
+        }
+
+        fn ysquished_size(&mut self, s: MSlock) -> Size {
+            self.source.ysquished_size(s)
+        }
+
+        fn ystretched_size(&mut self, s: MSlock) -> Size {
+            self.source.ystretched_size(s)
+        }
+
+        fn up_context(&mut self, s: MSlock) -> Self::UpContext {
+            self.source.up_context(s)
+        }
+
+        fn init_backing(&mut self, _invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+            subtree.push_subview(&self.source, env, s);
+
+            if let Some((nv, src)) = backing_source {
+                self.source.take_backing(src.source, env, s);
+                native::view::cursor::update_cursor_view(nv.backing(), self.cursor);
+                nv
+            }
+            else {
+                NativeView::new(native::view::cursor::init_cursor_view(self.cursor, s))
+            }
+        }
+
+        fn layout_up(&mut self, _subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, _s: MSlock) -> bool {
+            true
+        }
+
+        fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
+            let used = self.source.layout_down_with_context(frame.full_rect(), layout_context, env, s);
+            (used, used)
+        }
+    }
+
+    pub trait CursorModifiable<E>: IntoViewProvider<E> where E: Environment {
+        fn cursor(self, cursor: Cursor) -> impl IntoViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext>;
+    }
+
+    impl<E, I> CursorModifiable<E> for I where E: Environment, I: IntoViewProvider<E> {
+        fn cursor(self, cursor: Cursor) -> impl IntoViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
+            CursorIVP {
+                source: self,
+                cursor,
+                phantom: Default::default(),
+            }
+        }
+    }
+}
+pub use cursor::*;

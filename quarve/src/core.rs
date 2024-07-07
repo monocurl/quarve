@@ -282,7 +282,7 @@ mod window {
         fn invalidate_view(&self, handle: Weak<MainSlockCell<dyn WindowViewCallback<E>>>, view: Weak<MainSlockCell<dyn InnerViewBase<E>>>, depth: u32, s: Slock);
 
         fn request_focus(&self, view: Weak<MainSlockCell<dyn InnerViewBase<E>>>);
-        fn unrequst_focus(&self, view: Weak<MainSlockCell<dyn InnerViewBase<E>>>);
+        fn unrequest_focus(&self, view: Weak<MainSlockCell<dyn InnerViewBase<E>>>);
 
         fn request_default_focus(&self, view: Weak<MainSlockCell<dyn InnerViewBase<E>>>);
         fn unrequest_default_focus(&self, view: Weak<MainSlockCell<dyn InnerViewBase<E>>>);
@@ -695,13 +695,16 @@ mod window {
                     self.last_cursor.set(at);
                 },
                 EventPayload::Key(_) => 'key: {
+                    // if focus also in key listeners, only do one at a time
+                    let mut already_handled: Option<*const MainSlockCell<dyn InnerViewBase<P::Env>>> = None;
+
                     let mut handled_key_event = |target: Arc<MainSlockCell<dyn InnerViewBase<P::Env>>>| {
                         match target.borrow_mut_main(s)
                             .handle_key_event(&mut event, s) {
                             EventResult::NotHandled => false,
                             EventResult::Handled => true,
                             EventResult::FocusRelease => {
-                                self.unrequst_focus(Arc::downgrade(&target));
+                                self.unrequest_focus(Arc::downgrade(&target));
                                 false
                             },
                             EventResult::FocusAcquire => {
@@ -713,6 +716,7 @@ mod window {
 
                     if let Some(focus) = self.focus.borrow().deref().as_ref().and_then(|f| f.upgrade()) {
                         // 1. focus
+                        already_handled = Some(Arc::as_ptr(&focus));
                         if handled_key_event(focus) {
                             break 'key;
                         }
@@ -720,6 +724,7 @@ mod window {
                     else if let Some(default_focus) = self.default_focus.borrow().deref()
                         .first().and_then(|f| f.upgrade()) {
                         // 2. autofocus
+                        already_handled = Some(Arc::as_ptr(&default_focus));
                         if handled_key_event(default_focus) {
                             break 'key;
                         }
@@ -728,6 +733,13 @@ mod window {
                     // 3. key listeners
                     for listener in self.key_listeners.borrow().iter() {
                         if let Some(listener) = listener.upgrade() {
+                            // skip if was already focused or autofocused
+                            if let Some(handled) = already_handled {
+                                if std::ptr::addr_eq(Arc::as_ptr(&listener), handled) {
+                                    continue
+                                }
+                            }
+
                             // you cannot acquire focus by being a key listener (at least for now)
                             listener.borrow_mut_main(s)
                                 .handle_key_event(&mut event, s);
@@ -863,9 +875,9 @@ mod window {
             self.scheduled_focus.set(Some(view));
         }
 
-        fn unrequst_focus(&self, view: Weak<MainSlockCell<dyn InnerViewBase<P::Env>>>) {
+        fn unrequest_focus(&self, view: Weak<MainSlockCell<dyn InnerViewBase<P::Env>>>) {
             let comp = self.scheduled_focus.take();
-            if comp.as_ref().map(|w| w.as_ptr()) == Some(view.as_ptr()) {
+            if comp.as_ref().map(|w| Weak::as_ptr(&w)) == Some(view.as_ptr()) {
                 self.scheduled_focus.set(None)
             }
             else {

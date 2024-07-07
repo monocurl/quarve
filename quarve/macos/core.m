@@ -32,7 +32,6 @@ extern void front_execute_box(fat_pointer box);
 @end
 
 @interface ContentView : NSView
-- (void)layout;
 @end
 
 @interface Window : NSWindow<NSWindowDelegate> {
@@ -48,6 +47,7 @@ extern void front_execute_box(fat_pointer box);
     Window* window = (Window*) self.window;
     front_window_layout(window->handle, (double) NSWidth(window.frame), (double) NSHeight(window.frame));
 }
+
 @end
 
 @implementation Window
@@ -55,8 +55,8 @@ extern void front_execute_box(fat_pointer box);
     [super initWithContentRect:NSMakeRect(0, 0, 2, 2) styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
     [self setIsVisible:YES];
 
-    self.delegate = self;
     self.releasedWhenClosed = NO;
+    self.delegate = self;
 
     return self;
 }
@@ -71,15 +71,12 @@ extern void front_execute_box(fat_pointer box);
 - (BOOL)windowShouldClose:(id)sender {
     return (BOOL) front_window_should_close(handle);
 }
-- (void)sendEvent:(NSEvent*)event {
+
+- (void)dispatchEvent:(NSEvent*)event {
     buffer_event be = { .native_event = event };
 
     be.cursor_x = event.locationInWindow.x;
     be.cursor_y = event.locationInWindow.y;
-    if (be.cursor_y > [self contentRectForFrameRect: self.frame].size.height) {
-        [super sendEvent: event];
-        return;
-    }
 
     if (event.modifierFlags & NSEventModifierFlagCommand) {
         be.modifiers |= EVENT_MODIFIER_COMMAND;
@@ -151,11 +148,44 @@ extern void front_execute_box(fat_pointer box);
         be.delta_y = event.deltaY;
     }
     else {
-        [super sendEvent: event];
         return;
     }
 
     front_window_dispatch_event(handle, be);
+}
+
+- (void)keyDown:(NSEvent *)event {
+    [self dispatchEvent:event];
+}
+- (void)keyUp:(NSEvent *)event {
+    [self dispatchEvent:event];
+}
+- (void)mouseDown:(NSEvent *)event {
+    [self dispatchEvent:event];
+}
+- (void)mouseDragged:(NSEvent *)event {
+    [self dispatchEvent:event];
+}
+- (void)mouseUp:(NSEvent *)event {
+    [self dispatchEvent:event];
+}
+- (void)mouseEntered:(NSEvent *)event {
+    [self dispatchEvent:event];
+}
+- (void)mouseExited:(NSEvent *)event {
+    [self dispatchEvent:event];
+}
+- (void)rightMouseDown:(NSEvent *)event {
+    [self dispatchEvent:event];
+}
+- (void)rightMouseDragged:(NSEvent *)event {
+    [self dispatchEvent:event];
+}
+- (void)rightMouseUp:(NSEvent *)event {
+    [self dispatchEvent:event];
+}
+- (void)scrollWheel:(NSEvent *)event {
+    [self dispatchEvent:event];
 }
 
 - (void)windowWillEnterFullScreen:(NSNotification *)notification {

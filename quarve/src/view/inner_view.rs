@@ -283,7 +283,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
             EventResult::FocusRelease => {
                 if let Some(window) = self.graph.window.as_ref().and_then(|w| w.upgrade()) {
                     window.borrow_main(s)
-                        .unrequst_focus(Arc::downgrade(this))
+                        .unrequest_focus(Arc::downgrade(this))
                 }
             }
         }
@@ -532,7 +532,7 @@ pub struct NativeView {
 }
 
 impl NativeView {
-    pub unsafe fn new(owned_view: *mut c_void) -> NativeView {
+    pub fn new(owned_view: *mut c_void) -> NativeView {
         NativeView {
             backing: owned_view,
             clips_subviews: false
@@ -626,6 +626,16 @@ impl<'a, E> Subtree<'a, E> where E: Environment {
         for subview in borrow.graph().subviews() {
             Subtree::dfs(subview, s);
         }
+    }
+
+    // i dont think this is the best place, but easiest
+    // necessary for focus/keylisteners
+    pub(crate) fn window(&self) -> Option<Weak<MainSlockCell<dyn WindowViewCallback<E>>>> {
+        self.graph.window.clone()
+    }
+
+    pub(crate) fn owner(&self) -> &Arc<MainSlockCell<dyn InnerViewBase<E>>> {
+        self.owner
     }
 
     // ugly hack to avoid reentry whenever
