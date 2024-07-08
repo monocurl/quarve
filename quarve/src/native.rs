@@ -141,8 +141,6 @@ mod callbacks {
             slock_force_main_owner()
         };
 
-        println!("Fullscreen {:?}", fs);
-
         p.into_window()
             .set_fullscreen(fs, s.marker());
     }
@@ -328,7 +326,7 @@ pub mod view {
         fn back_view_cursor_update(view: *mut c_void, cursor_type: std::ffi::c_int);
 
         /* scroll view */
-        fn back_view_scroll_init(is_vertical: bool) -> *mut c_void;
+        fn back_view_scroll_init(allow_vertical: bool, allow_horizontal: bool) -> *mut c_void;
     }
 
     pub fn view_clear_children(view: *mut c_void, _s: MSlock) {
@@ -388,7 +386,7 @@ pub mod view {
             }
         }
 
-        pub fn update_layout_view(
+        pub fn update_layer_view(
             view: *mut c_void,
             bg_color: Color,
             border_color: Color,
@@ -453,9 +451,9 @@ pub mod view {
         use crate::core::MSlock;
         use crate::native::view::back_view_scroll_init;
 
-        pub fn init_scroll_view(vertical: bool, _s: MSlock) -> *mut c_void {
+        pub fn init_scroll_view(vertical: bool, horizontal: bool, _s: MSlock) -> *mut c_void {
             unsafe {
-                back_view_scroll_init(vertical)
+                back_view_scroll_init(vertical, horizontal)
             }
         }
 

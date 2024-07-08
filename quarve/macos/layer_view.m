@@ -2,6 +2,15 @@
 #import "color.h"
 #import "quarve_macos.h"
 
+@interface LayerView: NSView
+@end
+
+@implementation LayerView
+- (BOOL) isFlipped {
+    return YES;
+}
+@end
+
 void *
 back_view_layer_init() {
     NSView* ret = [[NSView alloc] init];

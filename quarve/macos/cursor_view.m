@@ -20,6 +20,10 @@
     [self discardCursorRects];
     [self addCursorRect:[self visibleRect] cursor:self.cursor];
 }
+
+- (BOOL)isFlipped {
+    return YES;
+}
 @end
 
 static NSCursor*

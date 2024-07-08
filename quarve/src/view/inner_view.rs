@@ -214,16 +214,14 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
                 graph: &mut self.graph,
                 owner: this
             };
-            self.graph.native_view = self.provider.init_backing(
+            self.graph.native_view =
+                self.provider.init_backing(
                 invalidator,
                 &mut subtree,
                 Some(source),
                 env,
                 s
             );
-            if self.graph.native_view.backing.is_null() {
-                self.graph.native_view = NativeView::layout_view(s)
-            }
 
             self.provider.pop_environment(env.0.variable_env_mut(), s);
         }
@@ -245,7 +243,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
     fn set_superview(&mut self, superview: Option<Weak<MainSlockCell<dyn InnerViewBase<E>>>>) {
         if self.graph.superview.is_some() && superview.is_some() {
             panic!("Attempt to add view to superview when the subview is already mounted to a view. \
-                        Please remove the view from the other view before proceeding");
+                        Remove the view from the other view before proceeding");
         }
 
         self.graph.superview = superview;
@@ -290,13 +288,13 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
 
         self.graph.subviews.iter().rev()
             .any(|sv| {
-                let borrow = sv.borrow_mut_main(s);
+                let mut borrow = sv.borrow_mut_main(s);
                 let delta = -borrow.view_rect(s).origin();
                 let prev = prev_position.translate(delta);
 
                 event.set_cursor(position.translate(delta));
 
-                sv.borrow_mut_main(s).handle_mouse_event(sv, event, prev, s)
+                borrow.handle_mouse_event(sv, event, prev, s)
             })
     }
 
@@ -436,6 +434,11 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
             panic!("Cannot add view to different window than the original one it was mounted on!")
         }
 
+        // the window will never be reset so this is the most effective
+        // way of checking first mount. checking if native view is null
+        // is not a good check since it could have been initialized via
+        // a take backing call
+        let first_mount = self.graph.window.is_none();
         self.graph.window = new_window;
         self.graph.depth = depth;
 
@@ -443,8 +446,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         self.push_environment(e, s);
 
         /* init backing if necessary */
-        let first_mount = self.native_view().is_null();
-        if first_mount {
+        if self.native_view().is_null() {
             let invalidator = Invalidator {
                 view: Arc::downgrade(this)
             };
@@ -472,6 +474,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
             if first_mount {
                 view_add_child_at(self.graph.native_view.backing, borrow.native_view(), i, s);
             }
+            view_add_child_at(self.graph.native_view.backing, borrow.native_view(), i, s);
         }
         self.provider.post_show(s);
 
@@ -647,6 +650,14 @@ impl<'a, E> Subtree<'a, E> where E: Environment {
     }
 
     fn ensure_subtree_has_layout_up_done(&mut self, env: &mut EnvRef<E>, s: MSlock) {
+        // in this case, we are unmounted
+        // the subtree will have its layout up done afterwards
+        // this situation is generally encountered when init_backing
+        // is called before mounting (which can itself happen due to take_backing)
+        if self.graph.depth == u32::MAX {
+            return;
+        }
+
         let (window, depth) =
             (self.graph.window
                 .as_ref()
@@ -667,7 +678,9 @@ impl<'a, E> Subtree<'a, E> where E: Environment {
         let removed = self.graph.subviews.remove(index);
         let mut borrow = removed.borrow_mut_main(s);
         borrow.set_superview(None);
-        borrow.hide(s);
+        if self.graph.depth != u32::MAX {
+            borrow.hide(s);
+        }
 
         self.ensure_subtree_has_layout_up_done(env, s);
     }

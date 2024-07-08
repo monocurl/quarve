@@ -2,6 +2,9 @@
 #import "color.h"
 #import "quarve_macos.h"
 
+/* internal state */
+int performing_subview_insertion = 0;
+
 /* front end */
 extern void front_will_spawn(void);
 
@@ -42,11 +45,17 @@ extern void front_execute_box(fat_pointer box);
 
 @implementation ContentView
 - (void)layout {
-    [super layout];
-
     Window* window = (Window*) self.window;
-    front_window_layout(window->handle, (double) NSWidth(window.frame), (double) NSHeight(window.frame));
+    NSRect content = [window contentRectForFrameRect:window.frame];
+    front_window_layout(window->handle, (double) NSWidth(content), (double) NSHeight(content));
+
+    [super layout];
 }
+
+- (BOOL)isFlipped {
+    return YES;
+}
+
 @end
 
 @implementation Window
@@ -296,11 +305,6 @@ back_window_free(void *_window) {
 }
 
 /* view methods */
-void *
-back_view_layout_init() {
-    return [[NSView alloc] init];
-}
-
 void
 back_view_clear_children(void *_view) {
     NSView* view = _view;
@@ -320,12 +324,17 @@ void
 back_view_insert_child(void *_view, void* restrict _child, unsigned long long index) {
     NSView* view = _view;
     NSView* child = _child;
+
+    performing_subview_insertion++;
+
     if (index == view.subviews.count) {
         [view addSubview:child positioned:NSWindowAbove relativeTo:nil];
     }
     else {
         [view addSubview:child positioned:NSWindowBelow relativeTo:[view.subviews objectAtIndex:index]];
     }
+
+    performing_subview_insertion--;
 }
 
 void

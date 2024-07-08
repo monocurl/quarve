@@ -586,11 +586,11 @@ mod provider_modifier {
             }
 
             if self.edges & geo::edge::UP != 0 {
+                subtree_translation.y += amnt;
                 total.h += amnt;
             }
 
             if self.edges & geo::edge::DOWN != 0 {
-                subtree_translation.y += amnt;
                 total.h += amnt;
             }
 
@@ -1047,8 +1047,6 @@ mod layer_modifier {
         }
 
         fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
-            subtree.push_subview(&self.view, env, s);
-
             self.layer.opacity.add_invalidator(&invalidator, s);
             self.layer.border_width.add_invalidator(&invalidator, s);
             self.layer.border_color.add_invalidator(&invalidator, s);
@@ -1057,10 +1055,14 @@ mod layer_modifier {
 
             if let Some((nv, layer)) = backing_source {
                 self.view.take_backing(layer.view, env, s);
+                subtree.push_subview(&self.view, env, s);
+
                 self.backing = nv.backing();
                 nv
             }
             else {
+                subtree.push_subview(&self.view, env, s);
+
                 let nv = NativeView::layer_view(s);
                 self.backing = nv.backing();
                 nv
@@ -1069,7 +1071,7 @@ mod layer_modifier {
 
         fn layout_up(&mut self, _subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, s: MSlock) -> bool {
             if self.enabled {
-                native::view::layer::update_layout_view(
+                native::view::layer::update_layer_view(
                     self.backing,
                     self.layer.background_color.inner(s),
                     self.layer.border_color.inner(s),
@@ -1080,7 +1082,7 @@ mod layer_modifier {
                 );
             }
             else {
-                native::view::layer::update_layout_view(self.backing, Color::transparent(), Color::transparent(), 0.0, 0.0, 1.0, s);
+                native::view::layer::update_layer_view(self.backing, Color::transparent(), Color::transparent(), 0.0, 0.0, 1.0, s);
             }
             // generally only called if subview propagated to here
             true
@@ -2214,14 +2216,16 @@ mod cursor {
         }
 
         fn init_backing(&mut self, _invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
-            subtree.push_subview(&self.source, env, s);
 
             if let Some((nv, src)) = backing_source {
                 self.source.take_backing(src.source, env, s);
+                subtree.push_subview(&self.source, env, s);
+
                 native::view::cursor::update_cursor_view(nv.backing(), self.cursor);
                 nv
             }
             else {
+                subtree.push_subview(&self.source, env, s);
                 NativeView::new(native::view::cursor::init_cursor_view(self.cursor, s))
             }
         }

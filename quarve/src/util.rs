@@ -491,6 +491,16 @@ pub mod geo {
         Left, Right, Down, Up
     }
 
+    impl Direction {
+        pub fn is_horizontal(self) -> bool {
+            matches!(self, Direction::Left| Direction::Right)
+        }
+
+        pub fn is_vertical(self) -> bool {
+            !matches!(self, Direction::Left| Direction::Right)
+        }
+    }
+
     #[derive(Copy, Clone, PartialEq, Eq, Debug)]
     pub enum HorizontalAlignment {
         Leading, Center, Trailing

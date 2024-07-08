@@ -1,12 +1,13 @@
-use quarve::core::{Application, Environment, launch, MSlock};
+use quarve::core::{Application, clock_signal, Environment, launch, MSlock};
 use quarve::state::{Binding, Filterless, FixedSignal, GeneralSignal, Signal, Store};
-use quarve::util::geo::{Alignment, Size, VerticalDirection};
+use quarve::util::geo::{Alignment, Direction, Size, VerticalDirection};
 use quarve::view::{ViewProvider, IntoViewProvider, Invalidator};
 use quarve::view::color_view::EmptyView;
 use quarve::view::conditional::{view_if, ViewElseIf};
 use quarve::view::image_view::ImageView;
 use quarve::view::layout::*;
 use quarve::view::modifers::{Cursor, CursorModifiable, EnvironmentModifier, Frame, FrameModifiable, KeyListener, Layer, LayerModifiable, PaddingModifiable, WhenModifiable};
+use quarve::view::scroll::ScrollView;
 use quarve::view::util::Color;
 use quarve::view::view_match::ViewMatchIVP;
 use quarve::view_match;
@@ -54,49 +55,36 @@ impl quarve::core::WindowProvider for WindowProvider {
     }
 
     fn root(&self, env: &<Env as Environment>::Const, s: MSlock) -> impl ViewProvider<Env, DownContext=()> {
-        let clock = s.clock_signal();
-        let count: GeneralSignal<Vec<_>> = clock
+        let clock = clock_signal(s);
+        let count = clock
             .map(|val| {
-                (0 ..((val / 10.0).sin().abs() * 15.0) as usize)
+                (0 ..((val).sin().abs() * 15.0) as usize)
                     .collect()
             }, s);
-        let count_clone = count.clone();
-
-        VStack::hetero_options(VStackOptions::default().direction(VerticalDirection::Up))
-            .push(
-                view_if(count.clone().map(|val| val.len() % 2 == 0, s), Color::black())
-                    .view_else(Color::white())
-                    .intrinsic(200, 100)
+        count
+            .sig_flexmap_options(
+                |val, _| {
+                    Color::new(100, 0, 0)
+                        .frame(
+                            Frame::default()
+                                .intrinsic(100, 100.0 + 25.0 * (val % 2) as f64)
+                                .stretched(150, 150.0)
+                                .squished(50, 100.0 - 50.0 * (val % 2) as f64)
+                        )
+                        .flex(FlexContext::default()
+                            .grow(0.5 + (val % 2) as f64)
+                        )
+                },
+                FlexStackOptions::default()
+                    .gap(10.0)
+                    .wrap()
+                    .cross_gap(10.0)
+                    .direction(Direction::Up)
             )
-            .push(
-                view_match!(
-                    count.clone().map(|val| val.len(), s);
-                    1 => Color::black(),
-                    _ => Color::white()
-                )
-                    .intrinsic(150, 100)
-            )
-            .push(
-                EmptyView
-                    .padding(10)
-                    .cursor(Cursor::Arrow)
-
-            )
-            .push(
-                ImageView::named("rose.png")
-                    .frame(Frame::default().unlimited_stretch())
-                    .layer(Layer::default().radius(20.0).border(Color::black(), 1.0))
-                    .padding(10.0)
-                    .cursor(Cursor::IBeam)
-            )
-            .frame(
-                Frame::default()
-                    .unlimited_stretch()
-                    .align(Alignment::Center)
-            )
-            .key_listener(|chr, k, s| println!("Pressed {:?}", chr))
+            .layer(Layer::default().border(Color::black(), 1.0))
+            .intrinsic(550, 500)
+            .layer(Layer::default().border(Color::new(100, 100, 100), 1.0))
             .into_view_provider(env, s)
-
         //
         // FlexStack::hetero()
         //     .push(
@@ -124,7 +112,6 @@ impl quarve::core::WindowProvider for WindowProvider {
     fn is_fullscreen(&self, env: &<Self::Env as Environment>::Const, s: MSlock) -> impl Binding<Filterless<bool>> {
         let ret = Store::new(false);
         ret.listen(|_, s| {
-            println!("Called");
             true
         }, s);
 

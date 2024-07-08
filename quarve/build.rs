@@ -9,6 +9,8 @@ fn build() {
         .file("macos/cursor_view.m")
         .file("macos/image_view.m")
         .file("macos/layer_view.m")
+        .file("macos/layout_view.m")
+        .file("macos/scroll_view.m")
         .compile("backend");
 }
 

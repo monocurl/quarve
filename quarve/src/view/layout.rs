@@ -850,17 +850,20 @@ mod vec_layout {
                         (self.map)(r, env.const_env(), s).into_view(s)
                     })
                     .collect();
-                self.subviews.iter()
-                    .for_each(|sv| subtree.push_subview(sv, env, s));
-
                 if let Some((native, provider)) = backing_source {
                     for (dst, src) in std::iter::zip(self.subviews.iter(), provider.subviews.into_iter()) {
                         dst.take_backing(src, env, s);
                     }
 
+                    self.subviews.iter()
+                        .for_each(|sv| subtree.push_subview(sv, env, s));
+
                     native
                 }
                 else {
+                    self.subviews.iter()
+                        .for_each(|sv| subtree.push_subview(sv, env, s));
+
                     NativeView::layout_view(s)
                 }
             }
@@ -1315,8 +1318,8 @@ mod vec_layout {
 
                 let total_h = elapsed - extra_spacing;
                 elapsed = match self.1.direction {
-                    VerticalDirection::Down => elapsed,
-                    VerticalDirection::Up => 0.0
+                    VerticalDirection::Down => 0.0,
+                    VerticalDirection::Up => elapsed
                 };
                 for view in sv_clone {
                     let used = view.used_rect(s);
@@ -1326,11 +1329,11 @@ mod vec_layout {
                         HorizontalAlignment::Trailing => total_w - used.w,
                     };
                     match self.1.direction {
-                        VerticalDirection::Down => {
+                        VerticalDirection::Up => {
                             elapsed -= used.h + self.1.spacing;
                             view.translate_post_layout_down(Point::new(target_x - used.x, elapsed - used.y), s);
                         }
-                        VerticalDirection::Up => {
+                        VerticalDirection::Down => {
                             view.translate_post_layout_down(Point::new(target_x - used.x, elapsed - used.y), s);
                             elapsed += used.h + self.1.spacing;
                         }
@@ -1514,9 +1517,9 @@ mod vec_layout {
                 for view in sv_clone {
                     let used = view.used_rect(s);
                     let target_y = match self.1.alignment {
-                        VerticalAlignment::Bottom => 0.0,
+                        VerticalAlignment::Top => 0.0,
                         VerticalAlignment::Center => total_h / 2.0 - used.h / 2.0,
-                        VerticalAlignment::Top => total_h - used.h,
+                        VerticalAlignment::Bottom => total_h - used.h,
                     };
                     match self.1.direction {
                         HorizontalDirection::Left => {
@@ -1635,13 +1638,13 @@ mod vec_layout {
                         }
                     };
                     let y = match self.1.alignment.vertical() {
-                        VerticalAlignment::Bottom => {
+                        VerticalAlignment::Top => {
                             0.0
                         }
                         VerticalAlignment::Center => {
                             used.h / 2.0 - subused.h / 2.0
                         }
-                        VerticalAlignment::Top => {
+                        VerticalAlignment::Bottom => {
                             used.h - subused.h
                         }
                     };
@@ -1678,7 +1681,7 @@ mod vec_layout {
                     direction: Direction::Right,
                     align: FlexAlign::Center,
                     justify: FlexJustify::Center,
-                    gap: 0.0,
+                    gap: 10.0,
                     cross_gap: 0.0,
                     wrap: false,
                 }
@@ -1955,15 +1958,15 @@ mod vec_layout {
             {
                 let (main_pos, mut cross_pos) = match self.1.direction {
                     Direction::Left => {
-                        (finalized_main_axis, finalized_cross_axis)
+                        (finalized_main_axis, 0.0)
                     }
                     Direction::Right => {
-                        (0.0, finalized_cross_axis)
-                    }
-                    Direction::Down => {
-                        (finalized_cross_axis, 0.0)
+                        (0.0, 0.0)
                     }
                     Direction::Up => {
+                        (finalized_cross_axis, 0.0)
+                    }
+                    Direction::Down => {
                         (0.0, 0.0)
                     }
                 };
@@ -2007,7 +2010,7 @@ mod vec_layout {
                     let mut remaining = (finalized_main_axis - span_main_axis).abs();
                     for sv in ordered {
                         // doesnt want to resize at all
-                        if sv.1 < 0.0 {
+                        if sv.1 <= 0.0 {
                             let size = sv.0.intrinsic_size(s);
                             sv.0.layout_down(Rect::new(0.0, 0.0, size.w, size.h), env, s);
                             continue;
@@ -2034,20 +2037,10 @@ mod vec_layout {
                         let align_offset = match child_align {
                             FlexAlign::Start | FlexAlign::Stretch => 0.0,
                             FlexAlign::Center => {
-                                if horizontal {
-                                    (cross - max_cross_axis) / 2.0
-                                }
-                                else {
-                                    (max_cross_axis - cross) / 2.0
-                                }
+                                (max_cross_axis - cross) / 2.0
                             }
                             FlexAlign::End => {
-                                if horizontal {
-                                    cross - max_cross_axis
-                                }
-                                else {
-                                    max_cross_axis - cross
-                                }
+                                max_cross_axis - cross
                             }
                         };
 
@@ -2058,10 +2051,10 @@ mod vec_layout {
                             Direction::Right => {
                                 sv.0.layout_down(Rect::new(0.0, align_offset, final_main, cross), env, s);
                             }
-                            Direction::Down => {
+                            Direction::Up => {
                                 sv.0.layout_down(Rect::new(align_offset, 0.0, cross, final_main), env, s);
                             }
-                            Direction::Up => {
+                            Direction::Down => {
                                 sv.0.layout_down(Rect::new(align_offset, 0.0, cross, final_main), env, s);
                             }
                         }
@@ -2077,21 +2070,21 @@ mod vec_layout {
                         let suggested = sv.suggested_rect(s);
                         let (pos_x, pos_y) = match self.1.direction {
                             Direction::Left => {
-                                let ret = (span_main_pos - suggested.w, cross_pos - suggested.h);
+                                let ret = (span_main_pos - suggested.w, cross_pos);
                                 span_main_pos -= self.1.gap + suggested.w;
                                 ret
                             }
                             Direction::Right => {
-                                let ret = (span_main_pos, cross_pos - suggested.h);
+                                let ret = (span_main_pos, cross_pos);
                                 span_main_pos += self.1.gap + suggested.w;
                                 ret
                             }
-                            Direction::Down => {
+                            Direction::Up => {
                                 let ret = (cross_pos, span_main_pos - suggested.h);
                                 span_main_pos -= suggested.h + self.1.gap;
                                 ret
                             }
-                            Direction::Up => {
+                            Direction::Down => {
                                 let ret = (cross_pos, span_main_pos);
                                 span_main_pos += suggested.h + self.1.gap;
                                 ret
@@ -2102,8 +2095,8 @@ mod vec_layout {
                     }
 
                     let adjusted_span_pos = match self.1.direction {
-                        Direction::Left | Direction::Down => span_main_pos + self.1.gap,
-                        Direction::Right | Direction::Up=> span_main_pos - self.1.gap
+                        Direction::Left | Direction::Up => span_main_pos + self.1.gap,
+                        Direction::Right | Direction::Down=> span_main_pos - self.1.gap
                     };
 
                     let justification_delta = match self.1.justify {
@@ -2116,14 +2109,13 @@ mod vec_layout {
                         for sv in start.clone().take(*count) {
                             sv.translate_post_layout_down(Point::new(justification_delta, 0.0), s);
                         }
-                        cross_pos -= max_cross_axis + self.1.cross_gap;
                     }
                     else {
                         for sv in start.clone().take(*count) {
                             sv.translate_post_layout_down(Point::new(0.0, justification_delta), s);
                         }
-                        cross_pos += max_cross_axis + self.1.cross_gap;
                     }
+                    cross_pos += max_cross_axis + self.1.cross_gap;
                 }
             }
         }

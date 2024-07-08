@@ -64,7 +64,7 @@ impl<E, S> ViewProvider<E> for ColorView<S> where E: Environment, S: Signal<Targ
     }
 
     fn layout_up(&mut self, _subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, s: MSlock) -> bool {
-        native::view::layer::update_layout_view(self.1, self.0.inner(s), Color::transparent(), 0.0, 0.0, 1.0, s);
+        native::view::layer::update_layer_view(self.1, self.0.inner(s), Color::transparent(), 0.0, 0.0, 1.0, s);
         false
     }
 
