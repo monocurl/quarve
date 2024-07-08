@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, DeriveInput, Data, Meta, LitStr, Token, DataStruct};
+use syn::{parse_macro_input, DeriveInput, Data, Meta, Token, DataStruct};
 use syn::punctuated::Punctuated;
 
 // references: https://github.com/nazmulidris/rust-scratch/blob/main/macros/my_proc_macros_lib/src/builder.rs
@@ -21,7 +21,6 @@ pub fn store_container_derive(input: TokenStream) -> TokenStream {
             &ident
         );
 
-        // get all attributes that don't have #[quarve(ignore)] on them
         let sub_stores: Vec<_> = filter_ignored_stores(&strct)
             .map(|field| field.ident.as_ref().unwrap())
             .collect();
