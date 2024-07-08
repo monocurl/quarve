@@ -3,6 +3,6 @@ resolver = "2"
 
 members = [
     "quarve",
-    "quarve-cli",
+    "quarve_cli",
     "dev/main"
-]
+, "quarve_derive"]

@@ -4,7 +4,7 @@ use crate::state::slock_cell::{MainSlockCell};
 use crate::util::rust_util::EnsureSend;
 use crate::view::inner_view::{InnerView, InnerViewBase};
 use crate::view::view_provider::ViewProvider;
-use crate::util::markers::ThreadMarker;
+use crate::util::marker::ThreadMarker;
 
 pub struct View<E, P>(pub(crate) Arc<MainSlockCell<InnerView<E, P>>>)
     where E: Environment, P: ViewProvider<E> + ?Sized;

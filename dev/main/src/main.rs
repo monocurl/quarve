@@ -1,11 +1,14 @@
+use std::marker::PhantomData;
 use quarve::core::{Application, Environment, launch, MSlock};
-use quarve::state::{Binding, Filterless, FixedSignal, Signal, Store};
+use quarve::state::{Binding, Filterless, FixedSignal, Signal, Stateful, Store};
 use quarve::util::geo::{Alignment, HorizontalAlignment, Size};
 use quarve::view::{ViewProvider, IntoViewProvider, Invalidator};
 use quarve::view::layout::*;
 use quarve::view::modifers::{Cursor, CursorModifiable, EnvironmentModifier, Frame, FrameModifiable, KeyListener, Layer, LayerModifiable, OffsetModifiable, PaddingModifiable, WhenModifiable};
 use quarve::view::scroll::ScrollView;
 use quarve::view::util::Color;
+use quarve_derive::StoreContainer;
+
 struct Env(());
 
 struct ApplicationProvider;
@@ -100,6 +103,13 @@ impl EnvironmentModifier<Env> for EnvModifier {
     fn pop_environment(&mut self, env: &mut <Env as Environment>::Variable, s: MSlock) {
 
     }
+}
+
+#[derive(StoreContainer)]
+struct State<F: Send> where F: Stateful {
+    #[quarve(ignore)]
+    phantom_data: PhantomData<F>,
+    main_store: Store<F>,
 }
 
 fn main() {

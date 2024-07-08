@@ -10,7 +10,7 @@ pub mod slock_cell {
     use std::ops::{Deref, DerefMut};
     use crate::core::{MSlock, Slock};
     use crate::native;
-    use crate::util::markers::ThreadMarker;
+    use crate::util::marker::ThreadMarker;
     use crate::util::rust_util::{EnsureSend, EnsureSync};
 
     pub struct SlockCell<T>(RefCell<T>) where T: Send + ?Sized;
@@ -161,7 +161,7 @@ mod group {
     use std::ops::Mul;
     use crate::state::{GeneralListener, InverseListener};
     use crate::core::{Slock};
-    use crate::util::markers::{BoolMarker, ThreadMarker};
+    use crate::util::marker::{BoolMarker, ThreadMarker};
 
     pub trait Stateful: Send + Sized + 'static {
         type Action: GroupAction<Self>;
@@ -315,7 +315,7 @@ mod group {
         use std::marker::PhantomData;
         use crate::core::{Slock};
         use crate::state::{Stateful};
-        use crate::util::markers::ThreadMarker;
+        use crate::util::marker::ThreadMarker;
 
         pub trait StateFilter: Send + 'static {
             type Target: Stateful;
@@ -376,7 +376,7 @@ mod group {
         mod set_action {
             use std::ops::Mul;
             use crate::state::{GroupAction, GroupBasis, Stateful};
-            use crate::util::markers::FalseMarker;
+            use crate::util::marker::FalseMarker;
 
             #[derive(Clone)]
             pub enum SetAction<T>
@@ -454,7 +454,7 @@ mod group {
         mod string_action {
             use std::ops::Range;
             use crate::state::{GroupBasis,  Stateful, Word};
-            use crate::util::markers::FalseMarker;
+            use crate::util::marker::FalseMarker;
 
             #[derive(Clone)]
             pub enum StringActionBasis {
@@ -487,7 +487,7 @@ mod group {
             use std::ops::Range;
             use crate::core::{Slock};
             use crate::state::{GeneralListener, GroupBasis, InverseListener, Stateful, StoreContainer, Word};
-            use crate::util::markers::{ThreadMarker, TrueMarker};
+            use crate::util::marker::{ThreadMarker, TrueMarker};
 
             #[derive(Clone)]
             pub enum VecActionBasis<T> {
@@ -599,7 +599,7 @@ mod group {
             use std::array;
             use std::ops::Mul;
             use crate::state::{GroupAction, GroupBasis, IntoAction, Stateful};
-            use crate::util::markers::FalseMarker;
+            use crate::util::marker::FalseMarker;
             use crate::util::Vector;
 
             pub struct VectorAction<T, const N: usize>
@@ -1170,7 +1170,7 @@ mod store {
     use crate::core::{Slock};
     use crate::state::{StateFilter, IntoAction, Signal, Stateful};
     use crate::state::listener::{GeneralListener, InverseListener};
-    use crate::util::markers::ThreadMarker;
+    use crate::util::marker::ThreadMarker;
 
     /// It is the implementors job to guarantee that subtree_listener
     /// and relatives do not get into call cycles
@@ -1207,7 +1207,7 @@ mod store {
         use crate::state::slock_cell::SlockCell;
         use crate::state::{IntoAction, StateFilter, Stateful};
         use crate::state::store::store_dispatcher::StoreDispatcher;
-        use crate::util::markers::ThreadMarker;
+        use crate::util::marker::ThreadMarker;
 
         pub(super) trait RawStore<F: StateFilter>: Sized + Send + 'static {
             type InverseListenerHolder: super::inverse_listener_holder::InverseListenerHolder;
@@ -1238,7 +1238,7 @@ mod store {
         use crate::state::listener::StateListener;
         use crate::state::slock_cell::SlockCell;
         use crate::state::store::raw_store::RawStore;
-        use crate::util::markers::ThreadMarker;
+        use crate::util::marker::ThreadMarker;
 
         pub(super) trait RawStoreSharedOwner<F: StateFilter> : Signal<Target=F::Target> + Sync {
             type Inner: RawStore<F>;
@@ -1408,7 +1408,7 @@ mod store {
         use crate::state::{StateFilter, DirectlyInvertible, GeneralListener, GroupBasis, IntoAction, InverseListener, Stateful};
         use crate::state::listener::{ StateListener};
         use crate::state::store::inverse_listener_holder::InverseListenerHolder;
-        use crate::util::markers::ThreadMarker;
+        use crate::util::marker::ThreadMarker;
         use crate::util::test_util::QuarveAllocTag;
 
         pub(crate) struct StoreDispatcher<S, F, I>
@@ -1617,7 +1617,7 @@ mod store {
         use crate::state::store::raw_store::RawStore;
         use crate::state::store::raw_store_shared_owner::RawStoreSharedOwner;
         use crate::state::store::store_dispatcher::StoreDispatcher;
-        use crate::util::markers::ThreadMarker;
+        use crate::util::marker::ThreadMarker;
 
         pub(super) struct InnerStore<S: Stateful, F: StateFilter<Target=S>> {
             dispatcher: StoreDispatcher<S, F, ActualInverseListenerHolder>
@@ -1750,7 +1750,7 @@ mod store {
         use crate::state::store::general_binding::GeneralBinding;
         use crate::state::store::raw_store::RawStore;
         use crate::state::store::raw_store_shared_owner::RawStoreSharedOwner;
-        use crate::util::markers::ThreadMarker;
+        use crate::util::marker::ThreadMarker;
 
         pub(super) struct InnerTokenStore<S: Stateful + Copy + Hash + Eq, F: StateFilter<Target=S>> {
             dispatcher: StoreDispatcher<S, F, ActualInverseListenerHolder>,
@@ -1916,7 +1916,7 @@ mod store {
         use crate::state::store::raw_store::RawStore;
         use crate::state::store::raw_store_shared_owner::RawStoreSharedOwner;
         use crate::state::store::store_dispatcher::StoreDispatcher;
-        use crate::util::markers::ThreadMarker;
+        use crate::util::marker::ThreadMarker;
 
         pub(super) struct InnerDerivedStore<S: Stateful, F: StateFilter<Target=S>> {
             dispatcher: StoreDispatcher<S, F, NullInverseListenerHolder>
@@ -2060,7 +2060,7 @@ mod store {
         use crate::state::store::raw_store::RawStore;
         use crate::state::store::raw_store_shared_owner::RawStoreSharedOwner;
         use crate::state::store::store_dispatcher::StoreDispatcher;
-        use crate::util::markers::ThreadMarker;
+        use crate::util::marker::ThreadMarker;
 
         // note that IB is purposefully filterless
         // The reference counting of this is particularly tricky
@@ -2321,7 +2321,7 @@ mod store {
         use crate::state::slock_cell::SlockCell;
         use crate::state::store::raw_store::RawStore;
         use crate::state::store::raw_store_shared_owner::RawStoreSharedOwner;
-        use crate::util::markers::ThreadMarker;
+        use crate::util::marker::ThreadMarker;
 
         pub struct GeneralBinding<F, I> where F: StateFilter, I: RawStoreSharedOwner<F> {
             pub(super) inner: I,
@@ -2391,7 +2391,7 @@ mod buffer {
     use std::sync::{Arc, Weak};
     use crate::core::Slock;
     use crate::state::slock_cell::SlockCell;
-    use crate::util::markers::ThreadMarker;
+    use crate::util::marker::ThreadMarker;
     use crate::util::test_util::QuarveAllocTag;
 
     pub struct Buffer<T>(Arc<(SlockCell<T>, QuarveAllocTag)>) where T: Send;
@@ -2440,7 +2440,7 @@ pub use buffer::*;
 mod signal {
     use std::ops::{Deref};
     use crate::core::{Slock};
-    use crate::util::markers::ThreadMarker;
+    use crate::util::marker::ThreadMarker;
 
     pub trait Signal: Sized + Send + Sync + 'static {
         type Target: Send + 'static;
@@ -2486,7 +2486,7 @@ mod signal {
 
     mod signal_audience {
         use crate::core::{Slock};
-        use crate::util::markers::ThreadMarker;
+        use crate::util::marker::ThreadMarker;
 
         pub(super) struct SignalAudience<T> where T: Send + 'static {
             listeners: Vec<Box<dyn FnMut(&T, Slock) -> bool + Send>>
@@ -2549,7 +2549,7 @@ mod signal {
         use crate::core::{Slock};
         use crate::state::Signal;
         use crate::state::slock_cell::SlockCell;
-        use crate::util::markers::ThreadMarker;
+        use crate::util::marker::ThreadMarker;
         use crate::util::test_util::QuarveAllocTag;
         use super::SignalRef;
         use super::InnerSignal;
@@ -2620,7 +2620,7 @@ mod signal {
         use crate::core::{Slock};
         use crate::state::Signal;
         use crate::state::slock_cell::SlockCell;
-        use crate::util::markers::ThreadMarker;
+        use crate::util::marker::ThreadMarker;
         use crate::util::test_util::QuarveAllocTag;
         use super::SignalRef;
         use super::{InnerSignal, SignalAudience};
@@ -2727,7 +2727,7 @@ mod signal {
         use crate::state::signal::signal_audience::SignalAudience;
         use crate::state::signal::signal_ref::SignalRef;
         use crate::state::slock_cell::SlockCell;
-        use crate::util::markers::ThreadMarker;
+        use crate::util::marker::ThreadMarker;
         use crate::util::test_util::QuarveAllocTag;
 
         struct JoinedInnerSignal<T, U, V>
@@ -2912,7 +2912,7 @@ mod signal {
         use crate::state::signal::signal_audience::SignalAudience;
         use crate::state::signal::signal_ref::SignalRef;
         use crate::state::slock_cell::SlockCell;
-        use crate::util::markers::ThreadMarker;
+        use crate::util::marker::ThreadMarker;
         use crate::util::test_util::QuarveAllocTag;
 
         pub trait WithCapacitor {
@@ -3093,7 +3093,7 @@ mod signal {
     mod signal_or_value {
         use crate::core::{Environment, Slock};
         use crate::state::{FixedSignal, Signal};
-        use crate::util::markers::ThreadMarker;
+        use crate::util::marker::ThreadMarker;
         use crate::view::Invalidator;
 
         pub enum SignalOrValue<S> where S: Signal {

@@ -104,7 +104,7 @@ mod callbacks {
     use crate::core::{APP, MSlock, Slock, slock_force_main_owner, slock_main_owner};
     use crate::native::{BufferEvent, FatPointer};
     use crate::util::geo::ScreenUnit;
-    use crate::util::markers::MainThreadMarker;
+    use crate::util::marker::MainThreadMarker;
 
     #[no_mangle]
     extern "C" fn front_will_spawn() {
@@ -189,7 +189,7 @@ pub mod global {
     use std::cell::Cell;
     use crate::core::Slock;
     use crate::native::FatPointer;
-    use crate::util::markers::MainThreadMarker;
+    use crate::util::marker::MainThreadMarker;
 
     extern "C" {
         fn back_main_loop();

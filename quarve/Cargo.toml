@@ -9,3 +9,6 @@ cc = "1.0.94"
 [dev-dependencies]
 rand = "0.8.5"
 
+[dependencies]
+quarve_derive = { path = '../quarve_derive'}
+

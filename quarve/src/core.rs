@@ -926,7 +926,7 @@ mod slock {
     use std::thread;
     use crate::native;
     use crate::state::{StateFilter};
-    use crate::util::markers::{AnyThreadMarker, MainThreadMarker, ThreadMarker};
+    use crate::util::marker::{AnyThreadMarker, MainThreadMarker, ThreadMarker};
     use crate::util::rust_util::PhantomUnsendUnsync;
     use crate::core::debug_stats::DebugInfo;
 
@@ -1140,7 +1140,7 @@ mod global {
     use crate::native;
     use crate::state::{CapacitatedSignal, FixedSignal};
     use crate::state::capacitor::IncreasingCapacitor;
-    use crate::util::markers::ThreadMarker;
+    use crate::util::marker::ThreadMarker;
     use super::{APP, MSlock, Slock, TIMER_WORKER};
 
     pub fn timed_worker<F: for<'a> FnMut(Duration, Slock<'a>) -> bool + Send + 'static>(func: F) {

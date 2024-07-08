@@ -175,7 +175,7 @@ mod provider_modifier {
     use crate::state::{FixedSignal, Signal, SignalOrValue};
     use crate::util::geo;
     use crate::util::geo::{Alignment, HorizontalAlignment, Point, Rect, ScreenUnit, Size, UNBOUNDED, VerticalAlignment};
-    use crate::util::markers::ThreadMarker;
+    use crate::util::marker::ThreadMarker;
     use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, ViewProvider};
     use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
 

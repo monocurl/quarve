@@ -308,8 +308,8 @@ pub mod numeric {
     );
 }
 
-pub mod markers {
-    use crate::util::markers::sealed_base::BoolMarkerBase;
+pub mod marker {
+    use crate::util::marker::sealed_base::BoolMarkerBase;
 
     mod sealed_base {
         pub trait BoolMarkerBase: Copy {

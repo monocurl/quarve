@@ -181,6 +181,7 @@ name = "main"
 version = "0.1.0"
 dependencies = [
  "quarve",
+ "quarve_derive",
 ]
 
 [[package]]
@@ -203,16 +204,26 @@ name = "quarve"
 version = "0.1.0"
 dependencies = [
  "cc",
+ "quarve_derive",
  "rand",
 ]
 
 [[package]]
-name = "quarve-cli"
+name = "quarve_cli"
 version = "0.1.0"
 dependencies = [
  "cargo_metadata",
  "clap",
  "serde_json",
+]
+
+[[package]]
+name = "quarve_derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
