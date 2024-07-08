@@ -345,7 +345,7 @@ pub mod markers {
 }
 
 pub mod geo {
-    use std::ops::Neg;
+    use std::ops::{Add, Neg, Sub};
 
     pub type ScreenUnit = f64;
     pub const UNBOUNDED: f64 = 1e7;
@@ -413,6 +413,22 @@ pub mod geo {
     pub struct Point {
         pub x: ScreenUnit,
         pub y: ScreenUnit,
+    }
+
+    impl Add for Point {
+        type Output = Self;
+
+        fn add(self, rhs: Self) -> Self::Output {
+            Point::new(self.x + rhs.x, self.y + rhs.y)
+        }
+    }
+
+    impl Sub for Point {
+        type Output = Self;
+
+        fn sub(self, rhs: Self) -> Self::Output {
+            Point::new(self.x - rhs.x, self.y - rhs.y)
+        }
     }
 
     impl Neg for Point {

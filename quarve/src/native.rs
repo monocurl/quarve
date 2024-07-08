@@ -6,9 +6,6 @@ use crate::util::geo::{Point, ScreenUnit};
 pub type WindowHandle = usize;
 
 #[repr(C)]
-struct FatPointer(usize, usize);
-
-#[repr(C)]
 struct BufferEvent {
     is_mouse: bool,
     is_scroll: bool,
@@ -25,6 +22,10 @@ struct BufferEvent {
     key_characters: *const u8,
     native_event: *mut c_void,
 }
+
+
+#[repr(C)]
+struct FatPointer(usize, usize);
 
 impl From<&dyn WindowNativeCallback> for FatPointer {
     fn from(value: &dyn WindowNativeCallback) -> Self {
@@ -100,8 +101,9 @@ impl From<BufferEvent> for Event {
 
 /* back -> front call backs */
 mod callbacks {
-    use crate::core::{APP, Slock, slock_force_main_owner, slock_main_owner};
+    use crate::core::{APP, MSlock, Slock, slock_force_main_owner, slock_main_owner};
     use crate::native::{BufferEvent, FatPointer};
+    use crate::util::geo::ScreenUnit;
     use crate::util::markers::MainThreadMarker;
 
     #[no_mangle]
@@ -148,7 +150,7 @@ mod callbacks {
     #[no_mangle]
     extern "C" fn front_execute_box(bx: FatPointer) {
         /* ownership taken */
-        let b: Box<dyn for<'a> FnOnce(Slock<'a, MainThreadMarker>) + Send> = unsafe {
+        let b: Box<dyn FnOnce(Slock<MainThreadMarker>) + Send> = unsafe {
             std::mem::transmute(bx)
         };
 
@@ -157,9 +159,32 @@ mod callbacks {
 
         b(s.marker());
     }
+
+
+    #[no_mangle]
+    extern "C" fn front_set_screen_unit_binding(bx: FatPointer, value: f64) {
+        let s = unsafe {
+            slock_force_main_owner()
+        };
+        let b: Box<dyn Fn(ScreenUnit, MSlock)> = unsafe {
+            std::mem::transmute(bx)
+        };
+
+        b(value, s.marker());
+
+        std::mem::forget(b);
+    }
+
+    #[no_mangle]
+    extern "C" fn front_free_screen_unit_binding(bx: FatPointer, value: f64) {
+        let _b: Box<dyn Fn(ScreenUnit, MSlock)> = unsafe {
+            std::mem::transmute(bx)
+        };
+    }
 }
 
 /* crate endpoints */
+// FIXME use libc types at some point
 pub mod global {
     use std::cell::Cell;
     use crate::core::Slock;
@@ -302,6 +327,7 @@ pub mod window {
 pub mod view {
     use std::ffi::{c_ulonglong, c_void};
     use crate::core::MSlock;
+    use crate::native::FatPointer;
     use crate::util::geo::{Rect, Size};
     use crate::view::util::Color;
 
@@ -326,7 +352,12 @@ pub mod view {
         fn back_view_cursor_update(view: *mut c_void, cursor_type: std::ffi::c_int);
 
         /* scroll view */
-        fn back_view_scroll_init(allow_vertical: bool, allow_horizontal: bool) -> *mut c_void;
+        fn back_view_scroll_init(
+            allow_vertical: bool,
+            allow_horizontal: bool,
+            binding_y: FatPointer,
+            binding_x: FatPointer
+        ) -> *mut c_void;
     }
 
     pub fn view_clear_children(view: *mut c_void, _s: MSlock) {
@@ -450,10 +481,28 @@ pub mod view {
         use std::ffi::c_void;
         use crate::core::MSlock;
         use crate::native::view::back_view_scroll_init;
+        use crate::state::{Binding, Filterless, SetAction};
+        use crate::util::geo::ScreenUnit;
 
-        pub fn init_scroll_view(vertical: bool, horizontal: bool, _s: MSlock) -> *mut c_void {
+        pub fn init_scroll_view(
+            vertical: bool,
+            horizontal: bool,
+            binding_y: impl Binding<Filterless<ScreenUnit>>,
+            binding_x: impl Binding<Filterless<ScreenUnit>>,
+            _s: MSlock
+        ) -> *mut c_void {
             unsafe {
-                back_view_scroll_init(vertical, horizontal)
+                let set_x = Box::new(move |val, s: MSlock|  {
+                    binding_x.apply(SetAction::Set(val), s);
+                }) as Box<dyn Fn(ScreenUnit, MSlock)>;
+                let set_x = std::mem::transmute(set_x);
+
+                let set_y= Box::new(move |val, s: MSlock|  {
+                    binding_y.apply(SetAction::Set(val), s);
+                }) as Box<dyn Fn(ScreenUnit, MSlock)>;
+                let set_y= std::mem::transmute(set_y);
+
+                back_view_scroll_init(vertical, horizontal, set_x, set_y)
             }
         }
 

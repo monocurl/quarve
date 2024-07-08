@@ -1,17 +1,11 @@
-use quarve::core::{Application, clock_signal, Environment, launch, MSlock};
-use quarve::state::{Binding, Filterless, FixedSignal, GeneralSignal, Signal, Store};
-use quarve::util::geo::{Alignment, Direction, Size, VerticalDirection};
+use quarve::core::{Application, Environment, launch, MSlock};
+use quarve::state::{Binding, Filterless, FixedSignal, Signal, Store};
+use quarve::util::geo::{Alignment, HorizontalAlignment, Size};
 use quarve::view::{ViewProvider, IntoViewProvider, Invalidator};
-use quarve::view::color_view::EmptyView;
-use quarve::view::conditional::{view_if, ViewElseIf};
-use quarve::view::image_view::ImageView;
 use quarve::view::layout::*;
-use quarve::view::modifers::{Cursor, CursorModifiable, EnvironmentModifier, Frame, FrameModifiable, KeyListener, Layer, LayerModifiable, PaddingModifiable, WhenModifiable};
+use quarve::view::modifers::{Cursor, CursorModifiable, EnvironmentModifier, Frame, FrameModifiable, KeyListener, Layer, LayerModifiable, OffsetModifiable, PaddingModifiable, WhenModifiable};
 use quarve::view::scroll::ScrollView;
 use quarve::view::util::Color;
-use quarve::view::view_match::ViewMatchIVP;
-use quarve::view_match;
-
 struct Env(());
 
 struct ApplicationProvider;
@@ -55,50 +49,30 @@ impl quarve::core::WindowProvider for WindowProvider {
     }
 
     fn root(&self, env: &<Env as Environment>::Const, s: MSlock) -> impl ViewProvider<Env, DownContext=()> {
-        let clock = clock_signal(s);
-        let count = clock
-            .map(|val| {
-                (0 ..((val).sin().abs() * 15.0) as usize)
-                    .collect()
-            }, s);
-        count
-            .sig_flexmap_options(
-                |val, _| {
-                    Color::new(100, 0, 0)
-                        .frame(
-                            Frame::default()
-                                .intrinsic(100, 100.0 + 25.0 * (val % 2) as f64)
-                                .stretched(150, 150.0)
-                                .squished(50, 100.0 - 50.0 * (val % 2) as f64)
-                        )
-                        .flex(FlexContext::default()
-                            .grow(0.5 + (val % 2) as f64)
-                        )
-                },
-                FlexStackOptions::default()
-                    .gap(10.0)
-                    .wrap()
-                    .cross_gap(10.0)
-                    .direction(Direction::Up)
+        ScrollView::horizontal(
+            VStack::hetero_options(VStackOptions::default().align(HorizontalAlignment::Leading))
+                .push(
+                    FixedSignal::new((0..10).collect())
+                        .sig_flexmap(|x, s| {
+                            Color::black()
+                                .intrinsic(100, 100 + 10 * *x)
+                                .cursor(Cursor::Pointer)
+                        })
+                        .padding(10)
+                        .border(Color::white(), 1)
+                )
+                .push(
+                    Color::black()
+                        .intrinsic(100, 100)
+                )
+        )
+            .intrinsic(300, 300)
+            .padding(10)
+            .frame( Frame::default()
+                    .unlimited_stretch()
+                    .align(Alignment::Center)
             )
-            .layer(Layer::default().border(Color::black(), 1.0))
-            .intrinsic(550, 500)
-            .layer(Layer::default().border(Color::new(100, 100, 100), 1.0))
             .into_view_provider(env, s)
-        //
-        // FlexStack::hetero()
-        //     .push(
-        //         Color::new(100, 0, 0).intrinsic(400, 100)
-        //             .flex(|f| f.grow(1.0))
-        //     )
-        //     .push(
-        //         Color::new(0, 0, 100)
-        //             .flex(|f| f.grow(1.0))
-        //     )
-        //     .push(
-        //         Color::new(0, 100, 0).intrinsic(400, 100)
-        //     )
-        //     .into_view_provider(env, s)
     }
 
     fn size(&self, _env: &<Env as Environment>::Const, _s: MSlock) -> (Size, Size, Size) {
@@ -107,15 +81,6 @@ impl quarve::core::WindowProvider for WindowProvider {
             Size::new(400.0, 400.0),
             Size::new(800.0, 1000.0)
         )
-    }
-
-    fn is_fullscreen(&self, env: &<Self::Env as Environment>::Const, s: MSlock) -> impl Binding<Filterless<bool>> {
-        let ret = Store::new(false);
-        ret.listen(|_, s| {
-            true
-        }, s);
-
-        ret
     }
 }
 

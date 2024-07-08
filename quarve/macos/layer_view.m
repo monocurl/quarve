@@ -1,6 +1,6 @@
 #import <Cocoa/Cocoa.h>
 #import "color.h"
-#import "quarve_macos.h"
+#import "util.h"
 
 @interface LayerView: NSView
 @end

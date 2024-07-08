@@ -1,5 +1,5 @@
 #import <Cocoa/Cocoa.h>
-#import "quarve_macos.h"
+#import "util.h"
 
 @interface LayoutView: NSView
 @end

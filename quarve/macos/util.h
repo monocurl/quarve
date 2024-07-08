@@ -1,5 +1,7 @@
 #pragma once
 
+#define EPSILON 1e-4
+
 typedef struct fat_pointer {
     void const *p0;
     void const *p1;

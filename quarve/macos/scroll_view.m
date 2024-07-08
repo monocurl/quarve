@@ -1,9 +1,14 @@
 #import <Cocoa/Cocoa.h>
-#import "quarve_macos.h"
+#import "util.h"
+#import "front.h"
 
 extern int performing_subview_insertion;
 
 @interface ScrollView : NSScrollView
+@property fat_pointer binding_x;
+@property fat_pointer binding_y;
+@property double last_x;
+@property double last_y;
 @property BOOL allowsVertical;
 @property BOOL allowsHorizontal;
 @end
@@ -44,18 +49,38 @@ extern int performing_subview_insertion;
 - (void)didScroll:(NSNotification *)notification {
     NSRect bounds = [self.contentView bounds];
     NSPoint scrollPosition = bounds.origin;
-    printf("Scrolled %f\n", scrollPosition.y);
+
+    if (fabs(scrollPosition.x - self.last_x) > EPSILON || fabs(scrollPosition.y - self.last_y) > EPSILON) {
+        self.last_x = scrollPosition.x;
+        self.last_y = scrollPosition.y;
+        front_set_screen_unit_binding(self.binding_x, scrollPosition.x);
+        front_set_screen_unit_binding(self.binding_y, scrollPosition.y);
+    }
+}
+
+- (void)dealloc {
+    [super dealloc];
+
+    front_free_screen_unit_binding(self.binding_x);
+    front_free_screen_unit_binding(self.binding_y);
 }
 
 @end
 
 void *
-back_view_scroll_init(uint8_t allow_vertical, uint8_t allow_horizontal)
+back_view_scroll_init(
+    uint8_t allow_vertical,
+    uint8_t allow_horizontal,
+    fat_pointer vertical_offset,
+    fat_pointer horizontal_offset
+)
 {
     ScrollView* scroll = [[ScrollView alloc] init];
     scroll.drawsBackground = NO;
     scroll.allowsVertical = allow_vertical;
     scroll.allowsHorizontal = allow_horizontal;
+    scroll.binding_x = horizontal_offset;
+    scroll.binding_y = vertical_offset;
 
     if (allow_vertical) {
         scroll.hasVerticalScroller = YES;

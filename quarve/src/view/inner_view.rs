@@ -1,14 +1,17 @@
 use std::any::Any;
+use std::cell::RefCell;
 use std::ffi::c_void;
+use std::rc::Rc;
 use std::sync::{Arc, Weak};
 use crate::core::{Environment, MSlock, Slock, WindowViewCallback};
 use crate::event::{Event, EventResult};
 use crate::native;
 use crate::native::view::{view_add_child_at, view_clear_children, view_remove_child, view_set_frame};
-use crate::state::slock_cell::{MainSlockCell};
-use crate::util::geo::{Point, Rect, Size};
+use crate::state::slock_cell::{MainSlockCell, SlockCell};
+use crate::util::geo::{Point, Rect, ScreenUnit, Size};
 use crate::util::rust_util::PhantomUnsendUnsync;
 use crate::view::{EnvRef, Invalidator, View};
+use crate::view::scroll::ScrollView;
 use crate::view::util::SizeContainer;
 use crate::view::view_provider::ViewProvider;
 
@@ -286,10 +289,22 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
             }
         }
 
+        let nv_delta = {
+            if let Some(borrow) = self.graph.native_view.state
+                .as_ref()
+                .map(|b| b.borrow(s)) {
+                Point::new(-borrow.offset_x, -borrow.offset_y)
+            }
+            else {
+                Point::new(0.0, 0.0)
+            }
+
+        };
+
         self.graph.subviews.iter().rev()
             .any(|sv| {
                 let mut borrow = sv.borrow_mut_main(s);
-                let delta = -borrow.view_rect(s).origin();
+                let delta = nv_delta - borrow.view_rect(s).origin();
                 let prev = prev_position.translate(delta);
 
                 event.set_cursor(position.translate(delta));
@@ -529,25 +544,42 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
     }
 }
 
+pub struct NativeViewState {
+    pub offset_x: ScreenUnit,
+    pub offset_y: ScreenUnit
+}
+
 pub struct NativeView {
     backing: *mut c_void,
-    clips_subviews: bool
+    clips_subviews: bool,
+    /* 'live data', don't really like this but whatever */
+    state: Option<Arc<SlockCell<NativeViewState>>>
+}
+
+impl Default for NativeViewState {
+    fn default() -> Self {
+        NativeViewState {
+            offset_x: 0.0,
+            offset_y: 0.0,
+        }
+    }
 }
 
 impl NativeView {
-    pub fn new(owned_view: *mut c_void) -> NativeView {
+    pub fn new(owned_view: *mut c_void, _s: MSlock) -> NativeView {
         NativeView {
             backing: owned_view,
-            clips_subviews: false
+            clips_subviews: false,
+            state: None,
         }
     }
 
     pub fn layout_view(s: MSlock) -> NativeView {
-        NativeView::new(native::view::init_layout_view(s))
+        NativeView::new(native::view::init_layout_view(s), s)
     }
 
     pub fn layer_view(s: MSlock) -> NativeView {
-        NativeView::new(native::view::layer::init_layer_view(s))
+        NativeView::new(native::view::layer::init_layer_view(s), s)
     }
 
     pub fn backing(&self) -> *mut c_void {
@@ -556,6 +588,10 @@ impl NativeView {
 
     pub fn set_clips_subviews(&mut self) {
         self.clips_subviews = true;
+    }
+
+    pub fn set_state(&mut self, state: Arc<SlockCell<NativeViewState>>) {
+        self.state = Some(state);
     }
 }
 
@@ -789,7 +825,8 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
                     superview: None,
                     native_view: NativeView {
                         backing: 0 as *mut c_void,
-                        clips_subviews: false
+                        clips_subviews: false,
+                        state: None,
                     },
                     subviews: vec![],
                     unsend_unsync: Default::default(),

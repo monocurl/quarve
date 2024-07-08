@@ -1,27 +1,10 @@
 #import <Cocoa/Cocoa.h>
 #import "color.h"
-#import "quarve_macos.h"
+#import "util.h"
+#import "front.h"
 
 /* internal state */
 int performing_subview_insertion = 0;
-
-/* front end */
-extern void front_will_spawn(void);
-
-// fp: &'static dyn WindowBase
-extern bool front_window_should_close(fat_pointer p);
-
-// fp: &'static dyn WindowBase
-extern void front_window_layout(fat_pointer p, double w, double h);
-
-// fp: &'static dyn WindowBase
-extern void front_window_dispatch_event(fat_pointer handle, buffer_event event);
-
-// fp: &'static dyn WindowBase
-extern void front_window_will_fullscreen(fat_pointer p, uint8_t fs);
-
-// box: &dyn FnOnce(MSlock) + Send + 'static
-extern void front_execute_box(fat_pointer box);
 
 @interface AppDelegate : NSObject<NSApplicationDelegate>
 - (void)applicationWillFinishLaunching:(NSNotification *)aNotification;
@@ -29,7 +12,7 @@ extern void front_execute_box(fat_pointer box);
 
 @implementation AppDelegate
 - (void)applicationWillFinishLaunching:(NSNotification *)aNotification {
-    // TODO maybe move to applicationDidFinishLaunching
+    // FIXME maybe move to applicationDidFinishLaunching
     front_will_spawn();
 }
 @end

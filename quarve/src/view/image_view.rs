@@ -86,7 +86,7 @@ impl<E> ViewProvider<E> for ImageViewVP where E: Environment {
 
         self.backing = nv;
         self.intrinsic = native::view::image::image_view_size(nv);
-        NativeView::new(nv)
+        NativeView::new(nv, s)
     }
 
     fn layout_up(&mut self, _subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, _s: MSlock) -> bool {

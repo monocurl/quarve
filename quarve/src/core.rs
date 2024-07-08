@@ -937,6 +937,8 @@ mod slock {
     #[allow(unused)]
     pub struct SlockOwner<M=AnyThreadMarker> where M: ThreadMarker {
         _guard: MutexGuard<'static, ()>,
+        // if forced, then don't do regular dealloc
+        is_nested: bool,
         pub(crate) debug_info: DebugInfo,
         unsend_unsync: PhantomUnsendUnsync,
         thread_marker: PhantomData<M>,
@@ -1013,7 +1015,8 @@ mod slock {
             _guard: global_guard(),
             debug_info: DebugInfo::new(),
             unsend_unsync: PhantomData,
-            thread_marker: PhantomData
+            thread_marker: PhantomData,
+            is_nested: false,
         }
     }
 
@@ -1025,6 +1028,7 @@ mod slock {
 
         SlockOwner {
             _guard: global_guard(),
+            is_nested: false,
             debug_info: DebugInfo::new(),
             unsend_unsync: PhantomData,
             thread_marker: PhantomData,
@@ -1042,7 +1046,7 @@ mod slock {
             panic!("Cannot force slock owner")
         }
 
-        let current =  LOCKED_THREAD.lock().unwrap();
+        let current = LOCKED_THREAD.lock().unwrap();
         if current.is_none() {
             drop(current);
             return slock_main_owner();
@@ -1053,6 +1057,7 @@ mod slock {
 
         SlockOwner {
             _guard: FAKE_GLOBAL_STATE_LOCK.lock().unwrap(),
+            is_nested: true,
             debug_info: DebugInfo::new(),
             unsend_unsync: PhantomData,
             thread_marker: PhantomData,
@@ -1086,7 +1091,9 @@ mod slock {
     #[cfg(debug_assertions)]
     impl<M> Drop for SlockOwner<M> where M: ThreadMarker {
         fn drop(&mut self) {
-            *LOCKED_THREAD.lock().unwrap() = None;
+            if !self.is_nested {
+                *LOCKED_THREAD.lock().unwrap() = None;
+            }
         }
     }
 
