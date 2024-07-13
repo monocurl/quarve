@@ -46,6 +46,7 @@ int performing_subview_insertion = 0;
     [super initWithContentRect:NSMakeRect(0, 0, 2, 2) styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
     [self setIsVisible:YES];
 
+    self.acceptsMouseMovedEvents = YES;
     self.releasedWhenClosed = NO;
     self.delegate = self;
 
@@ -67,7 +68,7 @@ int performing_subview_insertion = 0;
     buffer_event be = { .native_event = event };
 
     be.cursor_x = event.locationInWindow.x;
-    be.cursor_y = event.locationInWindow.y;
+    be.cursor_y = self.contentView.frame.size.height - event.locationInWindow.y;
 
     if (event.modifierFlags & NSEventModifierFlagCommand) {
         be.modifiers |= EVENT_MODIFIER_COMMAND;
@@ -143,6 +144,14 @@ int performing_subview_insertion = 0;
     }
 
     front_window_dispatch_event(handle, be);
+}
+
+- (void)sendEvent:(NSEvent *)event {
+    [super sendEvent:event];
+
+    if (event.type == NSEventTypeMouseMoved) {
+        [self dispatchEvent:event];
+    }
 }
 
 - (void)keyDown:(NSEvent *)event {
@@ -328,7 +337,13 @@ back_view_set_frame(void *_view, double left, double top, double width, double h
     frame.size = NSMakeSize(width, height);
     frame.origin = NSMakePoint(left, top);
 
-    [view setFrame: frame];
+    CGFloat epsilon = 1e-2;
+    if (fabs(frame.origin.x - view.frame.origin.x) > epsilon ||
+        fabs(frame.origin.y - view.frame.origin.y) > epsilon ||
+        fabs(frame.size.width - view.frame.size.width) > epsilon ||
+        fabs(frame.size.height - view.frame.size.height) > epsilon) {
+        [view setFrame: frame];
+    }
 }
 
 void

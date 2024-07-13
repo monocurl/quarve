@@ -15,7 +15,7 @@ impl<E, P> View<E, P> where E: Environment, P: ViewProvider<E> {
             .expect("Can only take backing from view which has been removed from its superview")
             .into_inner_main(s);
 
-        other_inner.graph().clear_subviews(s);
+        other_inner.mut_graph().clear_subviews(s);
 
         let source = other_inner.into_backing_and_provider();
 
@@ -37,7 +37,7 @@ impl<E, P> View<E, P> where E: Environment, P: ViewProvider<E> {
     // without significant overhead
     pub(crate) fn invalidate(&self, s: MSlock) {
         let weak = Arc::downgrade(&self.0) as Weak<MainSlockCell<dyn InnerViewBase<E>>>;
-        self.0.borrow_mut_main(s).invalidate(weak, s.as_general_slock());
+        self.0.borrow_mut_main(s).invalidate(weak, s.to_general_slock());
     }
 }
 
@@ -187,43 +187,43 @@ mod view_ref {
 }
 pub use view_ref::*;
 
-pub struct Invalidator<E> where E: Environment {
+pub struct WeakInvalidator<E> where E: Environment {
     pub(crate) view: Weak<MainSlockCell<dyn InnerViewBase<E>>>
 }
 
-impl<E> Invalidator<E> where E: Environment {
-    pub fn upgrade(&self) -> Option<StrongInvalidator<E>> {
+impl<E> WeakInvalidator<E> where E: Environment {
+    pub fn upgrade(&self) -> Option<Invalidator<E>> {
         self.view.upgrade()
             .map(|view| {
-                StrongInvalidator {
+                Invalidator {
                     view
                 }
             })
     }
 }
 
-impl<E> PartialEq for Invalidator<E> where E: Environment {
+impl<E> PartialEq for WeakInvalidator<E> where E: Environment {
     fn eq(&self, other: &Self) -> bool {
         Weak::ptr_eq(&self.view, &other.view)
     }
 }
 
-impl<E> Eq for Invalidator<E> where E: Environment {
+impl<E> Eq for WeakInvalidator<E> where E: Environment {
 }
 
-impl<E> Clone for Invalidator<E> where E: Environment {
+impl<E> Clone for WeakInvalidator<E> where E: Environment {
     fn clone(&self) -> Self {
-        Invalidator {
+        WeakInvalidator {
             view: self.view.clone(),
         }
     }
 }
 
-pub struct StrongInvalidator<E> where E: Environment {
+pub struct Invalidator<E> where E: Environment {
     view: Arc<MainSlockCell<dyn InnerViewBase<E>>>
 }
 
-impl<E> StrongInvalidator<E> where E: Environment {
+impl<E> Invalidator<E> where E: Environment {
     pub fn invalidate(&self, s: Slock<impl ThreadMarker>) {
         // invalidate just this
         // safety:
@@ -234,8 +234,8 @@ impl<E> StrongInvalidator<E> where E: Environment {
         // it's just the list of invalidated views)
         // FIXME add better descriptions of safety
         unsafe {
-            self.view.borrow_mut_non_main_non_send(s.as_general_slock())
-                .invalidate(Arc::downgrade(&self.view), s.as_general_slock());
+            self.view.borrow_non_main_non_send(s.to_general_slock())
+                .invalidate(Arc::downgrade(&self.view), s.to_general_slock());
         }
     }
 
@@ -243,17 +243,17 @@ impl<E> StrongInvalidator<E> where E: Environment {
         // safety is same reason invalidate above is safe
         // (only touching send parts)
         unsafe {
-            let mut borrow = curr.borrow_mut_non_main_non_send(s.as_general_slock());
-            borrow.invalidate(Arc::downgrade(curr), s.as_general_slock());
+            let borrow = curr.borrow_non_main_non_send(s.to_general_slock());
+            borrow.invalidate(Arc::downgrade(curr), s.to_general_slock());
 
             for subview in borrow.graph().subviews() {
-                StrongInvalidator::dfs(subview, s.as_general_slock());
+                Invalidator::dfs(subview, s.to_general_slock());
             }
         }
     }
 
     pub fn invalidate_environment(&self, s: Slock<impl ThreadMarker>) {
-        StrongInvalidator::dfs(&self.view, s);
+        Invalidator::dfs(&self.view, s);
     }
 }
 
@@ -273,6 +273,6 @@ impl<'a, E> EnvRef<'a, E> where E: Environment {
     }
 }
 
-impl<E> EnsureSend for Invalidator<E> where E: Environment {
+impl<E> EnsureSend for WeakInvalidator<E> where E: Environment {
 
 }

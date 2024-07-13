@@ -176,7 +176,7 @@ mod callbacks {
     }
 
     #[no_mangle]
-    extern "C" fn front_free_screen_unit_binding(bx: FatPointer, value: f64) {
+    extern "C" fn front_free_screen_unit_binding(bx: FatPointer) {
         let _b: Box<dyn Fn(ScreenUnit, MSlock)> = unsafe {
             std::mem::transmute(bx)
         };
@@ -358,6 +358,9 @@ pub mod view {
             binding_y: FatPointer,
             binding_x: FatPointer
         ) -> *mut c_void;
+
+        fn back_view_scroll_set_x(backing: *mut c_void, value: f64);
+        fn back_view_scroll_set_y(backing: *mut c_void, value: f64);
     }
 
     pub fn view_clear_children(view: *mut c_void, _s: MSlock) {
@@ -480,7 +483,7 @@ pub mod view {
     pub mod scroll {
         use std::ffi::c_void;
         use crate::core::MSlock;
-        use crate::native::view::back_view_scroll_init;
+        use crate::native::view::{back_view_scroll_init, back_view_scroll_set_x, back_view_scroll_set_y};
         use crate::state::{Binding, Filterless, SetAction};
         use crate::util::geo::ScreenUnit;
 
@@ -502,10 +505,31 @@ pub mod view {
                 }) as Box<dyn Fn(ScreenUnit, MSlock)>;
                 let set_y= std::mem::transmute(set_y);
 
-                back_view_scroll_init(vertical, horizontal, set_x, set_y)
+                back_view_scroll_init(vertical, horizontal, set_y, set_x)
             }
         }
 
+        pub fn scroll_view_set_x(
+            scroll: *mut c_void,
+            value: f64,
+            _s: MSlock
+        )
+        {
+            unsafe {
+                back_view_scroll_set_x(scroll, value)
+            }
+        }
+
+        pub fn scroll_view_set_y(
+            scroll: *mut c_void,
+            value: f64,
+            _s: MSlock
+        )
+        {
+            unsafe {
+                back_view_scroll_set_y(scroll, value)
+            }
+        }
     }
 }
 

@@ -9,6 +9,7 @@ extern int performing_subview_insertion;
 @property fat_pointer binding_y;
 @property double last_x;
 @property double last_y;
+@property BOOL ignore_scroll;
 @property BOOL allowsVertical;
 @property BOOL allowsHorizontal;
 @end
@@ -50,7 +51,7 @@ extern int performing_subview_insertion;
     NSRect bounds = [self.contentView bounds];
     NSPoint scrollPosition = bounds.origin;
 
-    if (fabs(scrollPosition.x - self.last_x) > EPSILON || fabs(scrollPosition.y - self.last_y) > EPSILON) {
+    if (!self.ignore_scroll && (fabs(scrollPosition.x - self.last_x) > EPSILON || fabs(scrollPosition.y - self.last_y) > EPSILON)) {
         self.last_x = scrollPosition.x;
         self.last_y = scrollPosition.y;
         front_set_screen_unit_binding(self.binding_x, scrollPosition.x);
@@ -81,6 +82,7 @@ back_view_scroll_init(
     scroll.allowsHorizontal = allow_horizontal;
     scroll.binding_x = horizontal_offset;
     scroll.binding_y = vertical_offset;
+    scroll.ignore_scroll = NO;
 
     if (allow_vertical) {
         scroll.hasVerticalScroller = YES;
@@ -98,4 +100,40 @@ back_view_scroll_init(
         object:scroll.contentView];
 
     return scroll;
+}
+
+void
+back_view_scroll_set_x(void *backing, double value)
+{
+    ScrollView* scroll = backing;
+
+    NSRect bounds = [scroll.contentView bounds];
+    NSPoint scrollPosition = bounds.origin;
+    if (fabs(value - scrollPosition.x) > EPSILON) {
+        scroll.last_x = value;
+
+        scroll.ignore_scroll = YES;
+        scrollPosition.x = value;
+        [[scroll contentView] scrollPoint:scrollPosition];
+        [scroll reflectScrolledClipView: [scroll contentView]];
+        scroll.ignore_scroll = NO;
+    }
+}
+
+void
+back_view_scroll_set_y(void *backing, double value)
+{
+    ScrollView* scroll = backing;
+
+    NSRect bounds = [scroll.contentView bounds];
+    NSPoint scrollPosition = bounds.origin;
+    if (fabs(value - scrollPosition.y) > EPSILON) {
+        scroll.last_y = value;
+
+        scroll.ignore_scroll = YES;
+        scrollPosition.y = value;
+        [[scroll contentView] scrollPoint:scrollPosition];
+        [scroll reflectScrolledClipView: [scroll contentView]];
+        scroll.ignore_scroll = NO;
+    }
 }

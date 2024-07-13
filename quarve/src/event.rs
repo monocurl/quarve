@@ -1,7 +1,7 @@
 use std::ffi::c_void;
 use crate::util::geo::{Point, ScreenUnit};
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum MouseEvent {
     Scroll(ScreenUnit, ScreenUnit),
     LeftDown,
@@ -13,7 +13,7 @@ pub enum MouseEvent {
     Move(ScreenUnit, ScreenUnit),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Key(String);
 
 impl Key {
@@ -26,14 +26,14 @@ impl Key {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum KeyEvent {
     Press(Key),
     Repeat(Key),
     Release(Key),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum EventPayload {
     Mouse(MouseEvent, Point),
     Key(KeyEvent)
@@ -45,7 +45,7 @@ const SHIFT: u8 = 1 << 2;
 const FN: u8 = 1 << 3;
 const ALT_OPTION: u8 = 1 << 4;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct EventModifiers {
     pub(crate) modifiers: u8
 }
@@ -72,7 +72,7 @@ impl EventModifiers {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Event {
     pub payload: EventPayload,
     pub modifiers: EventModifiers,

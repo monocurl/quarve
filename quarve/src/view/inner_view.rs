@@ -1,17 +1,16 @@
 use std::any::Any;
-use std::cell::RefCell;
+use std::cell::Cell;
 use std::ffi::c_void;
-use std::rc::Rc;
 use std::sync::{Arc, Weak};
 use crate::core::{Environment, MSlock, Slock, WindowViewCallback};
 use crate::event::{Event, EventResult};
 use crate::native;
 use crate::native::view::{view_add_child_at, view_clear_children, view_remove_child, view_set_frame};
-use crate::state::slock_cell::{MainSlockCell, SlockCell};
+use crate::state::Buffer;
+use crate::state::slock_cell::{MainSlockCell};
 use crate::util::geo::{Point, Rect, ScreenUnit, Size};
 use crate::util::rust_util::PhantomUnsendUnsync;
-use crate::view::{EnvRef, Invalidator, View};
-use crate::view::scroll::ScrollView;
+use crate::view::{EnvRef, WeakInvalidator, View};
 use crate::view::util::SizeContainer;
 use crate::view::view_provider::ViewProvider;
 
@@ -25,17 +24,18 @@ pub(crate) trait InnerViewBase<E> where E: Environment {
     /* tree methods */
     fn superview(&self) -> Option<Arc<MainSlockCell<dyn InnerViewBase<E>>>>;
     fn set_superview(&mut self, superview: Option<Weak<MainSlockCell<dyn InnerViewBase<E>>>>);
-    fn graph(&mut self) -> &mut Graph<E>;
+    fn graph(&self) -> &Graph<E>;
+    fn mut_graph(&mut self) -> &mut Graph<E>;
 
     fn depth(&self) -> u32;
 
     // true if handled
-    fn handle_mouse_event(&mut self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, event: &mut Event, prev_position: Point, s: MSlock) -> bool;
+    fn handle_mouse_event(&self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, event: &mut Event, prev_position: Point, s: MSlock) -> bool;
     // does not recurse
     fn handle_key_event(&mut self, event: &mut Event, s: MSlock) -> EventResult;
 
-    fn unfocused(&mut self, rel_depth: u32, s: MSlock);
-    fn focused(&mut self, rel_depth: u32, s: MSlock);
+    fn unfocused(&self, rel_depth: u32, s: MSlock);
+    fn focused(&self, rel_depth: u32, s: MSlock);
 
     /* layout methods */
     fn needs_layout_up(&self) -> bool;
@@ -52,6 +52,8 @@ pub(crate) trait InnerViewBase<E> where E: Environment {
     // the last frame is valid
     fn try_layout_down(&mut self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, env: &mut E, frame: Option<Rect>, s: MSlock) -> Result<(), ()>;
     fn translate(&mut self, by: Point, s: MSlock);
+    // dispatches calculated frame to native
+    fn finalize_view_frame(&self, s: MSlock);
     fn view_rect(&self, s: MSlock) -> Rect;
     fn used_rect(&self, s: MSlock) -> Rect;
     fn suggested_rect(&self, _s: MSlock) -> Rect;
@@ -81,9 +83,9 @@ pub(crate) trait InnerViewBase<E> where E: Environment {
     // and thus cannot be layed out trivially so that the
     // parent must have its layout down flag set to true
     // even though it doesn't need a layout up
-    fn set_needs_layout_down(&mut self);
-    fn set_needs_layout_up(&mut self);
-    fn invalidate(&mut self, this: Weak<MainSlockCell<dyn InnerViewBase<E>>>, s: Slock);
+    fn set_needs_layout_down(&self);
+    fn set_needs_layout_up(&self);
+    fn invalidate(&self, this: Weak<MainSlockCell<dyn InnerViewBase<E>>>, s: Slock);
 
     /* environment */
     fn push_environment(&mut self, env: &mut E, s: MSlock);
@@ -96,8 +98,8 @@ pub(crate) struct InnerView<E, P> where E: Environment,
     // parent, subviews, depth, backing, etc
     graph: Graph<E>,
 
-    needs_layout_up: bool,
-    needs_layout_down: bool,
+    needs_layout_up: Cell<bool>,
+    needs_layout_down: Cell<bool>,
 
     /* cached layout results */
     last_suggested: Rect,
@@ -137,7 +139,7 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
     ) -> Rect {
         // all writes to dirty flag are done with a state lock
         // we may set the dirty flag to false now that we are performing a layout
-        let mut actually_needs_layout = self.needs_layout_down;
+        let mut actually_needs_layout = self.needs_layout_down.get();
         // if context isn't trivial, there may be updates
         // that were not taken into account
         actually_needs_layout = actually_needs_layout
@@ -186,9 +188,13 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
             }
         }
 
-        self.needs_layout_down = false;
+        self.needs_layout_down.set(false);
 
-        view_set_frame(self.native_view(), view_frame, s);
+        // we cannot finalize our frame until parent has finished translate calls
+        // but we can finalize subview frames
+        self.graph.subviews
+            .iter()
+            .for_each(|sv| sv.borrow_main(s).finalize_view_frame(s));
 
         exclusion
     }
@@ -210,7 +216,7 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
             // therefore, show must be called on this view sometime in the future
             self.provider.push_environment(env.0.variable_env_mut(), s);
 
-            let invalidator = Invalidator {
+            let invalidator = WeakInvalidator {
                 view: Arc::downgrade(this)
             };
             let mut subtree = Subtree {
@@ -252,7 +258,11 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         self.graph.superview = superview;
     }
 
-    fn graph(&mut self) -> &mut Graph<E> {
+    fn graph(&self) -> &Graph<E> {
+        &self.graph
+    }
+
+    fn mut_graph(&mut self) -> &mut Graph<E> {
         &mut self.graph
     }
 
@@ -260,11 +270,14 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         self.graph.depth
     }
 
-    fn handle_mouse_event(&mut self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, event: &mut Event, prev_position: Point, s: MSlock) -> bool {
+    fn handle_mouse_event(&self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, event: &mut Event, prev_position: Point, s: MSlock) -> bool {
         let position = event.cursor();
 
-        let prev_contains = self.last_bounding_rect.contains(prev_position);
-        let curr_contains = self.last_bounding_rect.contains(position);
+        // last_bounding_rect is in parent coordinates
+        // position is in our coordinates
+        let vf_offset = self.last_view_frame.origin();
+        let prev_contains = self.last_bounding_rect.contains(prev_position.translate(vf_offset));
+        let curr_contains = self.last_bounding_rect.contains(position.translate(vf_offset));
         if !curr_contains && !prev_contains {
             return false;
         }
@@ -293,17 +306,16 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
             if let Some(borrow) = self.graph.native_view.state
                 .as_ref()
                 .map(|b| b.borrow(s)) {
-                Point::new(-borrow.offset_x, -borrow.offset_y)
+                Point::new(borrow.offset_x, borrow.offset_y)
             }
             else {
                 Point::new(0.0, 0.0)
             }
-
         };
 
         self.graph.subviews.iter().rev()
             .any(|sv| {
-                let mut borrow = sv.borrow_mut_main(s);
+                let borrow = sv.borrow_main(s);
                 let delta = nv_delta - borrow.view_rect(s).origin();
                 let prev = prev_position.translate(delta);
 
@@ -317,24 +329,24 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         self.provider.handle_event(event, s)
     }
 
-    fn unfocused(&mut self, rel_depth: u32, s: MSlock) {
+    fn unfocused(&self, rel_depth: u32, s: MSlock) {
         self.provider.unfocused(rel_depth, s)
     }
 
-    fn focused(&mut self, rel_depth: u32, s: MSlock) {
+    fn focused(&self, rel_depth: u32, s: MSlock) {
         self.provider.focused(rel_depth, s)
     }
 
     fn needs_layout_up(&self) -> bool {
-        self.needs_layout_up
+        self.needs_layout_up.get()
     }
 
     fn needs_layout_down(&self) -> bool {
-        self.needs_layout_down
+        self.needs_layout_down.get()
     }
 
     fn layout_up(&mut self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, env: &mut E, s: MSlock) -> bool {
-        debug_assert!(self.needs_layout_up);
+        debug_assert!(self.needs_layout_up());
 
         let mut handle = EnvRef(env);
         let mut subtree = Subtree {
@@ -343,8 +355,8 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         };
         let ret = self.provider.layout_up(&mut subtree, &mut handle, s);
 
-        self.needs_layout_up = false;
-        self.needs_layout_down = true;
+        self.needs_layout_up.set(false);
+        self.needs_layout_down.set(true);
 
         ret
     }
@@ -365,31 +377,36 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
 
     // basically for correction when parent frame rect is not actually grand parent suggested rect
     fn translate(&mut self, by: Point, s: MSlock) {
-        debug_assert!(!self.needs_layout_down);
+        debug_assert!(!self.needs_layout_down.get());
         self.last_suggested = self.last_suggested.translate(by);
         self.last_exclusion = self.last_exclusion.translate(by);
         self.last_view_frame = self.last_view_frame.translate(by);
         self.last_bounding_rect = self.last_bounding_rect.translate(by);
-        view_set_frame(self.native_view(), self.last_view_frame, s);
+    }
+
+    fn finalize_view_frame(&self, s: MSlock) {
+        debug_assert!(!self.needs_layout_down.get());
+        view_set_frame(self.native_view(), self.last_view_frame, s)
     }
 
     fn view_rect(&self, _s: MSlock) -> Rect {
-        debug_assert!(!self.needs_layout_down);
+        // this one it's okay to call even if it needs a layout down
+        // for event purposes
         self.last_view_frame
     }
 
     fn used_rect(&self, _s: MSlock) -> Rect {
-        debug_assert!(!self.needs_layout_down);
+        debug_assert!(!self.needs_layout_down.get());
         self.last_exclusion
     }
 
     fn suggested_rect(&self, _s: MSlock) -> Rect {
-        debug_assert!(!self.needs_layout_down);
+        debug_assert!(!self.needs_layout_down.get());
         self.last_suggested
     }
 
     fn bounding_rect(&self, _s: MSlock) -> Rect {
-        debug_assert!(!self.needs_layout_down);
+        debug_assert!(!self.needs_layout_down.get());
         self.last_bounding_rect
     }
 
@@ -462,7 +479,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
 
         /* init backing if necessary */
         if self.native_view().is_null() {
-            let invalidator = Invalidator {
+            let invalidator = WeakInvalidator {
                 view: Arc::downgrade(this)
             };
             let mut handle = EnvRef(e);
@@ -493,7 +510,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         }
         self.provider.post_show(s);
 
-        self.invalidate(Arc::downgrade(this), s.as_general_slock());
+        self.invalidate(Arc::downgrade(this), s.to_general_slock());
 
         /* pop environment */
         self.pop_environment(e, s);
@@ -512,18 +529,18 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         self.provider.post_hide(s);
     }
 
-    fn set_needs_layout_down(&mut self) {
-        self.needs_layout_down = true;
+    fn set_needs_layout_down(&self) {
+        self.needs_layout_down.set(true);
     }
 
-    fn set_needs_layout_up(&mut self) {
-        self.needs_layout_up = true;
+    fn set_needs_layout_up(&self) {
+        self.needs_layout_up.set(true);
     }
 
-    fn invalidate(&mut self, this: Weak<MainSlockCell<dyn InnerViewBase<E>>>, s: Slock) {
+    fn invalidate(&self, this: Weak<MainSlockCell<dyn InnerViewBase<E>>>, s: Slock) {
         if let Some(window) = self.graph.window.as_ref().and_then(|window| window.upgrade()) {
-            self.needs_layout_up = true;
-            self.needs_layout_down = true;
+            self.needs_layout_up.set(true);
+            self.needs_layout_down.set(true);
 
             // safety:
             // the only part of window we're touching
@@ -553,7 +570,7 @@ pub struct NativeView {
     backing: *mut c_void,
     clips_subviews: bool,
     /* 'live data', don't really like this but whatever */
-    state: Option<Arc<SlockCell<NativeViewState>>>
+    state: Option<Buffer<NativeViewState>>
 }
 
 impl Default for NativeViewState {
@@ -590,7 +607,7 @@ impl NativeView {
         self.clips_subviews = true;
     }
 
-    pub fn set_state(&mut self, state: Arc<SlockCell<NativeViewState>>) {
+    pub fn set_state(&mut self, state: Buffer<NativeViewState>) {
         self.state = Some(state);
     }
 }
@@ -656,7 +673,7 @@ impl<'a, E> Subtree<'a, E> where E: Environment {
         // safety is same reason invalidate above is safe
         // (only touching send parts)
         let mut borrow = curr.borrow_mut_main(s);
-        borrow.invalidate(Arc::downgrade(curr), s.as_general_slock());
+        borrow.invalidate(Arc::downgrade(curr), s.to_general_slock());
 
         for subview in borrow.graph().subviews() {
             Subtree::dfs(subview, s);
@@ -673,10 +690,10 @@ impl<'a, E> Subtree<'a, E> where E: Environment {
         self.owner
     }
 
-    // ugly hack to avoid reentry whenever
+    // FIXME ugly hack to avoid reentry whenever
     // a environment_modifier wants to invalidate entire subtree
     // as a result of layout_up (it cant just call invalidtor
-    // since that would reborrow the calling view)
+    // since that would reborrow the calling view, make it mutable and problem solved?)
     pub(crate) fn invalidate_subtree(&mut self, env: &mut EnvRef<E>, s: MSlock) {
         for sv in &self.graph.subviews {
             Subtree::dfs(sv, s);
@@ -833,8 +850,8 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
                 },
                 // note that upon initial mount
                 // this will be set to true
-                needs_layout_down: false,
-                needs_layout_up: false,
+                needs_layout_down: Cell::new(false),
+                needs_layout_up: Cell::new(false),
                 last_suggested: Rect::default(),
                 last_exclusion: Rect::default(),
                 last_view_frame: Rect::default(),

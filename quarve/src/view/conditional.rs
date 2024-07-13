@@ -139,7 +139,7 @@ mod conditional_vp {
     use crate::state::{ActualDiffSignal, Signal};
     use crate::util::geo::{Rect, Size};
     use crate::view::conditional::{IfVP, NullNode};
-    use crate::view::{EnvRef, Invalidator, NativeView, Subtree, ViewProvider, ViewRef};
+    use crate::view::{EnvRef, WeakInvalidator, NativeView, Subtree, ViewProvider, ViewRef};
 
     impl<S, E, P, N> ViewProvider<E> for IfVP<S, E, P, N>
         where S: Signal<Target=bool>,
@@ -199,7 +199,7 @@ mod conditional_vp {
             ()
         }
 
-        fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+        fn init_backing(&mut self, invalidator: WeakInvalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
             let inv = invalidator.clone();
 
             self.cond.diff_listen(move |_, s| {
@@ -276,7 +276,7 @@ mod conditional_vp {
             ()
         }
 
-        fn init_backing(&mut self, _invalidator: Invalidator<E>, _subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+        fn init_backing(&mut self, _invalidator: WeakInvalidator<E>, _subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, s: MSlock) -> NativeView {
             backing_source
                 .map(|(nv, _this)| nv)
                 .unwrap_or_else(|| NativeView::layout_view(s))

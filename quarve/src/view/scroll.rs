@@ -3,11 +3,12 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use crate::core::{Environment, MSlock};
 use crate::{native};
-use crate::state::{Binding, Filterless, Store};
-use crate::state::slock_cell::{MainSlockCell, SlockCell};
+use crate::native::view::scroll::{scroll_view_set_x, scroll_view_set_y};
+use crate::state::{Binding, Buffer, Filterless, StateFilter, Store};
+use crate::state::slock_cell::{SlockCell};
 use crate::util::geo;
 use crate::util::geo::{Rect, ScreenUnit, Size};
-use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, NativeViewState, Subtree, View, ViewProvider, ViewRef};
+use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, NativeViewState, Subtree, View, ViewProvider, ViewRef};
 
 pub struct ScrollView<E, I>
     where E: Environment,
@@ -62,25 +63,21 @@ impl<E, I> ScrollView<E, I, > where E: Environment, I: IntoViewProvider<E> {
         }
     }
 
-    // all three are buggy at the moment
-    #[allow(unused)]
-    fn hoist_x_offset(
+    pub fn hoist_x_offset(
         self,
         x_offset: impl Binding<Filterless<ScreenUnit>> + Clone,
     ) -> impl IntoViewProvider<E, UpContext=I::UpContext, DownContext=I::DownContext> {
         self.hoist_offset(x_offset, Store::new(0.0).binding())
     }
 
-    #[allow(unused)]
-    fn hoist_y_offset(
+    pub fn hoist_y_offset(
         self,
         y_offset: impl Binding<Filterless<ScreenUnit>> + Clone,
     ) -> impl IntoViewProvider<E, UpContext=I::UpContext, DownContext=I::DownContext> {
         self.hoist_offset(Store::new(0.0).binding(), y_offset)
     }
 
-    #[allow(unused)]
-    fn hoist_offset(
+    pub fn hoist_offset(
         self,
         x_offset: impl Binding<Filterless<ScreenUnit>> + Clone,
         y_offset: impl Binding<Filterless<ScreenUnit>> + Clone
@@ -111,8 +108,8 @@ impl<E, I, BX, BY> IntoViewProvider<E> for ScrollViewBinding<E, I, BX, BY>
             horizontal: self.horizontal,
             binding_x: self.binding_x,
             binding_y: self.binding_y,
-            content: self.content.into_view_provider(env, s).into_view(s),
             backing: 0 as *mut c_void,
+            content: self.content.into_view_provider(env, s).into_view(s),
             phantom: Default::default(),
         }
     }
@@ -128,8 +125,8 @@ impl<E, I> IntoViewProvider<E> for ScrollView<E, I> where E: Environment, I: Int
             horizontal: self.horizontal,
             binding_x: Store::new(0.0).binding(),
             binding_y: Store::new(0.0).binding(),
-            content: self.content.into_view_provider(env, s).into_view(s),
             backing: 0 as *mut c_void,
+            content: self.content.into_view_provider(env, s).into_view(s),
             phantom: Default::default(),
         }
     }
@@ -145,8 +142,8 @@ struct ScrollViewVP<E, P, BX, BY>
     horizontal: bool,
     binding_x: BX,
     binding_y: BY,
-    content: View<E, P>,
     backing: *mut c_void,
+    content: View<E, P>,
     phantom: PhantomData<E>
 }
 
@@ -183,37 +180,66 @@ impl<E, P, BX, BY> ViewProvider<E> for ScrollViewVP<E, P, BX, BY>
         self.content.up_context(s)
     }
 
-    fn init_backing(&mut self, _invalidator: Invalidator<E>, subtree: &mut Subtree<E>, _backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
-        subtree.push_subview(&self.content, env, s);
+    fn init_backing(&mut self, invalidator: WeakInvalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+        let state = Buffer::new(NativeViewState::default());
 
-        let state = Arc::new(SlockCell::new(NativeViewState::default()));
-        let weak_x = Arc::downgrade(&state);
+        let mut nv = {
+            if let Some((nv, bs)) = backing_source {
+                self.content.take_backing(bs.content, env, s);
+                nv
+            }
+            else {
+                NativeView::new(native::view::scroll::init_scroll_view(self.vertical, self.horizontal, self.binding_y.clone(), self.binding_x.clone(), s), s)
+            }
+        };
+        nv.set_clips_subviews();
+        self.backing = nv.backing();
+        let backing = nv.backing() as usize;
+
+        let weak_x = state.downgrade();
+        let inv = invalidator.clone();
         self.binding_x.listen(move |x, s| {
             let Some(strong) = weak_x.upgrade() else {
                 return false;
             };
 
+            if let Some(s) = s.try_to_main_slock() {
+                scroll_view_set_y(backing as *mut c_void, *x, s);
+            }
+            else {
+                // buffer was valid so this will be too
+                inv.upgrade().unwrap().invalidate(s);
+            }
+
             strong.borrow_mut(s).offset_x = *x;
             true
         }, s);
 
-        let weak_y = Arc::downgrade(&state);
+        let weak_y = state.downgrade();
         self.binding_y.listen(move |y, s| {
             let Some(strong) = weak_y.upgrade() else {
                 return false;
             };
 
+            if let Some(s) = s.try_to_main_slock() {
+                scroll_view_set_y(backing as *mut c_void, *y, s);
+            }
+            else {
+                invalidator.upgrade().unwrap().invalidate(s);
+            }
+
             strong.borrow_mut(s).offset_y = *y;
             true
         }, s);
 
-        let mut nv = NativeView::new(native::view::scroll::init_scroll_view(self.vertical, self.horizontal, self.binding_y.clone(), self.binding_x.clone(), s), s);
-        nv.set_clips_subviews();
+        subtree.push_subview(&self.content, env, s);
         nv.set_state(state);
         nv
     }
 
-    fn layout_up(&mut self, _subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, _s: MSlock) -> bool {
+    fn layout_up(&mut self, _subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, s: MSlock) -> bool {
+        scroll_view_set_x(self.backing, *self.binding_x.borrow(s), s);
+        scroll_view_set_y(self.backing, *self.binding_y.borrow(s), s);
         true
     }
 

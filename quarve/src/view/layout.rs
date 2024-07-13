@@ -3,7 +3,7 @@ mod general_layout {
     use crate::core::{Environment, MSlock};
     use crate::state::slock_cell::{MainSlockCell};
     use crate::util::geo::{Rect, Size};
-    use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, ViewProvider};
+    use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, Subtree, ViewProvider};
 
     pub trait LayoutProvider<E>: Sized + 'static where E: Environment {
         type DownContext: 'static;
@@ -35,7 +35,7 @@ mod general_layout {
 
         fn init(
             &mut self,
-            invalidator: Invalidator<E>,
+            invalidator: WeakInvalidator<E>,
             subtree: &mut Subtree<E>,
             source_provider: Option<Self>,
             env: &mut EnvRef<E>,
@@ -90,7 +90,7 @@ mod general_layout {
             self.0.up_context(s)
         }
 
-        fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+        fn init_backing(&mut self, invalidator: WeakInvalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
             if let Some(source) = backing_source {
                 self.0.init(invalidator, subtree, Some(source.1.0), env, s);
 
@@ -129,7 +129,7 @@ mod vec_layout {
     use crate::core::{Environment, MSlock};
     use crate::util::FromOptions;
     use crate::util::geo::{Rect, Size};
-    use crate::view::{EnvRef, IntoViewProvider, Invalidator, ViewProvider, ViewRef};
+    use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, ViewProvider, ViewRef};
     // workaround for TAIT
     fn into_view_provider<E, I>(i: I, e: &E::Const, s: MSlock)
                                 -> impl ViewProvider<E, UpContext=I::UpContext, DownContext=I::DownContext> + 'static
@@ -161,7 +161,7 @@ mod vec_layout {
         type SubviewUpContext: 'static;
 
         #[allow(unused_variables)]
-        fn init(&mut self, invalidator: Invalidator<E>, s: MSlock) {
+        fn init(&mut self, invalidator: WeakInvalidator<E>, s: MSlock) {
 
         }
 
@@ -378,7 +378,7 @@ mod vec_layout {
         use std::marker::PhantomData;
         use crate::core::{Environment, MSlock};
         use crate::util::geo::{Rect, Size};
-        use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, UpContextAdapter, View, ViewProvider, ViewRef};
+        use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, Subtree, UpContextAdapter, View, ViewProvider, ViewRef};
         use crate::view::layout::{VecLayoutProvider};
 
         pub trait HeteroIVPNode<E, U, D> where E: Environment, U: 'static, D: 'static {
@@ -632,7 +632,7 @@ mod vec_layout {
                 self.layout.up_context(s)
             }
 
-            fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+            fn init_backing(&mut self, invalidator: WeakInvalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
                 self.root.push_subviews(subtree, env, s);
                 self.layout.init(invalidator, s);
 
@@ -664,11 +664,10 @@ mod vec_layout {
 
     mod binding_layout {
         use std::marker::PhantomData;
-        use crate::state::Signal;
         use crate::core::{Environment, MSlock};
         use crate::state::{StateFilter, Binding, Buffer, GroupAction, GroupBasis, StoreContainer, VecActionBasis, Word};
         use crate::util::geo::{Rect, Size};
-        use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, UpContextAdapter, View, ViewProvider};
+        use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, Subtree, UpContextAdapter, View, ViewProvider};
         use crate::view::layout::vec_layout::into_view_provider;
         use crate::view::layout::VecLayoutProvider;
 
@@ -801,11 +800,11 @@ mod vec_layout {
                 self.layout.up_context(s)
             }
 
-            fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+            fn init_backing(&mut self, invalidator: WeakInvalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
                 self.layout.init(invalidator.clone(), s);
 
                 // register invalidator for binding
-                let buffer = self.action_buffer.weak_buffer();
+                let buffer = self.action_buffer.downgrade();
                 self.binding.action_listener(move |_, a, s| {
                     let (Some(invalidator), Some(buffer)) = (invalidator.upgrade(), buffer.upgrade()) else {
                         return false;
@@ -967,7 +966,7 @@ mod vec_layout {
         use crate::core::{Environment, MSlock};
         use crate::state::Signal;
         use crate::util::geo::{Rect, Size};
-        use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, UpContextAdapter, View, ViewProvider};
+        use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, Subtree, UpContextAdapter, View, ViewProvider};
         use crate::view::layout::{VecLayoutProvider};
         use crate::view::layout::vec_layout::into_view_provider;
 
@@ -1083,7 +1082,7 @@ mod vec_layout {
                 self.layout.up_context(s)
             }
 
-            fn init_backing(&mut self, invalidator: Invalidator<E>, _subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+            fn init_backing(&mut self, invalidator: WeakInvalidator<E>, _subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, s: MSlock) -> NativeView {
                 self.layout.init(invalidator.clone(), s);
 
                 /* register listeners and try to steal whatever backing we can */

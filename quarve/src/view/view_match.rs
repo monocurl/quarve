@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 use crate::core::{Environment, MSlock};
 use crate::state::{ActualDiffSignal, Buffer};
 use crate::util::geo::{Rect, Size};
-use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, ViewProvider, ViewRef};
+use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, Subtree, ViewProvider, ViewRef};
 
 pub struct ViewMatchIVP<E, S, U, D, F>
     where E: Environment, U: 'static, D: 'static,
@@ -93,8 +93,8 @@ impl<E, S, U, D, F> ViewProvider<E> for ViewMatchVP<E, S, U, D, F>
         self.view.as_ref().unwrap().up_context(s)
     }
 
-    fn init_backing(&mut self, invalidator: Invalidator<E>, _subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, s: MSlock) -> NativeView {
-        let dirty = self.dirty.weak_buffer();
+    fn init_backing(&mut self, invalidator: WeakInvalidator<E>, _subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+        let dirty = self.dirty.downgrade();
         self.signal.diff_listen(move |_val, s| {
             let (Some(invalidator), Some(dirty)) =
                 (invalidator.upgrade(), dirty.upgrade()) else {

@@ -4,7 +4,7 @@ use crate::native;
 use crate::state::{FixedSignal, Signal, SignalOrValue};
 use crate::util::geo::{Rect, Size, UNBOUNDED};
 use crate::view::util::Color;
-use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, ViewProvider};
+use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, Subtree, ViewProvider};
 use crate::view::modifers::{Frame, FrameModifiable};
 
 pub struct ColorView<S>(SignalOrValue<S>, *mut c_void) where S: Signal<Target=Color>;
@@ -49,7 +49,7 @@ impl<E, S> ViewProvider<E> for ColorView<S> where E: Environment, S: Signal<Targ
         ()
     }
 
-    fn init_backing(&mut self, invalidator: Invalidator<E>, _subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+    fn init_backing(&mut self, invalidator: WeakInvalidator<E>, _subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, s: MSlock) -> NativeView {
         self.0.add_invalidator(&invalidator, s);
 
         let nv = if let Some((nv, _)) = backing_source {

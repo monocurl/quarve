@@ -4,7 +4,7 @@ use std::rc::{Rc, Weak};
 use crate::core::{Environment, MSlock};
 use crate::event::{Event, EventResult};
 use crate::util::geo::{Rect, Size};
-use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, ToArcViewBase, View, ViewProvider};
+use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, Subtree, ToArcViewBase, View, ViewProvider};
 use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
 
 struct PortalInner<E, U, D>
@@ -13,7 +13,7 @@ struct PortalInner<E, U, D>
     // if sender_count is zero, sent_view should be treated as garbage
     // even if the weak allocation points to something
     sender_count: usize,
-    receiver_invalidator: Vec<Invalidator<E>>,
+    receiver_invalidator: Vec<WeakInvalidator<E>>,
     sent_view: Option<Weak<dyn ToArcViewBase<E, UpContext=U, DownContext=D>>>
 }
 
@@ -44,7 +44,7 @@ impl<E, U, D> Clone for Portal<E, U, D>
 
 pub struct PortalReceiver<E, U, D> where E: Environment, U: Default + 'static, D: 'static {
     portal: Portal<E, U, D>,
-    invalidator: Option<Invalidator<E>>,
+    invalidator: Option<WeakInvalidator<E>>,
 }
 
 impl<E, U, D> IntoViewProvider<E> for PortalReceiver<E, U, D>
@@ -162,7 +162,7 @@ impl<E, U, D> ViewProvider<E> for PortalReceiver<E, U, D>
             .unwrap_or_default()
     }
 
-    fn init_backing(&mut self, invalidator: Invalidator<E>, _subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+    fn init_backing(&mut self, invalidator: WeakInvalidator<E>, _subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, s: MSlock) -> NativeView {
         self.invalidator = Some(invalidator);
 
         if let Some((nv, _)) = backing_source {
@@ -264,7 +264,7 @@ struct PortalSenderVP<E, U, D, P, W>
     content: Rc<View<E, P>>,
     conditional_enabled: bool,
     mounted: bool,
-    invalidator: Option<Invalidator<E>>
+    invalidator: Option<WeakInvalidator<E>>
 }
 
 impl<E, U, D, P, W> PortalSenderVP<E, U, D, P, W>
@@ -290,7 +290,7 @@ impl<E, U, D, P, W> PortalSenderVP<E, U, D, P, W>
         if needs_change {
             borrow.sent_view = Some(Rc::downgrade(&self.content) as Weak<dyn ToArcViewBase<E, UpContext=U, DownContext=D>>);
             if let Some(ref inv) = borrow.receiver_invalidator.last().and_then(|x| x.upgrade()) {
-                inv.invalidate(s.as_general_slock());
+                inv.invalidate(s.to_general_slock());
             }
         }
 
@@ -316,7 +316,7 @@ impl<E, U, D, P, W> PortalSenderVP<E, U, D, P, W>
             // the receiver then relies on the sender count to determine whether
             // or not there is a view
             if let Some(ref inv) = borrow.receiver_invalidator.last().and_then(|x| x.upgrade()) {
-                inv.invalidate(s.as_general_slock());
+                inv.invalidate(s.to_general_slock());
             }
         }
 
@@ -359,7 +359,7 @@ impl<E, U, D, P, W> ViewProvider<E> for PortalSenderVP<E, U, D, P, W>
         self.wrapping.up_context(s)
     }
 
-    fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+    fn init_backing(&mut self, invalidator: WeakInvalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
         self.invalidator = Some(invalidator.clone());
 
         let ret = if let Some((nv, src)) = backing_source {
@@ -413,11 +413,11 @@ impl<E, U, D, P, W> ViewProvider<E> for PortalSenderVP<E, U, D, P, W>
         self.wrapping.post_hide(s)
     }
 
-    fn focused(&mut self, rel_depth: u32, s: MSlock) {
+    fn focused(&self, rel_depth: u32, s: MSlock) {
         self.wrapping.focused(rel_depth, s);
     }
 
-    fn unfocused(&mut self, rel_depth: u32, s: MSlock) {
+    fn unfocused(&self, rel_depth: u32, s: MSlock) {
         self.wrapping.unfocused(rel_depth, s);
     }
 
@@ -429,7 +429,7 @@ impl<E, U, D, P, W> ViewProvider<E> for PortalSenderVP<E, U, D, P, W>
         self.wrapping.pop_environment(env, s);
     }
 
-    fn handle_event(&mut self, e: &Event, s: MSlock) -> EventResult {
+    fn handle_event(&self, e: &Event, s: MSlock) -> EventResult {
         self.wrapping.handle_event(e, s)
     }
 }

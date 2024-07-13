@@ -4,7 +4,7 @@ use crate::core::{Environment, MSlock};
 use crate::native;
 use crate::resource::Resource;
 use crate::util::geo::{Rect, Size};
-use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, ViewProvider};
+use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, Subtree, ViewProvider};
 
 // image view
 pub struct ImageView {
@@ -72,7 +72,7 @@ impl<E> ViewProvider<E> for ImageViewVP where E: Environment {
         ()
     }
 
-    fn init_backing(&mut self, _invalidator: Invalidator<E>, _subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+    fn init_backing(&mut self, _invalidator: WeakInvalidator<E>, _subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, s: MSlock) -> NativeView {
         if let Some((nv, src)) = backing_source {
             if src.location == self.location {
                 return nv;

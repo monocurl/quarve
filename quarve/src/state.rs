@@ -366,7 +366,7 @@ mod group {
             fn filter(&self, val: &S, a: S::Action, s: Slock<impl ThreadMarker>) -> S::Action {
                 self.0
                     .iter()
-                    .rfold(a, |a, action| action(val, a, s.as_general_slock()))
+                    .rfold(a, |a, action| action(val, a, s.to_general_slock()))
             }
         }
     }
@@ -1461,7 +1461,7 @@ mod store {
                 // tell action listeners
                 self.listeners.retain_mut(
                     |listener| match listener {
-                        StateListener::ActionListener(listener) => listener(&self.data, &filtered_action, s.as_general_slock()),
+                        StateListener::ActionListener(listener) => listener(&self.data, &filtered_action, s.to_general_slock()),
                         _ => true
                     }
                 );
@@ -1474,17 +1474,17 @@ mod store {
                 self.listeners.retain_mut(
                     |listener| match listener {
                         StateListener::GeneralListener(action) => {
-                            action(s.as_general_slock())
+                            action(s.to_general_slock())
                         },
                         StateListener::SignalListener(action) => {
-                            action(data, s.as_general_slock())
+                            action(data, s.to_general_slock())
                         },
                         _ => true
                     }
                 );
 
                 // tell inverse listener
-                self.inverse_listener.invoke_listener(move || make_inverter(inverse), s.as_general_slock());
+                self.inverse_listener.invoke_listener(move || make_inverter(inverse), s.to_general_slock());
             }
 
             pub fn apply(
@@ -1533,12 +1533,12 @@ mod store {
             () => {
                 fn subtree_general_listener<Q>(&self, f: Q, s: Slock<impl ThreadMarker>)
                     where Q: GeneralListener + Clone {
-                    self.inner.borrow_mut(s).dispatcher_mut().set_general_listener(f, s.as_general_slock());
+                    self.inner.borrow_mut(s).dispatcher_mut().set_general_listener(f, s.to_general_slock());
                 }
 
                 fn subtree_inverse_listener<Q>(&self, f: Q, s: Slock<impl ThreadMarker>)
                     where Q: InverseListener + Clone {
-                    self.inner.borrow_mut(s).dispatcher_mut().set_inverse_listener(f, s.as_general_slock());
+                    self.inner.borrow_mut(s).dispatcher_mut().set_inverse_listener(f, s.to_general_slock());
                 }
             }
         }
@@ -1794,7 +1794,7 @@ mod store {
                     for class in [old, new] {
                         inner.equal_listeners.entry(class)
                             .and_modify(|l|
-                                l.retain_mut(|f| f(&new, s.as_general_slock()))
+                                l.retain_mut(|f| f(&new, s.to_general_slock()))
                             );
                     }
                 }
@@ -2155,7 +2155,7 @@ mod store {
                 if !inner_immut.intrinsic_performing_transaction {
 
                     if let Some(intr_ref) = inner_immut.intrinsic.lock().unwrap().as_ref() {
-                        intr_ref.apply(intrinsic_action.unwrap(), s.as_general_slock());
+                        intr_ref.apply(intrinsic_action.unwrap(), s.to_general_slock());
                     };
                 }
 
@@ -2418,7 +2418,7 @@ mod buffer {
             std::mem::replace(self.borrow_mut(s).deref_mut(), with)
         }
 
-        pub fn weak_buffer(&self) -> WeakBuffer<T> {
+        pub fn downgrade(&self) -> WeakBuffer<T> {
             WeakBuffer(Arc::downgrade(&self.0))
         }
     }
@@ -2514,7 +2514,7 @@ mod signal {
 
             pub(super) fn dispatch(&mut self, new_val: &T, s: Slock<impl ThreadMarker>) {
                 self.listeners
-                    .retain_mut(|listener| listener(new_val, s.as_general_slock()))
+                    .retain_mut(|listener| listener(new_val, s.to_general_slock()))
             }
 
             pub(super) fn is_empty(&self) -> bool {
@@ -2683,7 +2683,7 @@ mod signal {
                     // races don't matter too much since it'll just mean late drop
                     // but nothing unsound
                     !inner.audience.is_empty() || Arc::strong_count(&pseudo_weak) > 1
-                }), s.as_general_slock());
+                }), s.to_general_slock());
 
                 GeneralSignal {
                     inner: arc
@@ -3054,7 +3054,7 @@ mod signal {
 
                 // start thread if necessary
                 if initial_thread {
-                    CapacitatedSignal::update_active(&arc, arc.1.borrow_mut(s).deref_mut(), s.as_general_slock());
+                    CapacitatedSignal::update_active(&arc, arc.1.borrow_mut(s).deref_mut(), s.to_general_slock());
                 }
 
                 CapacitatedSignal {
@@ -3094,7 +3094,7 @@ mod signal {
         use crate::core::{Environment, Slock};
         use crate::state::{FixedSignal, Signal};
         use crate::util::marker::ThreadMarker;
-        use crate::view::Invalidator;
+        use crate::view::WeakInvalidator;
 
         pub enum SignalOrValue<S> where S: Signal {
             Value(S::Target),
@@ -3108,7 +3108,7 @@ mod signal {
         }
 
         impl<S> SignalOrValue<S> where S: Signal {
-            pub fn add_invalidator<E: Environment>(&self, inv: &Invalidator<E>, s: Slock<impl ThreadMarker>) {
+            pub fn add_invalidator<E: Environment>(&self, inv: &WeakInvalidator<E>, s: Slock<impl ThreadMarker>) {
                 if let SignalOrValue::Signal(sig) = self  {
                     let weak_inv = inv.clone();
                     sig.listen(move |_, s| {
@@ -3304,8 +3304,8 @@ mod test {
         // instead of this hack
         let identity_counter = Buffer::new(0);
         let set_counter = Buffer::new(0);
-        let scb = set_counter.weak_buffer();
-        let icb = identity_counter.weak_buffer();
+        let scb = set_counter.downgrade();
+        let icb = identity_counter.downgrade();
         state.action_listener( move |_, action, s| {
             let Some(icb) = icb.upgrade() else {
                 return false;
@@ -3427,7 +3427,7 @@ mod test {
         let s = slock_owner();
         let state = Store::new(0);
         let set_counter = Buffer::new(0);
-        let scb = set_counter.weak_buffer();
+        let scb = set_counter.downgrade();
         state.subtree_general_listener(move |s| {
             let Some(scb) = scb.upgrade() else {
                 return false;
@@ -3595,7 +3595,7 @@ mod test {
         let middle = store.map(|x| *x, s.marker());
         let bottom = middle.map(|x| *x, s.marker());
         let changes = Buffer::new(0);
-        let binding = changes.weak_buffer();
+        let binding = changes.downgrade();
         bottom.listen(move |_a, s| {
             let Some(binding) = binding.upgrade() else {
                 return false;
@@ -4324,7 +4324,7 @@ mod test {
         let s = slock_owner();
         let state = Store::new("asfasdf".to_string());
         let buffer = Buffer::new(Word::identity());
-        let buffer_writer = buffer.weak_buffer();
+        let buffer_writer = buffer.downgrade();
         state.action_listener(move |_, action, s| {
             let Some(buffer_writer) = buffer_writer.upgrade() else {
                 return false;

@@ -2,7 +2,8 @@ use std::marker::PhantomData;
 use quarve::core::{Application, Environment, launch, MSlock};
 use quarve::state::{Binding, Filterless, FixedSignal, Signal, Stateful, Store};
 use quarve::util::geo::{Alignment, HorizontalAlignment, Size};
-use quarve::view::{ViewProvider, IntoViewProvider, Invalidator};
+use quarve::view::{ViewProvider, IntoViewProvider, WeakInvalidator};
+use quarve::view::control::Button;
 use quarve::view::layout::*;
 use quarve::view::modifers::{Cursor, CursorModifiable, EnvironmentModifier, Frame, FrameModifiable, KeyListener, Layer, LayerModifiable, OffsetModifiable, PaddingModifiable, WhenModifiable};
 use quarve::view::scroll::ScrollView;
@@ -52,11 +53,21 @@ impl quarve::core::WindowProvider for WindowProvider {
     }
 
     fn root(&self, env: &<Env as Environment>::Const, s: MSlock) -> impl ViewProvider<Env, DownContext=()> {
-        ScrollView::horizontal(
+        let offset_y = Store::new(0.0);
+
+        let v1 = ScrollView::vertical(
             VStack::hetero_options(VStackOptions::default().align(HorizontalAlignment::Leading))
                 .push(
-                    FixedSignal::new((0..10).collect())
-                        .sig_flexmap(|x, s| {
+                    Button::new_with_label(
+                        Color::black()
+                            .intrinsic(100, 100),
+                        |_| println!("Clicked")
+                    )
+                        .offset_signal(FixedSignal::new(0.0), offset_y.signal())
+                )
+                .push(
+                    FixedSignal::new((0..14).collect())
+                        .sig_vmap(|x, s| {
                             Color::black()
                                 .intrinsic(100, 100 + 10 * *x)
                                 .cursor(Cursor::Pointer)
@@ -64,17 +75,45 @@ impl quarve::core::WindowProvider for WindowProvider {
                         .padding(10)
                         .border(Color::white(), 1)
                 )
-                .push(
-                    Color::black()
-                        .intrinsic(100, 100)
-                )
         )
-            .intrinsic(300, 300)
-            .padding(10)
-            .frame( Frame::default()
+            .hoist_y_offset(offset_y.binding())
+            .frame(Frame::default()
+                .intrinsic(300, 300)
                     .unlimited_stretch()
                     .align(Alignment::Center)
+            );
+
+        let v2 = ScrollView::vertical(
+                VStack::hetero_options(VStackOptions::default().align(HorizontalAlignment::Leading))
+                    .push(
+                        Button::new_with_label(
+                            Color::black()
+                                .intrinsic(100, 100),
+                            |_| println!("Clicked")
+                        )
+                            .offset_signal(FixedSignal::new(0.0), offset_y.signal())
+                    )
+                    .push(
+                        FixedSignal::new((0..14).collect())
+                            .sig_vmap(|x, s| {
+                                Color::black()
+                                    .intrinsic(100, 100 + 10 * *x)
+                                    .cursor(Cursor::Pointer)
+                            })
+                            .padding(10)
+                            .border(Color::white(), 1)
+                    )
             )
+                .hoist_y_offset(offset_y.binding())
+                .frame(Frame::default()
+                    .intrinsic(300, 300)
+                    .unlimited_stretch()
+                    .align(Alignment::Center)
+                );
+
+        VStack::hetero()
+            .push(v1)
+            .push(v2)
             .into_view_provider(env, s)
     }
 
@@ -92,7 +131,7 @@ struct EnvModifier {
 }
 
 impl EnvironmentModifier<Env> for EnvModifier {
-    fn init(&mut self, invalidator: Invalidator<Env>, s: MSlock) {
+    fn init(&mut self, invalidator: WeakInvalidator<Env>, s: MSlock) {
 
     }
 
@@ -103,13 +142,6 @@ impl EnvironmentModifier<Env> for EnvModifier {
     fn pop_environment(&mut self, env: &mut <Env as Environment>::Variable, s: MSlock) {
 
     }
-}
-
-#[derive(StoreContainer)]
-struct State<F: Send> where F: Stateful {
-    #[quarve(ignore)]
-    phantom_data: PhantomData<F>,
-    main_store: Store<F>,
 }
 
 fn main() {

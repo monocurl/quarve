@@ -578,7 +578,7 @@ mod window {
                 let mut it = self.focus.borrow().as_ref().and_then(|a| a.upgrade());
                 while let Some(curr) = &it {
                     it = {
-                        let mut borrow = curr.borrow_mut_main(s);
+                        let borrow = curr.borrow_main(s);
                         borrow.unfocused(depth, s);
                         borrow.superview()
                     };
@@ -589,7 +589,7 @@ mod window {
                 it = scheduled.as_ref().and_then(|a| a.upgrade());
                 while let Some(curr) = &it {
                     it = {
-                        let mut borrow = curr.borrow_mut_main(s);
+                        let borrow = curr.borrow_main(s);
                         borrow.focused(depth, s);
                         borrow.superview()
                     };
@@ -680,6 +680,10 @@ mod window {
                 }
             }
 
+            // it has not parent so we must finalize it
+            self.content_view.borrow_main(s)
+                .finalize_view_frame(s);
+
             Self::walk_env(env.deref_mut(), &mut env_spot, None, &mut env_depth, -1, s);
             self.environment.set(Some(env));
             self.performing_layout_down.set(false);
@@ -689,12 +693,16 @@ mod window {
 
         // FIXME, when weak fails to upgrade make the option None
         fn dispatch_native_event(&self, mut event: Event, s: MSlock) {
-            match event.payload {
+            match &mut event.payload {
                 EventPayload::Mouse(_, at) => {
-                    self.content_view.borrow_mut_main(s)
-                        .handle_mouse_event(&self.content_view, &mut event, self.last_cursor.take(), s);
+                    // match cursor
+                    let mut cv = self.content_view.borrow_mut_main(s);
+                    *at = at.translate(-cv.view_rect(s).origin());
+                    let cursor = *at;
 
-                    self.last_cursor.set(at);
+                    cv.handle_mouse_event(&self.content_view, &mut event, self.last_cursor.take(), s);
+
+                    self.last_cursor.set(cursor);
                 },
                 EventPayload::Key(_) => 'key: {
                     // if focus also in key listeners, only do one at a time
@@ -925,7 +933,6 @@ mod slock {
     use std::sync::{Mutex, MutexGuard};
     use std::thread;
     use crate::native;
-    use crate::state::{StateFilter};
     use crate::util::marker::{AnyThreadMarker, MainThreadMarker, ThreadMarker};
     use crate::util::rust_util::PhantomUnsendUnsync;
     use crate::core::debug_stats::DebugInfo;
@@ -1098,7 +1105,7 @@ mod slock {
     }
 
     impl<'a, M> Slock<'a, M> where M: ThreadMarker {
-        pub fn try_as_main_slock(self) -> Option<MSlock<'a>> {
+        pub fn try_to_main_slock(self) -> Option<MSlock<'a>> {
             if !native::global::is_main() {
                 None
             }
@@ -1112,14 +1119,14 @@ mod slock {
             }
         }
 
-        pub fn as_main_slock(self) -> MSlock<'a> {
-            self.try_as_main_slock().expect("This method should only be called on the main thread!")
+        pub fn to_main_slock(self) -> MSlock<'a> {
+            self.try_to_main_slock().expect("This method should only be called on the main thread!")
         }
 
         /// Given a slock that may be say the main slock
         /// convert it into the general slock
         /// Some methods require the general slock
-        pub fn as_general_slock(self) -> Slock<'a> {
+        pub fn to_general_slock(self) -> Slock<'a> {
             // safety: if a slock comes from a specific thread
             // it certainly came from any thread.
             // The data layouts of the reference field are exactly
@@ -1170,7 +1177,7 @@ mod global {
     /// the function directly. Otherwise,
     /// the behavior is identical to run_main_async
     pub fn run_main_maybe_sync<F>(f: F, s: Slock) where F: for<'a> FnOnce(MSlock<'a>) + Send + 'static {
-        if let Some(main) = s.try_as_main_slock() {
+        if let Some(main) = s.try_to_main_slock() {
             f(main);
         }
         else {

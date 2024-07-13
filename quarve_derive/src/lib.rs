@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
-use quote::quote;
 use syn::{parse_macro_input, DeriveInput, Data, Meta, Token, DataStruct};
 use syn::punctuated::Punctuated;
+use quote::quote;
 
 // references: https://github.com/nazmulidris/rust-scratch/blob/main/macros/my_proc_macros_lib/src/builder.rs
 // https://stackoverflow.com/a/76687540

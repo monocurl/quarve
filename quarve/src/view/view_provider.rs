@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 use crate::core::{Environment, MSlock};
 use crate::event::{Event, EventResult};
 use crate::util::geo::{Rect, Size};
-use crate::view::{EnvRef, InnerView, IntoViewProvider, Invalidator, NativeView, Subtree, View};
+use crate::view::{EnvRef, InnerView, IntoViewProvider, WeakInvalidator, NativeView, Subtree, View};
 use crate::view::util::SizeContainer;
 
 pub trait ViewProvider<E>: Sized + 'static
@@ -52,7 +52,7 @@ pub trait ViewProvider<E>: Sized + 'static
     /// fresh allocation and not replacing an old view.
     fn init_backing(
         &mut self,
-        invalidator: Invalidator<E>,
+        invalidator: WeakInvalidator<E>,
         subtree: &mut Subtree<E>,
         backing_source: Option<(NativeView, Self)>,
         env: &mut EnvRef<E>,
@@ -111,12 +111,12 @@ pub trait ViewProvider<E>: Sized + 'static
 
     // focus and unfocused state...
     #[allow(unused_variables)]
-    fn focused(&mut self, rel_depth: u32, s: MSlock) {
+    fn focused(&self, rel_depth: u32, s: MSlock) {
 
     }
 
     #[allow(unused_variables)]
-    fn unfocused(&mut self, rel_depth: u32, s: MSlock) {
+    fn unfocused(&self, rel_depth: u32, s: MSlock) {
 
     }
 
@@ -131,7 +131,7 @@ pub trait ViewProvider<E>: Sized + 'static
     }
 
     #[allow(unused_variables)]
-    fn handle_event(&mut self, e: &Event, s: MSlock) -> EventResult {
+    fn handle_event(&self, e: &Event, s: MSlock) -> EventResult {
         EventResult::NotHandled
     }
 }
@@ -141,7 +141,7 @@ mod upcontext_setter {
     use crate::core::{Environment, MSlock};
     use crate::event::{Event, EventResult};
     use crate::util::geo::{Rect, Size};
-    use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, Subtree, ViewProvider};
+    use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, Subtree, ViewProvider};
 
     pub struct UpContextSetter<E, P, U>(P, U, PhantomData<E>)
         where E: Environment,
@@ -157,8 +157,6 @@ mod upcontext_setter {
             UpContextSetter(p, up_context, PhantomData)
         }
     }
-
-
 
     impl<E, P, U> IntoViewProvider<E> for UpContextSetter<E, P, U>
         where E: Environment,
@@ -210,7 +208,7 @@ mod upcontext_setter {
             self.1.clone()
         }
 
-        fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+        fn init_backing(&mut self, invalidator: WeakInvalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
             let source = backing_source
                 .map(|(n, p)| (n, p.0));
 
@@ -245,12 +243,12 @@ mod upcontext_setter {
                 .post_hide(s)
         }
 
-        fn focused(&mut self, rel_depth: u32, s: MSlock) {
+        fn focused(&self, rel_depth: u32, s: MSlock) {
             self.0
                 .focused(rel_depth, s)
         }
 
-        fn unfocused(&mut self, rel_depth: u32, s: MSlock) {
+        fn unfocused(&self, rel_depth: u32, s: MSlock) {
             self.0
                 .unfocused(rel_depth, s)
         }
@@ -265,7 +263,7 @@ mod upcontext_setter {
                 .pop_environment(env, s);
         }
 
-        fn handle_event(&mut self, e: &Event, s: MSlock) -> EventResult {
+        fn handle_event(&self, e: &Event, s: MSlock) -> EventResult {
             self.0
                 .handle_event(e, s)
         }
@@ -279,7 +277,7 @@ mod upcontext_adapter {
     use crate::event::{Event, EventResult};
     use crate::state::slock_cell::MainSlockCell;
     use crate::util::geo::{Rect, Size};
-    use crate::view::{EnvRef, Invalidator, NativeView, Subtree, ViewProvider};
+    use crate::view::{EnvRef, WeakInvalidator, NativeView, Subtree, ViewProvider};
 
     pub struct UpContextAdapter<E, P, U>(P, PhantomData<MainSlockCell<(U, E)>>)
         where E: Environment,
@@ -329,7 +327,7 @@ mod upcontext_adapter {
             self.0.up_context(s).into()
         }
 
-        fn init_backing(&mut self, invalidator: Invalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+        fn init_backing(&mut self, invalidator: WeakInvalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
             let source = backing_source
                 .map(|(n, p)| (n, p.0));
 
@@ -364,12 +362,12 @@ mod upcontext_adapter {
                 .post_hide(s)
         }
 
-        fn focused(&mut self, rel_depth: u32, s: MSlock) {
+        fn focused(&self, rel_depth: u32, s: MSlock) {
             self.0
                 .focused(rel_depth, s)
         }
 
-        fn unfocused(&mut self, rel_depth: u32, s: MSlock) {
+        fn unfocused(&self, rel_depth: u32, s: MSlock) {
             self.0
                 .unfocused(rel_depth, s)
         }
@@ -384,7 +382,7 @@ mod upcontext_adapter {
                 .pop_environment(env, s);
         }
 
-        fn handle_event(&mut self, e: &Event, s: MSlock) -> EventResult {
+        fn handle_event(&self, e: &Event, s: MSlock) -> EventResult {
             self.0
                 .handle_event(e, s)
         }
@@ -435,7 +433,7 @@ impl<E, U, D> ViewProvider<E> for DummyProvider<E, U, D>
         unreachable!()
     }
 
-    fn init_backing(&mut self, _invalidator: Invalidator<E>, _subtree: &mut Subtree<E>, _backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, _s: MSlock) -> NativeView {
+    fn init_backing(&mut self, _invalidator: WeakInvalidator<E>, _subtree: &mut Subtree<E>, _backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, _s: MSlock) -> NativeView {
         unreachable!()
     }
 
