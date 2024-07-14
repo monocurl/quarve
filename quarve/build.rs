@@ -11,6 +11,7 @@ fn build() {
         .file("macos/layer_view.m")
         .file("macos/layout_view.m")
         .file("macos/scroll_view.m")
+        .file("macos/button_view.m")
         .compile("backend");
 }
 

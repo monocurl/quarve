@@ -1,10 +1,6 @@
 #import <Cocoa/Cocoa.h>
+#import "cursor_view.h"
 #import "util.h"
-
-@interface CursorView : NSView
-- (instancetype)initWithCursor:(NSCursor *)cursor;
-@property (strong) NSCursor *cursor;
-@end
 
 @implementation CursorView
 
@@ -18,7 +14,19 @@
 
 - (void)resetCursorRects {
     [self discardCursorRects];
-    [self addCursorRect:[self visibleRect] cursor:self.cursor];
+
+    NSScrollView *scrollView = [self enclosingScrollView];
+
+    if (scrollView) {
+        NSRect bound_indoc = [self convertRect:self.bounds toView:scrollView.documentView];
+        NSRect doc_rect = scrollView.documentVisibleRect;
+        NSRect clipped_indoc = NSIntersectionRect(bound_indoc, doc_rect);
+        NSRect full = [self convertRect:clipped_indoc fromView:scrollView.documentView];
+
+        [self addCursorRect:full cursor:self.cursor];
+    } else {
+        [self addCursorRect:self.bounds cursor:self.cursor];
+    }
 }
 
 - (BOOL)isFlipped {

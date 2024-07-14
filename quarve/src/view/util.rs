@@ -85,13 +85,13 @@ mod color {
     }
 
     impl Color {
-        pub fn new(r: u8, g: u8, b: u8) -> Color {
+        pub fn rgb(r: u8, g: u8, b: u8) -> Color {
             Color {
                 r, g, b, a: u8::MAX
             }
         }
 
-        pub fn new_alpha(r: u8, g: u8, b: u8, a: u8) -> Color {
+        pub fn rgba(r: u8, g: u8, b: u8, a: u8) -> Color {
             Color {
                 r, g, b, a
             }

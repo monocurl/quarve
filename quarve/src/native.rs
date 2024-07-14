@@ -361,6 +361,10 @@ pub mod view {
 
         fn back_view_scroll_set_x(backing: *mut c_void, value: f64);
         fn back_view_scroll_set_y(backing: *mut c_void, value: f64);
+
+        /* button */
+        fn back_view_button_init() -> *mut c_void;
+        fn back_view_button_update(view: *mut c_void, clicked: bool);
     }
 
     pub fn view_clear_children(view: *mut c_void, _s: MSlock) {
@@ -528,6 +532,24 @@ pub mod view {
         {
             unsafe {
                 back_view_scroll_set_y(scroll, value)
+            }
+        }
+    }
+
+    pub mod button {
+        use std::ffi::c_void;
+        use crate::core::MSlock;
+        use crate::native::view::{back_view_button_init, back_view_button_update};
+
+        pub fn init_button_view(_s: MSlock) -> *mut c_void {
+            unsafe {
+                back_view_button_init()
+            }
+        }
+
+        pub fn update_button_view(button: *mut c_void, clicked: bool, _s: MSlock) {
+            unsafe {
+                back_view_button_update(button, clicked)
             }
         }
     }

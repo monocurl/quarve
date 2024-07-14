@@ -87,7 +87,7 @@ impl quarve::core::WindowProvider for WindowProvider {
                 VStack::hetero_options(VStackOptions::default().align(HorizontalAlignment::Leading))
                     .push(
                         Button::new_with_label(
-                            Color::black()
+                            Color::white()
                                 .intrinsic(100, 100),
                             |_| println!("Clicked")
                         )
@@ -96,7 +96,7 @@ impl quarve::core::WindowProvider for WindowProvider {
                     .push(
                         FixedSignal::new((0..14).collect())
                             .sig_vmap(|x, s| {
-                                Color::black()
+                                Color::white()
                                     .intrinsic(100, 100 + 10 * *x)
                                     .cursor(Cursor::Pointer)
                             })
