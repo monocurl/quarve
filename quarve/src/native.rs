@@ -181,6 +181,28 @@ mod callbacks {
             std::mem::transmute(bx)
         };
     }
+
+
+    #[no_mangle]
+    extern "C" fn front_set_opt_string_binding(bx: FatPointer, value: *const u8) {
+        let s = unsafe {
+            slock_force_main_owner()
+        };
+        let b: Box<dyn Fn(*const u8, MSlock)> = unsafe {
+            std::mem::transmute(bx)
+        };
+
+        b(value, s.marker());
+
+        std::mem::forget(b);
+    }
+
+    #[no_mangle]
+    extern "C" fn front_free_opt_string_binding(bx: FatPointer) {
+        let _b: Box<dyn Fn(*const u8, MSlock)> = unsafe {
+            std::mem::transmute(bx)
+        };
+    }
 }
 
 /* crate endpoints */
@@ -365,6 +387,13 @@ pub mod view {
         /* button */
         fn back_view_button_init() -> *mut c_void;
         fn back_view_button_update(view: *mut c_void, clicked: bool);
+
+        /* dropdown */
+        fn back_view_dropdown_init(binding: FatPointer) -> *mut c_void;
+        fn back_view_dropdown_add(_view: *mut c_void, option: *const u8);
+        fn back_view_dropdown_clear(_view: *mut c_void);
+        fn back_view_dropdown_select(_view: *mut c_void, selection: *const u8) -> u8;
+        fn back_view_dropdown_size(_view: *mut c_void) -> Size;
     }
 
     pub fn view_clear_children(view: *mut c_void, _s: MSlock) {
@@ -550,6 +579,57 @@ pub mod view {
         pub fn update_button_view(button: *mut c_void, clicked: bool, _s: MSlock) {
             unsafe {
                 back_view_button_update(button, clicked)
+            }
+        }
+    }
+
+    pub mod dropdown {
+        use std::ffi::{c_char, c_void, CStr, CString};
+        use crate::core::MSlock;
+        use crate::native::view::{back_view_dropdown_add, back_view_dropdown_clear, back_view_dropdown_init, back_view_dropdown_select, back_view_dropdown_size};
+        use crate::state::{Binding, Filterless, SetAction};
+        use crate::util::geo::Size;
+
+        pub fn init_dropdown(binding: impl Binding<Filterless<Option<String>>>,  _s: MSlock) -> *mut c_void {
+            unsafe {
+                let action = Box::new(move |str: *const u8, s: MSlock| {
+                    let str = if str.is_null() {
+                        None
+                    }
+                    else {
+                        let cstr = unsafe { CStr::from_ptr(str as *const c_char) };
+                        Some(CString::from(cstr).into_string().unwrap())
+                    };
+                    binding.apply(SetAction::Set(str), s);
+                }) as Box<dyn Fn(*const u8, MSlock)>;
+                back_view_dropdown_init(std::mem::transmute(action))
+            }
+        }
+
+        pub fn dropdown_clear(view: *mut c_void, _s: MSlock) {
+            unsafe {
+                back_view_dropdown_clear(view)
+            }
+        }
+
+        pub fn dropdown_select(view: *mut c_void, option: Option<&str>, _s: MSlock) -> bool {
+            unsafe {
+                back_view_dropdown_select(
+                    view,
+                    option.map(|s| s.as_bytes().as_ptr()).unwrap_or(0 as *const u8)
+                ) != 0
+            }
+        }
+
+        pub fn dropdown_push(view: *mut c_void, option: &str, _s: MSlock) {
+            unsafe {
+                back_view_dropdown_add(view, option.as_bytes().as_ptr())
+            }
+        }
+
+        pub fn dropdown_size(view: *mut c_void, _s: MSlock) -> Size {
+            unsafe {
+                back_view_dropdown_size(view)
             }
         }
     }

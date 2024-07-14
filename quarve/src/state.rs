@@ -190,6 +190,10 @@ mod group {
     pub trait GroupBasis<T>: Send + Sized + 'static {
         // returns inverse action
         fn apply(self, to: &mut T) -> Self;
+
+        fn forward_description(&self) -> impl Into<String>;
+        fn backward_description(&self) -> impl Into<String>;
+
     }
 
     pub trait GroupAction<T>: GroupBasis<T> + Mul<Output=Self> {
@@ -294,6 +298,24 @@ mod group {
 
                 Word::new(build)
             }
+
+            fn forward_description(&self) -> impl Into<String> {
+                if let Some(first) = self.items.first() {
+                    first.forward_description().into()
+                }
+                else {
+                    "".into()
+                }
+            }
+
+            fn backward_description(&self) -> impl Into<String> {
+                if let Some(last) = self.items.last() {
+                    last.backward_description().into()
+                }
+                else {
+                    "".into()
+                }
+            }
         }
 
         impl<T, B> GroupAction<T> for Word<B> where B: GroupBasis<T> {
@@ -380,14 +402,12 @@ mod group {
 
             #[derive(Clone)]
             pub enum SetAction<T>
-                where T: Copy
             {
                 Set(T),
                 Identity
             }
 
             impl<T> Mul for SetAction<T>
-                where T: Copy
             {
                 type Output = Self;
 
@@ -401,23 +421,30 @@ mod group {
             }
 
             impl<T> GroupBasis<T> for SetAction<T>
-                where T: Send + Copy + 'static
+                where T: Send + 'static
             {
                 fn apply(self, to: &mut T) -> Self {
                     match self {
                         SetAction::Identity => SetAction::Identity,
                         SetAction::Set(targ) => {
-                            let ret = *to;
-                            *to = targ;
+                            let ret = std::mem::replace(to, targ);
 
                             SetAction::Set(ret)
                         },
                     }
                 }
+
+                fn forward_description(&self) -> impl Into<String> {
+                    "Change"
+                }
+
+                fn backward_description(&self) -> impl Into<String> {
+                    "Change"
+                }
             }
 
             impl<T> GroupAction<T> for SetAction<T>
-                where T: Send + Copy + 'static
+                where T: Send + 'static
             {
                 fn identity() -> Self {
                     SetAction::Identity
@@ -437,16 +464,22 @@ mod group {
             }
 
             impl_set_stateful!(
-                bool,
                 i8, u8,
                 i16, u16,
                 i32, u32,
                 i64, u64,
+                i128, u128,
                 isize, usize,
                 f32, f64,
+                bool, String,
+                Option<i8>, Option<u8>,
+                Option<i16>, Option<u16>,
                 Option<i32>, Option<u32>,
+                Option<i64>, Option<u64>,
+                Option<i128>, Option<u128>,
+                Option<isize>, Option<usize>,
                 Option<f32>, Option<f64>,
-                Option<isize>, Option<usize>
+                Option<bool>, Option<String>
             );
         }
         pub use set_action::*;
@@ -456,27 +489,38 @@ mod group {
             use crate::state::{GroupBasis,  Stateful, Word};
             use crate::util::marker::FalseMarker;
 
+            #[derive(Clone, Debug)]
+            pub struct EditingString(pub String);
+
             #[derive(Clone)]
             pub enum StringActionBasis {
                 // start, length, with
                 ReplaceSubrange(Range<usize>, String),
             }
 
-            impl GroupBasis<String> for StringActionBasis {
-                fn apply(self, to: &mut String) -> Self {
+            impl GroupBasis<EditingString> for StringActionBasis {
+                fn apply(self, to: &mut EditingString) -> Self {
                     match self {
                         StringActionBasis::ReplaceSubrange(range, content) => {
-                            let replaced = to[range.clone()].to_owned();
+                            let replaced = to.0[range.clone()].to_owned();
                             let next_range = range.start .. range.start + content.len();
-                            to.replace_range(range, &content);
+                            to.0.replace_range(range, &content);
 
                             StringActionBasis::ReplaceSubrange(next_range, replaced)
                         }
                     }
                 }
+
+                fn forward_description(&self) -> impl Into<String> {
+                    "Change"
+                }
+
+                fn backward_description(&self) -> impl Into<String> {
+                    "Change"
+                }
             }
 
-            impl Stateful for String {
+            impl Stateful for EditingString {
                 type Action = Word<StringActionBasis>;
                 type HasInnerStores = FalseMarker;
             }
@@ -529,6 +573,14 @@ mod group {
                             VecActionBasis::Swap(a, b)
                         }
                     }
+                }
+
+                fn forward_description(&self) -> impl Into<String> {
+                    "Change"
+                }
+
+                fn backward_description(&self) -> impl Into<String> {
+                    "Change"
                 }
             }
 
@@ -634,6 +686,14 @@ mod group {
                         actions: ret_actions
                     }
                 }
+
+                fn forward_description(&self) -> impl Into<String> {
+                    "Change"
+                }
+
+                fn backward_description(&self) -> impl Into<String> {
+                    "Change"
+                }
             }
 
             impl<T, const N: usize> Mul for VectorAction<T, N>
@@ -731,7 +791,7 @@ pub use group::*;
 pub mod coupler {
     use std::marker::PhantomData;
     use std::str::FromStr;
-    use crate::state::{StateFilter, Filter, Filterless, GroupAction, GroupBasis, IntoAction, SetAction, Stateful, StringActionBasis, Word};
+    use crate::state::{StateFilter, Filter, Filterless, GroupAction, GroupBasis, IntoAction, SetAction, Stateful, StringActionBasis, Word, EditingString};
     use crate::state::coupler::sealed_base::CouplerBase;
 
     mod sealed_base {
@@ -872,16 +932,16 @@ pub mod coupler {
         where N: Stateful<Action=SetAction<N>> + FromStr + ToString + Copy
     {
         type Intrinsic = N;
-        type Mapped = String;
+        type Mapped = EditingString;
 
         fn initial_mapped(&self, initial_intrinsic: &Self::Intrinsic) -> Self::Mapped {
-            initial_intrinsic.to_string()
+            EditingString(initial_intrinsic.to_string())
         }
 
         fn mirror_intrinsic_to_mapped(&self, current_mapped: &Self::Mapped, _prior_intrinsic: &Self::Intrinsic, intrinsic_transaction: &<Self::Intrinsic as Stateful>::Action) -> <Self::Mapped as Stateful>::Action {
             match intrinsic_transaction {
                 SetAction::Set(new_val) => {
-                   StringActionBasis::ReplaceSubrange(0 .. current_mapped.len(), new_val.to_string()).into_action(current_mapped)
+                   StringActionBasis::ReplaceSubrange(0 .. current_mapped.0.len(), new_val.to_string()).into_action(current_mapped)
                 },
                 SetAction::Identity => {
                     Word::identity()
@@ -893,7 +953,7 @@ pub mod coupler {
             let cloned_action = mapped_transaction.clone();
             let mut new_mapped = prior_mapped.clone();
             cloned_action.apply(&mut new_mapped);
-            match new_mapped.parse::<N>() {
+            match new_mapped.0.parse::<N>() {
                 Ok(res) => (SetAction::Set(res), mapped_transaction),
                 Err(_) => (SetAction::identity(), Word::identity())
             }

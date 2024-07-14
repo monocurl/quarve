@@ -300,18 +300,41 @@ pub use button::*;
 mod dropdown {
     use std::ffi::c_void;
     use crate::core::{Environment, MSlock};
+    use crate::native::view::dropdown::{dropdown_clear, dropdown_push, dropdown_select, dropdown_size, init_dropdown};
     use crate::state::{Binding, Filterless};
+    use crate::util::geo;
     use crate::util::geo::{Rect, Size};
     use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, ViewProvider, WeakInvalidator};
 
-    pub struct Dropdown<B> where B: Binding<Filterless<String>> {
+    pub struct Dropdown<B> where B: Binding<Filterless<Option<String>>> + Clone {
         current: B,
         options: Vec<String>
     }
 
+    impl<B> Dropdown<B> where B: Binding<Filterless<Option<String>>> + Clone {
+        pub fn new(binding: B) -> Self {
+            Dropdown {
+                current: binding,
+                options: Vec::new()
+            }
+        }
+
+        pub fn new_with_options(binding: B, options: Vec<String>) -> Self {
+            Dropdown {
+                current: binding,
+                options
+            }
+        }
+
+        pub fn option(mut self, str: impl Into<String>) -> Self {
+            self.options.push(str.into());
+            self
+        }
+    }
+
     impl<E, B> IntoViewProvider<E> for Dropdown<B>
         where E: Environment,
-              B: Binding<Filterless<String>>
+              B: Binding<Filterless<Option<String>>> + Clone
     {
         type UpContext = ();
         type DownContext = ();
@@ -326,7 +349,7 @@ mod dropdown {
         }
     }
 
-    pub struct DropdownVP<B> where B: Binding<Filterless<String>> {
+    struct DropdownVP<B> where B: Binding<Filterless<Option<String>>> {
         current: B,
         options: Vec<String>,
         backing: *mut c_void,
@@ -335,46 +358,80 @@ mod dropdown {
 
     impl<E, B> ViewProvider<E> for DropdownVP<B>
         where E: Environment,
-              B: Binding<Filterless<String>>
+              B: Binding<Filterless<Option<String>>> + Clone
     {
         type UpContext = ();
         type DownContext = ();
 
-        fn intrinsic_size(&mut self, s: MSlock) -> Size {
+        fn intrinsic_size(&mut self, _s: MSlock) -> Size {
             self.intrinsic
         }
 
-        fn xsquished_size(&mut self, s: MSlock) -> Size {
+        fn xsquished_size(&mut self, _s: MSlock) -> Size {
             self.intrinsic
         }
 
-        fn xstretched_size(&mut self, s: MSlock) -> Size {
-            todo!()
+        fn xstretched_size(&mut self, _s: MSlock) -> Size {
+            let i = self.intrinsic;
+            Size::new(geo::UNBOUNDED, i.h)
         }
 
-        fn ysquished_size(&mut self, s: MSlock) -> Size {
+        fn ysquished_size(&mut self, _s: MSlock) -> Size {
             self.intrinsic
         }
 
-        fn ystretched_size(&mut self, s: MSlock) -> Size {
-            todo!()
+        fn ystretched_size(&mut self, _s: MSlock) -> Size {
+            self.intrinsic
         }
 
-        fn up_context(&mut self, s: MSlock) -> Self::UpContext {
-            todo!()
+        fn up_context(&mut self, _s: MSlock) -> Self::UpContext {
+            ()
         }
 
-        fn init_backing(&mut self, invalidator: WeakInvalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
-            todo!()
+        fn init_backing(&mut self, invalidator: WeakInvalidator<E>, _subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+            self.current.listen(move |v, s| {
+                let Some(invalidator) = invalidator.upgrade() else {
+                    return false;
+                };
+                invalidator.invalidate(s);
+                true
+            }, s);
+
+            let mut add_options = true;
+            let nv = if let Some((nv, source)) = backing_source {
+                if source.options != self.options {
+                    dropdown_clear(nv.backing(), s);
+                }
+                else {
+                    add_options = false;
+                }
+
+                nv
+            }
+            else {
+                NativeView::new(init_dropdown(self.current.clone(), s), s)
+            };
+
+            if add_options {
+                for option in &self.options {
+                    dropdown_push(nv.backing(), option, s);
+                }
+            }
+
+            self.backing = nv.backing();
+            self.intrinsic = dropdown_size(self.backing, s);
+            nv
         }
 
-        fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
-
-            todo!()
+        fn layout_up(&mut self, _subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, s: MSlock) -> bool {
+            if dropdown_select(self.backing, self.current.borrow(s).as_deref(), s) {
+                panic!("Dropdown set to invalid option");
+            }
+            true
         }
 
-        fn layout_down(&mut self, subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
-            todo!()
+        fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, _layout_context: &Self::DownContext, _env: &mut EnvRef<E>, _s: MSlock) -> (Rect, Rect) {
+            (frame.full_rect(), frame.full_rect())
         }
     }
 

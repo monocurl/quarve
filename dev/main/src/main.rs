@@ -1,9 +1,8 @@
-use std::marker::PhantomData;
 use quarve::core::{Application, Environment, launch, MSlock};
 use quarve::state::{Binding, Filterless, FixedSignal, Signal, Stateful, Store};
 use quarve::util::geo::{Alignment, HorizontalAlignment, Size};
 use quarve::view::{ViewProvider, IntoViewProvider, WeakInvalidator};
-use quarve::view::control::Button;
+use quarve::view::control::{Button, Dropdown};
 use quarve::view::layout::*;
 use quarve::view::modifers::{Cursor, CursorModifiable, EnvironmentModifier, Frame, FrameModifiable, KeyListener, Layer, LayerModifiable, OffsetModifiable, PaddingModifiable, WhenModifiable};
 use quarve::view::scroll::ScrollView;
@@ -54,6 +53,7 @@ impl quarve::core::WindowProvider for WindowProvider {
 
     fn root(&self, env: &<Env as Environment>::Const, s: MSlock) -> impl ViewProvider<Env, DownContext=()> {
         let offset_y = Store::new(0.0);
+        let selected = Store::new(None);
 
         let v1 = ScrollView::vertical(
             VStack::hetero_options(VStackOptions::default().align(HorizontalAlignment::Leading))
@@ -66,14 +66,24 @@ impl quarve::core::WindowProvider for WindowProvider {
                         .offset_signal(FixedSignal::new(0.0), offset_y.signal())
                 )
                 .push(
+                    Dropdown::new(selected.binding())
+                        .option("Hello")
+                        .option("World")
+                )
+                .push(
+                    Dropdown::new(selected.binding())
+                        .option("Hello")
+                        .option("World")
+                )
+                .push(
                     FixedSignal::new((0..14).collect())
                         .sig_vmap(|x, s| {
-                            Color::black()
+                            Color::white()
                                 .intrinsic(100, 100 + 10 * *x)
                                 .cursor(Cursor::Pointer)
                         })
                         .padding(10)
-                        .border(Color::white(), 1)
+                        .border(Color::black(), 1)
                 )
         )
             .hoist_y_offset(offset_y.binding())
@@ -96,7 +106,7 @@ impl quarve::core::WindowProvider for WindowProvider {
                     .push(
                         FixedSignal::new((0..14).collect())
                             .sig_vmap(|x, s| {
-                                Color::white()
+                                Color::black()
                                     .intrinsic(100, 100 + 10 * *x)
                                     .cursor(Cursor::Pointer)
                             })

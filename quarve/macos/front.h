@@ -23,3 +23,9 @@ extern void front_set_screen_unit_binding(fat_pointer box, double value);
 
 // box: Box<dyn Fn(ScreenUnit, MSlock)>
 extern void front_free_screen_unit_binding(fat_pointer box);
+
+// box: Box<dyn Fn(*const u8, MSlock)>
+extern void front_set_opt_string_binding(fat_pointer box, uint8_t const* value);
+
+// box: Box<dyn Fn(*const u8, MSlock)>
+extern void front_free_opt_string_binding(fat_pointer box);

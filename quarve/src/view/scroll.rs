@@ -1,11 +1,9 @@
 use std::ffi::c_void;
 use std::marker::PhantomData;
-use std::sync::Arc;
 use crate::core::{Environment, MSlock};
 use crate::{native};
 use crate::native::view::scroll::{scroll_view_set_x, scroll_view_set_y};
 use crate::state::{Binding, Buffer, Filterless, StateFilter, Store};
-use crate::state::slock_cell::{SlockCell};
 use crate::util::geo;
 use crate::util::geo::{Rect, ScreenUnit, Size};
 use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, NativeViewState, Subtree, View, ViewProvider, ViewRef};
@@ -244,7 +242,11 @@ impl<E, P, BX, BY> ViewProvider<E> for ScrollViewVP<E, P, BX, BY>
     }
 
     fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
-        let unbounded = Rect::new(0.0, 0.0, geo::UNBOUNDED, geo::UNBOUNDED);
+        let w = if self.horizontal { geo::UNBOUNDED } else { frame.w };
+        let h = if self.horizontal { geo::UNBOUNDED } else { frame.h };
+
+        let unbounded = Rect::new(0.0, 0.0, w, h);
+
         self.content.layout_down_with_context(unbounded, layout_context, env, s);
         (frame.full_rect(), frame.full_rect())
     }
