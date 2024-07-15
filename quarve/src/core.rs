@@ -186,16 +186,17 @@ mod window {
     use std::sync::{Arc, Weak};
     use crate::core::{APP, Environment, MSlock, run_main_async, run_main_maybe_sync, Slock};
     use crate::core::window::invalidated_entry::InvalidatedEntry;
-    use crate::event::{Event, EventPayload, EventResult};
+    use crate::event::{Event, EventModifiers, EventPayload, EventResult};
     use crate::{native, util};
     use crate::native::{WindowHandle};
-    use crate::native::window::window_exit;
+    use crate::native::window::{window_exit, window_set_menu};
     use crate::state::{ActualDiffSignal, Binding, Filterless, Signal, Store};
     use crate::state::SetAction::Set;
     use crate::state::slock_cell::{MainSlockCell};
     use crate::util::geo::{Point, Rect, Size};
     use crate::view::{InnerViewBase};
     use crate::view::{ViewProvider};
+    use crate::view::menu::{Menu, MenuButton};
 
     mod invalidated_entry {
         use std::cmp::Ordering;
@@ -240,13 +241,25 @@ mod window {
     pub trait WindowProvider: 'static {
         type Env: Environment;
 
+
+
         fn title(&self, env: &<Self::Env as Environment>::Const, s: MSlock) -> impl Signal<Target=String>;
 
+        fn size(&self, env: &<Self::Env as Environment>::Const, s: MSlock) -> (Size, Size, Size);
 
         fn root(&self, env: &<Self::Env as Environment>::Const, s: MSlock)
                 -> impl ViewProvider<Self::Env, DownContext=()>;
 
-        fn size(&self, env: &<Self::Env as Environment>::Const, s: MSlock) -> (Size, Size, Size);
+        fn menu(&self, _env: &<Self::Env as Environment>::Const, s: MSlock) -> Menu {
+            Menu::new(
+                "root",
+                s
+            )
+                .push(
+                    MenuButton::new("Hello", "", EventModifiers::new(), |_| {}, s),
+                    s
+                )
+        }
 
         #[allow(unused_variables)]
         fn is_open(&self, env: &<Self::Env as Environment>::Const, s: MSlock) -> impl Binding<Filterless<bool>> {
@@ -315,6 +328,7 @@ mod window {
 
         /* native */
         handle: WindowHandle,
+        menu: Menu,
         content_view: Arc<MainSlockCell<dyn InnerViewBase<P::Env>>>
     }
 
@@ -328,6 +342,8 @@ mod window {
             let content_view = provider.root(root_env.const_env(), s)
                 .into_view(s).0;
 
+            let menu = provider.menu(root_env.const_env(), s);
+
             let window = Window {
                 provider,
                 last_cursor: Cell::new(Point::new(util::geo::UNBOUNDED, util::geo::UNBOUNDED)),
@@ -340,6 +356,7 @@ mod window {
                 down_views: RefCell::new(BinaryHeap::new()),
                 performing_layout_down: Cell::new(false),
                 handle,
+                menu,
                 content_view
             };
 
@@ -365,13 +382,16 @@ mod window {
             let borrow = this.borrow_main(s);
 
             /* apply style */
-            Self::apply_window_style(s, borrow.deref());
+            Self::apply_window_style(borrow.deref(), s);
 
             /* apply window title  */
             Self::window_listeners(&this, borrow.deref(), s);
 
             /* mount content view */
             Self::mount_content_view(&this, s, borrow.deref());
+
+            /* menu bar */
+            Self::mount_menu(borrow.deref(), s);
         }
 
         // logic is a bit tricky for initial mounting
@@ -403,7 +423,7 @@ mod window {
             borrow.environment.set(Some(stolen_env));
         }
 
-        fn apply_window_style(s: MSlock, borrow: &Window<P>) {
+        fn apply_window_style(borrow: &Window<P>, s: MSlock) {
             let stolen_env = borrow.environment.take().unwrap();
 
             // set window size (note no recursive layout call can happen since handle not mounted yet)
@@ -493,6 +513,14 @@ mod window {
                     native::window::window_set_fullscreen(borrow.handle, true, s);
                 }
             }
+
+            borrow.environment.set(Some(stolen_env));
+        }
+
+        fn mount_menu(borrow: &Window<P>, s: MSlock) {
+            let stolen_env = borrow.environment.take().unwrap();
+
+            window_set_menu(borrow.handle, &borrow.menu, s);
 
             borrow.environment.set(Some(stolen_env));
         }
@@ -696,7 +724,7 @@ mod window {
             match &mut event.payload {
                 EventPayload::Mouse(_, at) => {
                     // match cursor
-                    let mut cv = self.content_view.borrow_mut_main(s);
+                    let cv = self.content_view.borrow_mut_main(s);
                     *at = at.translate(-cv.view_rect(s).origin());
                     let cursor = *at;
 
@@ -1054,12 +1082,9 @@ mod slock {
         }
 
         let current = LOCKED_THREAD.lock().unwrap();
-        if current.is_none() {
+        if current.is_none() || *current != Some(thread::current().id()) {
             drop(current);
             return slock_main_owner();
-        }
-        else if *current != Some(thread::current().id()) {
-            panic!("Cannot force slock owner")
         }
 
         SlockOwner {

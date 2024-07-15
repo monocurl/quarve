@@ -82,5 +82,5 @@ pub mod monotonic_text_view;
 pub mod text;
 pub mod control;
 pub mod scroll;
+pub mod menu;
 mod focus;
-mod menu_bar;

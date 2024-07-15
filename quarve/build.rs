@@ -13,6 +13,7 @@ fn build() {
         .file("macos/scroll_view.m")
         .file("macos/button_view.m")
         .file("macos/dropdown_view.m")
+        .file("macos/menu.m")
         .compile("backend");
 }
 

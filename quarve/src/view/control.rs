@@ -276,7 +276,9 @@ mod button {
                 nv
             }
             else {
-                NativeView::new(init_button_view(s), s)
+                unsafe {
+                    NativeView::new(init_button_view(s), s)
+                }
             };
             self.backing = nv.backing();
             subtree.push_subview(&self.child, env, s);
@@ -409,12 +411,14 @@ mod dropdown {
                 nv
             }
             else {
-                NativeView::new(init_dropdown(self.current.clone(), s), s)
+                unsafe {
+                    NativeView::new(init_dropdown(self.current.clone(), s), s)
+                }
             };
 
             if add_options {
                 for option in &self.options {
-                    dropdown_push(nv.backing(), option, s);
+                    dropdown_push(nv.backing(), option.clone(), s);
                 }
             }
 

@@ -583,7 +583,7 @@ impl Default for NativeViewState {
 }
 
 impl NativeView {
-    pub fn new(owned_view: *mut c_void, _s: MSlock) -> NativeView {
+    pub unsafe fn new(owned_view: *mut c_void, _s: MSlock) -> NativeView {
         NativeView {
             backing: owned_view,
             clips_subviews: false,
@@ -592,11 +592,15 @@ impl NativeView {
     }
 
     pub fn layout_view(s: MSlock) -> NativeView {
-        NativeView::new(native::view::init_layout_view(s), s)
+        unsafe {
+            NativeView::new(native::view::init_layout_view(s), s)
+        }
     }
 
     pub fn layer_view(s: MSlock) -> NativeView {
-        NativeView::new(native::view::layer::init_layer_view(s), s)
+        unsafe {
+            NativeView::new(native::view::layer::init_layer_view(s), s)
+        }
     }
 
     pub fn backing(&self) -> *mut c_void {

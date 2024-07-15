@@ -23,6 +23,7 @@ int performing_subview_insertion = 0;
 @interface Window : NSWindow<NSWindowDelegate> {
     /* callbacks */
     @public fat_pointer handle;
+    @public NSMenu* menu;
 }
 @end
 
@@ -49,6 +50,9 @@ int performing_subview_insertion = 0;
     self.acceptsMouseMovedEvents = YES;
     self.releasedWhenClosed = NO;
     self.delegate = self;
+
+    self.handle = (fat_pointer) { NULL, NULL };
+    self.menu = NULL;
 
     return self;
 }
@@ -213,7 +217,7 @@ back_main_loop() {
 void
 back_run_main(fat_pointer box) {
     dispatch_async(dispatch_get_main_queue(), ^(void){
-        front_execute_box(box);
+        front_execute_fn_once(box);
     });
 }
 
@@ -282,6 +286,14 @@ back_window_set_fullscreen(void *_window, uint8_t fs) {
     if (!!(window.styleMask & NSWindowStyleMaskFullScreen) != fs) {
         [window toggleFullScreen:nil];
     }
+}
+
+void
+back_window_set_menu(void *_window, void *_menu)
+{
+    Window* window = _window;
+    NSMenu* menu = _menu;
+    window.menu = menu;
 }
 
 void

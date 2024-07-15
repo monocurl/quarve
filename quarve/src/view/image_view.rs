@@ -79,14 +79,16 @@ impl<E> ViewProvider<E> for ImageViewVP where E: Environment {
             }
         }
 
-        let nv = native::view::image::init_image_view(self.location.path().as_os_str().as_encoded_bytes(), s);
+        let nv = native::view::image::init_image_view(self.location.path(), s);
         if nv.is_null() {
             panic!("Unable to create image!")
         }
 
         self.backing = nv;
         self.intrinsic = native::view::image::image_view_size(nv);
-        NativeView::new(nv, s)
+        unsafe {
+            NativeView::new(nv, s)
+        }
     }
 
     fn layout_up(&mut self, _subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, _s: MSlock) -> bool {

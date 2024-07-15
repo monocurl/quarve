@@ -51,20 +51,51 @@ pub struct EventModifiers {
 }
 
 impl EventModifiers {
+    pub fn new() -> Self {
+        EventModifiers {
+            modifiers: 0,
+        }
+    }
+
+    pub fn set_command(mut self) -> Self {
+        self.modifiers |= COMMAND;
+        self
+    }
+
     pub fn command(self) -> bool {
         self.modifiers & COMMAND != 0
+    }
+
+    pub fn set_control(mut self) -> Self {
+        self.modifiers |= CONTROL;
+        self
     }
 
     pub fn control(self) -> bool {
         self.modifiers & CONTROL != 0
     }
 
+    pub fn set_alt_or_option(mut self) -> Self {
+        self.modifiers |= ALT_OPTION;
+        self
+    }
+
     pub fn alt_or_option(self) -> bool {
         self.modifiers & ALT_OPTION != 0
     }
 
+    pub fn set_shift(mut self) -> Self {
+        self.modifiers |= SHIFT;
+        self
+    }
+
     pub fn shift(self) -> bool {
         self.modifiers & SHIFT != 0
+    }
+
+    pub fn set_function(mut self) -> Self {
+        self.modifiers |= FN;
+        self
     }
 
     pub fn function(self) -> bool {

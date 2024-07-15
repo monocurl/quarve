@@ -2225,7 +2225,9 @@ mod cursor {
             }
             else {
                 subtree.push_subview(&self.source, env, s);
-                NativeView::new(native::view::cursor::init_cursor_view(self.cursor, s), s)
+                unsafe {
+                    NativeView::new(native::view::cursor::init_cursor_view(self.cursor, s), s)
+                }
             }
         }
 

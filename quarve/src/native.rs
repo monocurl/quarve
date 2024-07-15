@@ -3,6 +3,8 @@ use crate::core::{WindowNativeCallback};
 use crate::event::{Event, EventModifiers, EventPayload, Key, KeyEvent, MouseEvent};
 use crate::util::geo::{Point, ScreenUnit};
 
+// FIXME, name of functions are inconsistent
+
 pub type WindowHandle = usize;
 
 #[repr(C)]
@@ -101,10 +103,9 @@ impl From<BufferEvent> for Event {
 
 /* back -> front call backs */
 mod callbacks {
-    use crate::core::{APP, MSlock, Slock, slock_force_main_owner, slock_main_owner};
+    use crate::core::{APP, MSlock, slock_force_main_owner, slock_main_owner};
     use crate::native::{BufferEvent, FatPointer};
     use crate::util::geo::ScreenUnit;
-    use crate::util::marker::MainThreadMarker;
 
     #[no_mangle]
     extern "C" fn front_will_spawn() {
@@ -148,9 +149,9 @@ mod callbacks {
     }
 
     #[no_mangle]
-    extern "C" fn front_execute_box(bx: FatPointer) {
+    extern "C" fn front_execute_fn_once(bx: FatPointer) {
         /* ownership taken */
-        let b: Box<dyn FnOnce(Slock<MainThreadMarker>) + Send> = unsafe {
+        let b: Box<dyn FnOnce(MSlock) + Send> = unsafe {
             std::mem::transmute(bx)
         };
 
@@ -160,6 +161,21 @@ mod callbacks {
         b(s.marker());
     }
 
+    #[no_mangle]
+    extern "C" fn front_execute_fn_mut(bx: FatPointer) {
+        let mut b: Box<dyn FnMut(MSlock)> = unsafe {
+            std::mem::transmute(bx)
+        };
+        let s = slock_main_owner();
+        b(s.marker());
+    }
+
+    #[no_mangle]
+    extern "C" fn front_free_fn_mut(bx: FatPointer) {
+        let _b: Box<dyn FnMut(MSlock)> = unsafe {
+            std::mem::transmute(bx)
+        };
+    }
 
     #[no_mangle]
     extern "C" fn front_set_screen_unit_binding(bx: FatPointer, value: f64) {
@@ -181,7 +197,6 @@ mod callbacks {
             std::mem::transmute(bx)
         };
     }
-
 
     #[no_mangle]
     extern "C" fn front_set_opt_string_binding(bx: FatPointer, value: *const u8) {
@@ -259,6 +274,7 @@ pub mod window {
     use std::ffi::{c_void, CString};
     use crate::core::{MSlock, WindowNativeCallback};
     use crate::native::{FatPointer, WindowHandle};
+    use crate::view::menu::Menu;
 
     extern "C" {
         fn back_window_init() -> *mut c_void;
@@ -270,6 +286,7 @@ pub mod window {
         fn back_window_set_min_size(window: *mut c_void, w: f64, h: f64);
         fn back_window_set_max_size(window: *mut c_void, w: f64, h: f64);
         fn back_window_set_fullscreen(window: *mut c_void, fs: bool);
+        fn back_window_set_menu(window: *mut c_void, menu: *mut c_void);
         // Note that this should NOT call front_window_should_close even though it's performed by front
         fn back_window_exit(window: *mut c_void);
         fn back_window_free(window: *mut c_void);
@@ -329,6 +346,12 @@ pub mod window {
     pub fn window_set_fullscreen(window: WindowHandle, fs: bool, _s: MSlock) {
         unsafe {
             back_window_set_fullscreen(window as *mut c_void, fs);
+        }
+    }
+
+    pub fn window_set_menu(window: WindowHandle, menu: &Menu, _s: MSlock) {
+        unsafe {
+            back_window_set_menu(window as *mut c_void, menu.backing);
         }
     }
 
@@ -476,14 +499,17 @@ pub mod view {
     }
 
     pub mod image {
-        use std::ffi::c_void;
+        use std::ffi::{c_void, CString};
+        use std::os::unix::ffi::OsStrExt;
+        use std::path::Path;
         use crate::core::MSlock;
         use crate::native::view::{back_view_image_init, back_view_image_size};
         use crate::util::geo::Size;
 
-        pub fn init_image_view(path: &[u8], _s: MSlock) -> *mut c_void {
+        pub fn init_image_view(path: &Path, _s: MSlock) -> *mut c_void {
             unsafe {
-                back_view_image_init(path.as_ptr())
+                let bytes = CString::new(path.as_os_str().as_bytes()).unwrap();
+                back_view_image_init(bytes.as_bytes().as_ptr())
             }
         }
 
@@ -597,7 +623,7 @@ pub mod view {
                         None
                     }
                     else {
-                        let cstr = unsafe { CStr::from_ptr(str as *const c_char) };
+                        let cstr = CStr::from_ptr(str as *const c_char);
                         Some(CString::from(cstr).into_string().unwrap())
                     };
                     binding.apply(SetAction::Set(str), s);
@@ -621,9 +647,10 @@ pub mod view {
             }
         }
 
-        pub fn dropdown_push(view: *mut c_void, option: &str, _s: MSlock) {
+        pub fn dropdown_push(view: *mut c_void, option: String, _s: MSlock) {
             unsafe {
-                back_view_dropdown_add(view, option.as_bytes().as_ptr())
+                let cstr = CString::new(option).unwrap();
+                back_view_dropdown_add(view, cstr.as_bytes().as_ptr())
             }
         }
 
@@ -631,6 +658,84 @@ pub mod view {
             unsafe {
                 back_view_dropdown_size(view)
             }
+        }
+    }
+}
+
+pub mod menu {
+    use std::ffi::{c_void, CString};
+    use crate::core::MSlock;
+    use crate::native::FatPointer;
+
+    extern "C" {
+        fn back_menu_init(title: *const u8) -> *mut c_void;
+        fn back_menu_add(menu: *mut c_void, item: *mut c_void);
+        fn back_menu_free(menu: *mut c_void);
+
+        // button
+        fn back_menu_button_init(title: *const u8, key: *const u8, modifier: u8) -> *mut c_void;
+        fn back_menu_button_set_title(button: *mut c_void, title: *const u8);
+        fn back_menu_button_set_action(button: *mut c_void, action: FatPointer);
+        fn back_menu_button_set_enabled(button: *mut c_void, enabled: u8);
+        fn back_menu_button_set_submenu(button: *mut c_void, menu: *mut c_void);
+        fn back_menu_button_free(button: *mut c_void);
+    }
+
+    pub fn menu_init(title: *const u8, _s: MSlock) -> *mut c_void {
+        unsafe {
+            back_menu_init(title)
+        }
+    }
+
+    pub fn menu_push(menu: *mut c_void, button: *mut c_void, _s: MSlock) {
+        unsafe {
+            back_menu_add(menu, button);
+        }
+    }
+
+    pub fn menu_free(menu: *mut c_void) {
+        unsafe {
+            back_menu_free(menu);
+        }
+    }
+
+    pub fn button_init(title: String, key: String, modifiers: u8, _s: MSlock) -> *mut c_void {
+        unsafe {
+            let title = CString::new(title).unwrap();
+            let key = CString::new(key).unwrap();
+            back_menu_button_init(title.as_bytes().as_ptr(), key.as_bytes().as_ptr(), modifiers)
+        }
+    }
+
+    pub fn button_set_title(button: *mut c_void, title: String, _s: MSlock) {
+        unsafe {
+            let title = CString::new(title).unwrap();
+            back_menu_button_set_title(button, title.as_bytes().as_ptr());
+        }
+    }
+
+    pub fn button_set_action(button: *mut c_void, action: impl FnMut(MSlock) + 'static, _s: MSlock) {
+        unsafe {
+            let boxed = Box::new(action) as Box<dyn FnMut(MSlock)>;
+            back_menu_button_set_action(button, std::mem::transmute(boxed));
+        }
+    }
+
+    pub fn button_set_enabled(button: *mut c_void, enabled: u8, _s: MSlock) {
+        unsafe {
+            back_menu_button_set_enabled(button, enabled);
+        }
+    }
+
+    pub fn button_set_submenu(button: *mut c_void, menu: *mut c_void, _s: MSlock) {
+        unsafe {
+            back_menu_button_set_submenu(button, menu);
+        }
+    }
+
+    pub fn button_free(button: *mut c_void) {
+        unsafe {
+            back_menu_button_free(button)
         }
     }
 }

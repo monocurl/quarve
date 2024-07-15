@@ -1,5 +1,7 @@
 #pragma once
 
+#import "util.h"
+
 /* front end */
 extern void front_will_spawn(void);
 
@@ -16,7 +18,13 @@ extern void front_window_dispatch_event(fat_pointer handle, buffer_event event);
 extern void front_window_will_fullscreen(fat_pointer p, uint8_t fs);
 
 // box: Box<dyn FnOnce(MSlock) + Send + 'static>
-extern void front_execute_box(fat_pointer box);
+extern void front_execute_fn_once(fat_pointer box);
+
+// box: Box<dyn FnMut(MSlock)>
+extern void front_execute_fn_mut(fat_pointer box);
+
+// box: Box<dyn FnMut(MSlock)>
+extern void front_free_fn_mut(fat_pointer box);
 
 // box: Box<dyn Fn(ScreenUnit, MSlock)>
 extern void front_set_screen_unit_binding(fat_pointer box, double value);
