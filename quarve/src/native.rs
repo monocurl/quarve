@@ -193,6 +193,7 @@ mod callbacks {
 
     #[no_mangle]
     extern "C" fn front_free_screen_unit_binding(bx: FatPointer) {
+        println!("Free Binding");
         let _b: Box<dyn Fn(ScreenUnit, MSlock)> = unsafe {
             std::mem::transmute(bx)
         };
@@ -274,7 +275,7 @@ pub mod window {
     use std::ffi::{c_void, CString};
     use crate::core::{MSlock, WindowNativeCallback};
     use crate::native::{FatPointer, WindowHandle};
-    use crate::view::menu::Menu;
+    use crate::view::menu::{Menu, WindowMenu};
 
     extern "C" {
         fn back_window_init() -> *mut c_void;
@@ -349,9 +350,9 @@ pub mod window {
         }
     }
 
-    pub fn window_set_menu(window: WindowHandle, menu: &Menu, _s: MSlock) {
+    pub fn window_set_menu(window: WindowHandle, menu: &mut WindowMenu, s: MSlock) {
         unsafe {
-            back_window_set_menu(window as *mut c_void, menu.backing);
+            back_window_set_menu(window as *mut c_void, menu.backing(s));
         }
     }
 
@@ -673,6 +674,8 @@ pub mod menu {
         fn back_menu_free(menu: *mut c_void);
 
         // button
+        fn back_menu_separator_init() -> *mut c_void;
+        fn back_menu_separator_free(view: *mut c_void);
         fn back_menu_button_init(title: *const u8, key: *const u8, modifier: u8) -> *mut c_void;
         fn back_menu_button_set_title(button: *mut c_void, title: *const u8);
         fn back_menu_button_set_action(button: *mut c_void, action: FatPointer);
@@ -681,9 +684,11 @@ pub mod menu {
         fn back_menu_button_free(button: *mut c_void);
     }
 
-    pub fn menu_init(title: *const u8, _s: MSlock) -> *mut c_void {
+
+    pub fn menu_init(title: String, _s: MSlock) -> *mut c_void {
         unsafe {
-            back_menu_init(title)
+            let title = CString::new(title).unwrap();
+            back_menu_init(title.as_bytes().as_ptr())
         }
     }
 
@@ -696,6 +701,18 @@ pub mod menu {
     pub fn menu_free(menu: *mut c_void) {
         unsafe {
             back_menu_free(menu);
+        }
+    }
+
+    pub fn separator_init(_s: MSlock) -> *mut c_void {
+        unsafe {
+            back_menu_separator_init()
+        }
+    }
+
+    pub fn separator_free(menu: *mut c_void) {
+        unsafe {
+            back_menu_separator_free(menu);
         }
     }
 
@@ -714,10 +731,9 @@ pub mod menu {
         }
     }
 
-    pub fn button_set_action(button: *mut c_void, action: impl FnMut(MSlock) + 'static, _s: MSlock) {
+    pub fn button_set_action(button: *mut c_void, action: Box<dyn FnMut(MSlock)>, _s: MSlock) {
         unsafe {
-            let boxed = Box::new(action) as Box<dyn FnMut(MSlock)>;
-            back_menu_button_set_action(button, std::mem::transmute(boxed));
+            back_menu_button_set_action(button, std::mem::transmute(action));
         }
     }
 

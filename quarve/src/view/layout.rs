@@ -633,15 +633,16 @@ mod vec_layout {
             }
 
             fn init_backing(&mut self, invalidator: WeakInvalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
-                self.root.push_subviews(subtree, env, s);
                 self.layout.init(invalidator, s);
 
                 if let Some(source) = backing_source {
                     self.root.take_backing(source.1.root, env, s);
+                    self.root.push_subviews(subtree, env, s);
 
                     source.0
                 }
                 else {
+                    self.root.push_subviews(subtree, env, s);
                     NativeView::layout_view(s)
                 }
             }

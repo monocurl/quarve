@@ -45,7 +45,7 @@ const SHIFT: u8 = 1 << 2;
 const FN: u8 = 1 << 3;
 const ALT_OPTION: u8 = 1 << 4;
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct EventModifiers {
     pub(crate) modifiers: u8
 }

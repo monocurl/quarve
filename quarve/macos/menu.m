@@ -26,7 +26,9 @@
 void*
 back_menu_init(uint8_t const* title)
 {
-    return [[NSMenu alloc] initWithTitle: [NSString stringWithUTF8String: (char const*) title]];
+    NSMenu* menu = [[NSMenu alloc] initWithTitle: [NSString stringWithUTF8String: (char const*) title]];
+    [menu setAutoenablesItems: NO];
+    return menu;
 }
 
 void
@@ -43,6 +45,20 @@ back_menu_free(void *_menu) {
 }
 
 // button
+void*
+back_menu_separator_init()
+{
+    NSMenuItem* separator = [NSMenuItem separatorItem];
+    return separator;
+}
+
+void
+back_menu_separator_free(void* _separator)
+{
+    NSMenuItem* separator = _separator;
+    [separator release];
+}
+
 void*
 back_menu_button_init(uint8_t const* title, uint8_t const* keyEquivalent, uint8_t modifiers)
 {
@@ -90,7 +106,7 @@ void
 back_menu_button_set_enabled(void *_button, uint8_t enabled)
 {
     Button* button = _button;
-    button.enabled = enabled != 0;
+    [button setEnabled: (enabled != 0)];
 }
 
 void

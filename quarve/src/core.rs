@@ -117,14 +117,8 @@ mod life_cycle {
 #[cfg(test)]
 pub(crate) use life_cycle::*;
 
-mod application {
-    use std::cell::RefCell;
-    use std::sync::Arc;
-    use crate::core::{MSlock, slock_main_owner};
-    use crate::core::life_cycle::setup_timing_thread;
-    use crate::core::window::{Window, WindowNativeCallback, WindowProvider};
-    use crate::native;
-    use crate::state::slock_cell::{MainSlockCell};
+mod environment {
+    use crate::view::menu::MenuChannel;
 
     pub trait Environment: 'static {
         type Const: 'static;
@@ -136,6 +130,56 @@ mod application {
         fn variable_env(&self) -> &Self::Variable;
         fn variable_env_mut(&mut self) -> &mut Self::Variable;
     }
+
+    pub trait StandardEnvironment: Environment where Self::Const: AsRef<StandardConstEnv> {}
+
+    pub struct StandardChannels {
+        pub undo_menu: MenuChannel,
+        pub redo_menu: MenuChannel,
+        pub cut_menu: MenuChannel,
+        pub copy_menu: MenuChannel,
+        pub paste_menu: MenuChannel,
+        pub delete_menu: MenuChannel,
+        pub select_all_menu: MenuChannel
+    }
+
+    pub struct StandardConstEnv {
+        pub channels: StandardChannels
+    }
+
+    impl StandardConstEnv {
+        pub fn new() -> Self {
+            Self {
+                channels: StandardChannels {
+                    undo_menu: MenuChannel::new(),
+                    redo_menu: MenuChannel::new(),
+                    cut_menu: MenuChannel::new(),
+                    copy_menu: MenuChannel::new(),
+                    paste_menu: MenuChannel::new(),
+                    delete_menu: MenuChannel::new(),
+                    select_all_menu: MenuChannel::new(),
+                }
+            }
+        }
+    }
+
+    impl AsRef<StandardConstEnv> for StandardConstEnv {
+        fn as_ref(&self) -> &StandardConstEnv {
+            self
+        }
+    }
+}
+pub use environment::*;
+
+mod application {
+    use std::cell::RefCell;
+    use std::sync::Arc;
+    use crate::core::{MSlock, slock_main_owner};
+    use crate::core::life_cycle::setup_timing_thread;
+    use crate::core::window::{Window, WindowNativeCallback, WindowProvider};
+    use crate::native;
+    use crate::state::slock_cell::{MainSlockCell};
+
 
     pub trait ApplicationProvider: 'static {
         fn will_spawn(&self, app: &Application, s: MSlock);
@@ -186,7 +230,7 @@ mod window {
     use std::sync::{Arc, Weak};
     use crate::core::{APP, Environment, MSlock, run_main_async, run_main_maybe_sync, Slock};
     use crate::core::window::invalidated_entry::InvalidatedEntry;
-    use crate::event::{Event, EventModifiers, EventPayload, EventResult};
+    use crate::event::{Event, EventPayload, EventResult};
     use crate::{native, util};
     use crate::native::{WindowHandle};
     use crate::native::window::{window_exit, window_set_menu};
@@ -196,7 +240,7 @@ mod window {
     use crate::util::geo::{Point, Rect, Size};
     use crate::view::{InnerViewBase};
     use crate::view::{ViewProvider};
-    use crate::view::menu::{Menu, MenuButton};
+    use crate::view::menu::{WindowMenu};
 
     mod invalidated_entry {
         use std::cmp::Ordering;
@@ -241,8 +285,6 @@ mod window {
     pub trait WindowProvider: 'static {
         type Env: Environment;
 
-
-
         fn title(&self, env: &<Self::Env as Environment>::Const, s: MSlock) -> impl Signal<Target=String>;
 
         fn size(&self, env: &<Self::Env as Environment>::Const, s: MSlock) -> (Size, Size, Size);
@@ -250,16 +292,8 @@ mod window {
         fn root(&self, env: &<Self::Env as Environment>::Const, s: MSlock)
                 -> impl ViewProvider<Self::Env, DownContext=()>;
 
-        fn menu(&self, _env: &<Self::Env as Environment>::Const, s: MSlock) -> Menu {
-            Menu::new(
-                "root",
-                s
-            )
-                .push(
-                    MenuButton::new("Hello", "", EventModifiers::new(), |_| {}, s),
-                    s
-                )
-        }
+        #[allow(unused_variables)]
+        fn menu(&self, env: &<Self::Env as Environment>::Const, s: MSlock) -> WindowMenu;
 
         #[allow(unused_variables)]
         fn is_open(&self, env: &<Self::Env as Environment>::Const, s: MSlock) -> impl Binding<Filterless<bool>> {
@@ -328,7 +362,7 @@ mod window {
 
         /* native */
         handle: WindowHandle,
-        menu: Menu,
+        menu: WindowMenu,
         content_view: Arc<MainSlockCell<dyn InnerViewBase<P::Env>>>
     }
 
@@ -378,6 +412,8 @@ mod window {
             b
         }
 
+        // exact order is pretty important
+        // (view depends on menu being before)
         fn init(this: &Arc<MainSlockCell<Self>>, s: MSlock) {
             let borrow = this.borrow_main(s);
 
@@ -387,11 +423,16 @@ mod window {
             /* apply window title  */
             Self::window_listeners(&this, borrow.deref(), s);
 
+            /* menu bar */
+            drop(borrow);
+            let mut borrow = this.borrow_mut_main(s);
+            Self::mount_menu(borrow.deref_mut(), s);
+
             /* mount content view */
+            drop(borrow);
+            let borrow = this.borrow_main(s);
             Self::mount_content_view(&this, s, borrow.deref());
 
-            /* menu bar */
-            Self::mount_menu(borrow.deref(), s);
         }
 
         // logic is a bit tricky for initial mounting
@@ -517,10 +558,10 @@ mod window {
             borrow.environment.set(Some(stolen_env));
         }
 
-        fn mount_menu(borrow: &Window<P>, s: MSlock) {
+        fn mount_menu(borrow: &mut Window<P>, s: MSlock) {
             let stolen_env = borrow.environment.take().unwrap();
 
-            window_set_menu(borrow.handle, &borrow.menu, s);
+            window_set_menu(borrow.handle, &mut borrow.menu, s);
 
             borrow.environment.set(Some(stolen_env));
         }

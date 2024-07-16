@@ -31,7 +31,9 @@ int performing_subview_insertion = 0;
 - (void)layout {
     Window* window = (Window*) self.window;
     NSRect content = [window contentRectForFrameRect:window.frame];
-    front_window_layout(window->handle, (double) NSWidth(content), (double) NSHeight(content));
+    if (window->handle.p0) {
+        front_window_layout(window->handle, (double) NSWidth(content), (double) NSHeight(content));
+    }
 
     [super layout];
 }
@@ -56,7 +58,7 @@ int performing_subview_insertion = 0;
 
     return self;
 }
-- (void) setHandle:(fat_pointer) _handle {
+- (void)setHandle:(fat_pointer) _handle {
     self->handle = _handle;
 
     ContentView *contentView = [[ContentView alloc] initWithFrame:NSMakeRect(0, 0, 100, 100)];
@@ -66,6 +68,10 @@ int performing_subview_insertion = 0;
 
 - (BOOL)windowShouldClose:(id)sender {
     return (BOOL) front_window_should_close(handle);
+}
+
+- (void)windowDidBecomeKey:(NSNotification*)notification {
+    [NSApp setMainMenu: self.menu];
 }
 
 - (void)dispatchEvent:(NSEvent*)event {
@@ -294,6 +300,43 @@ back_window_set_menu(void *_window, void *_menu)
     Window* window = _window;
     NSMenu* menu = _menu;
     window.menu = menu;
+
+    // add app specific section
+    NSMenuItem *appMenuItem = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
+    NSMenu *appMenu = [[NSMenu alloc] initWithTitle:@""];
+    [appMenuItem setSubmenu:appMenu];
+
+    [appMenu addItemWithTitle:[NSString stringWithFormat:@"About %@", [[NSProcessInfo processInfo] processName]]
+                       action:@selector(orderFrontStandardAboutPanel:) keyEquivalent:@""];
+    [appMenu addItem:[NSMenuItem separatorItem]];
+    [appMenu addItemWithTitle:[NSString stringWithFormat:@"Hide %@", [[NSProcessInfo processInfo] processName]]
+                       action:@selector(hide:) keyEquivalent:@"h"];
+    [appMenu addItemWithTitle:@"Hide Others" action:@selector(hideOtherApplications:) keyEquivalent:@"h"];
+    [[appMenu itemWithTitle:@"Hide Others"] setKeyEquivalentModifierMask:NSEventModifierFlagOption | NSEventModifierFlagCommand];
+    [appMenu addItemWithTitle:@"Show All" action:@selector(unhideAllApplications:) keyEquivalent:@""];
+    [appMenu addItem:[NSMenuItem separatorItem]];
+    [appMenu addItemWithTitle:[NSString stringWithFormat:@"Quit %@", [[NSProcessInfo processInfo] processName]]
+                       action:@selector(terminate:) keyEquivalent:@"q"];
+    [menu insertItem:appMenuItem atIndex:0];
+
+    // add window specific section
+    NSMenuItem *windowMenuItem = [[NSMenuItem alloc] initWithTitle:@"Window" action:nil keyEquivalent:@""];
+    NSMenu *windowMenu = [[NSMenu alloc] initWithTitle:@"Window"];
+    [windowMenuItem setSubmenu:windowMenu];
+
+    [windowMenu addItemWithTitle:@"Minimize" action:@selector(performMiniaturize:) keyEquivalent:@"m"];
+    [windowMenu addItemWithTitle:@"Zoom" action:@selector(performZoom:) keyEquivalent:@""];
+    [windowMenu addItem:[NSMenuItem separatorItem]];
+    [windowMenu addItemWithTitle:@"Bring All to Front" action:@selector(arrangeInFront:) keyEquivalent:@""];
+
+    NSMenuItem *lastItem = [menu itemAtIndex:[menu numberOfItems] - 1];
+    if ([[lastItem title] isEqualToString:@"Help"]) {
+        [menu insertItem:windowMenuItem atIndex:[menu numberOfItems] - 1];
+    } else {
+        [menu addItem:windowMenuItem];
+    }
+
+    [NSApp setMainMenu: menu];
 }
 
 void

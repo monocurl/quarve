@@ -472,7 +472,6 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         // a take backing call
         let first_mount = self.graph.window.is_none();
         self.graph.window = new_window;
-        self.graph.depth = depth;
 
         /* push environment */
         self.push_environment(e, s);
@@ -489,6 +488,10 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
             };
             self.graph.native_view = self.provider.init_backing(invalidator, &mut subtree, None, &mut handle, s);
         }
+
+        // it is important to do this after the init_backing call
+        // since otherwise there may be multiple show calls for the children
+        self.graph.depth = depth;
 
         /* main notifications to provider and subtree */
         self.provider.pre_show(s);
@@ -538,6 +541,11 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
     }
 
     fn invalidate(&self, this: Weak<MainSlockCell<dyn InnerViewBase<E>>>, s: Slock) {
+        // currently unmounted
+        if self.graph.depth == u32::MAX {
+            return;
+        }
+
         if let Some(window) = self.graph.window.as_ref().and_then(|window| window.upgrade()) {
             self.needs_layout_up.set(true);
             self.needs_layout_down.set(true);

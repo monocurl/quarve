@@ -1,26 +1,28 @@
-use quarve::core::{Application, Environment, launch, MSlock};
-use quarve::state::{Binding, Filterless, FixedSignal, Signal, Stateful, Store};
+use quarve::core::{Application, Environment, launch, MSlock, StandardConstEnv, StandardEnvironment, Window};
+use quarve::event::EventModifiers;
+use quarve::state::{FixedSignal, Signal, Store};
 use quarve::util::geo::{Alignment, HorizontalAlignment, Size};
 use quarve::view::{ViewProvider, IntoViewProvider, WeakInvalidator};
+use quarve::view::conditional::view_if;
 use quarve::view::control::{Button, Dropdown};
 use quarve::view::layout::*;
+use quarve::view::menu::{Menu, MenuButton, MenuSend, WindowMenu};
 use quarve::view::modifers::{Cursor, CursorModifiable, EnvironmentModifier, Frame, FrameModifiable, KeyListener, Layer, LayerModifiable, OffsetModifiable, PaddingModifiable, WhenModifiable};
 use quarve::view::scroll::ScrollView;
 use quarve::view::util::Color;
-use quarve_derive::StoreContainer;
 
-struct Env(());
+struct Env(StandardConstEnv, ());
 
 struct ApplicationProvider;
 
 struct WindowProvider;
 
 impl Environment for Env {
-    type Const = ();
+    type Const = StandardConstEnv;
     type Variable = ();
 
     fn root_environment() -> Self {
-        Env(())
+        Env(StandardConstEnv::new(), ())
     }
 
     fn const_env(&self) -> &Self::Const {
@@ -28,12 +30,16 @@ impl Environment for Env {
     }
 
     fn variable_env(&self) -> &Self::Variable {
-        &self.0
+        &()
     }
 
     fn variable_env_mut(&mut self) -> &mut Self::Variable {
-        &mut self.0
+        &mut self.1
     }
+}
+
+impl StandardEnvironment for Env {
+
 }
 
 impl quarve::core::ApplicationProvider for ApplicationProvider {
@@ -51,9 +57,22 @@ impl quarve::core::WindowProvider for WindowProvider {
         FixedSignal::new("Hello".to_owned())
     }
 
+    fn size(&self, _env: &<Env as Environment>::Const, _s: MSlock) -> (Size, Size, Size) {
+        (
+            Size::new(400.0, 400.0),
+            Size::new(400.0, 400.0),
+            Size::new(800.0, 1000.0)
+        )
+    }
+
     fn root(&self, env: &<Env as Environment>::Const, s: MSlock) -> impl ViewProvider<Env, DownContext=()> {
         let offset_y = Store::new(0.0);
         let selected = Store::new(None);
+
+        offset_y.listen(|y, s| {
+            println!("Offset: {:?}", *y);
+            true
+        }, s);
 
         let v1 = ScrollView::vertical(
             VStack::hetero_options(VStackOptions::default().align(HorizontalAlignment::Leading))
@@ -123,15 +142,25 @@ impl quarve::core::WindowProvider for WindowProvider {
 
         VStack::hetero()
             .push(v1)
-            .push(v2)
+            .push(
+                view_if(offset_y.map(|y| *y < 10.0, s),
+                    v2
+                        .menu_send(&env.channels.select_all_menu, |_|println!("Delete"))
+                )
+            )
             .into_view_provider(env, s)
     }
 
-    fn size(&self, _env: &<Env as Environment>::Const, _s: MSlock) -> (Size, Size, Size) {
-        (
-            Size::new(400.0, 400.0),
-            Size::new(400.0, 400.0),
-            Size::new(800.0, 1000.0)
+    fn menu(&self, env: &<Self::Env as Environment>::Const, s: MSlock) -> WindowMenu {
+        WindowMenu::standard(
+            env,
+            Menu::new("File")
+                .push(MenuButton::new("Test", "", EventModifiers::new(), |_| println!("Test Called")))
+            ,
+            Menu::new("Edit")
+            ,
+            Menu::new("View"),
+            Menu::new("Help")
         )
     }
 }
