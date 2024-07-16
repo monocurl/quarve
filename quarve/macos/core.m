@@ -41,7 +41,6 @@ int performing_subview_insertion = 0;
 - (BOOL)isFlipped {
     return YES;
 }
-
 @end
 
 @implementation Window

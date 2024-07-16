@@ -69,11 +69,6 @@ impl quarve::core::WindowProvider for WindowProvider {
         let offset_y = Store::new(0.0);
         let selected = Store::new(None);
 
-        offset_y.listen(|y, s| {
-            println!("Offset: {:?}", *y);
-            true
-        }, s);
-
         let v1 = ScrollView::vertical(
             VStack::hetero_options(VStackOptions::default().align(HorizontalAlignment::Leading))
                 .push(

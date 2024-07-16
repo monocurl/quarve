@@ -49,6 +49,8 @@ void*
 back_menu_separator_init()
 {
     NSMenuItem* separator = [NSMenuItem separatorItem];
+    // for corresponding free call
+    [separator retain];
     return separator;
 }
 
