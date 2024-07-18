@@ -5,14 +5,10 @@ pub mod view;
 pub mod util;
 pub mod core;
 pub mod resource;
+pub mod prelude;
 
 /* private */
 mod native;
-
-// pub mod prelude {
-//     pub use crate::core::*;
-//     pub use crate::state::*;
-// }
 
 #[cfg(target_os = "macos")]
 #[link(name = "Cocoa", kind = "framework")]

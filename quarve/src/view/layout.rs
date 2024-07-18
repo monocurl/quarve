@@ -370,6 +370,71 @@ mod vec_layout {
             }
         }
         pub use impl_binding_layout_extension;
+
+        #[macro_export]
+        macro_rules! impl_iterator_layout_extension {
+            (__declare_trait $t: ty, $trait_name: ident, $method_name: ident, $method_name_options: ident) => {
+                pub trait $trait_name<E> : IntoIterator where E: Environment, Self::Item: Send + 'static {
+                    fn $method_name<P>(self, map: impl FnMut(&Self::Item, MSlock) -> P + 'static)
+                        -> impl IntoViewProvider<E,
+                                        DownContext=<$t as VecLayoutProvider<E>>::DownContext,
+                                        UpContext=<$t as VecLayoutProvider<E>>::UpContext>
+                        where P: IntoViewProvider<E,
+                                        DownContext=<$t as VecLayoutProvider<E>>::SubviewDownContext,
+                                        UpContext=<$t as VecLayoutProvider<E>>::SubviewUpContext>;
+                    fn $method_name_options<P>(self, map: impl FnMut(&Self::Item, MSlock) -> P + 'static, options: <$t as FromOptions>::Options)
+                        -> impl IntoViewProvider<E,
+                                        DownContext=<$t as VecLayoutProvider<E>>::DownContext,
+                                        UpContext=<$t as VecLayoutProvider<E>>::UpContext>
+                        where P: IntoViewProvider<E,
+                                        DownContext=<$t as VecLayoutProvider<E>>::SubviewDownContext,
+                                        UpContext=<$t as VecLayoutProvider<E>>::SubviewUpContext>;
+                }
+            };
+            (__impl_trait $t: ty, $trait_name: ident, $method_name: ident, $method_name_options: ident) => {
+                fn $method_name<P>(self, map: impl FnMut(&Self::Item, MSlock) -> P + 'static)
+                    -> impl IntoViewProvider<E,
+                                    DownContext=<$t as VecLayoutProvider<E>>::DownContext,
+                                    UpContext=<$t as VecLayoutProvider<E>>::UpContext>
+                    where P: IntoViewProvider<E,
+                                    DownContext=<$t as VecLayoutProvider<E>>::SubviewDownContext,
+                                    UpContext=<$t as VecLayoutProvider<E>>::SubviewUpContext>
+                {
+                    VecSignalLayout::new(FixedSignal::new(self.into_iter().collect()), map, <$t as FromOptions>::from_options(<$t as FromOptions>::Options::default()))
+                }
+
+                fn $method_name_options<P>(self, map: impl FnMut(&Self::Item, MSlock) -> P + 'static, options: <$t as FromOptions>::Options)
+                    -> impl IntoViewProvider<E,
+                                    DownContext=<$t as VecLayoutProvider<E>>::DownContext,
+                                    UpContext=<$t as VecLayoutProvider<E>>::UpContext>
+                    where P: IntoViewProvider<E,
+                                    DownContext=<$t as VecLayoutProvider<E>>::SubviewDownContext,
+                                    UpContext=<$t as VecLayoutProvider<E>>::SubviewUpContext>
+                {
+                    VecSignalLayout::new(FixedSignal::new(self.into_iter().collect()), map, <$t as FromOptions>::from_options(options))
+                }
+            };
+
+            ($t: ty, $trait_name: ident, $method_name: ident, $method_name_options: ident, where E: $env: path) => {
+                impl_iterator_layout_extension!(__declare_trait  $t, $trait_name, $method_name, $method_name_options);
+
+                impl<E, I> $trait_name<E> for I where E: $env, I: IntoIterator, I::Item: Send + 'static
+                {
+                    impl_iterator_layout_extension!(__impl_trait $t, $trait_name, $method_name, $method_name_options);
+                }
+            };
+            ($t: ty, $trait_name: ident, $method_name: ident, $method_name_options: ident, where E = $env: ty) => {
+                mod {
+                    type E = $env;
+                    impl_iterator_layout_extension!(__declare_trait  $t, $trait_name, $method_name, $method_name_options);
+
+                    impl<I> $trait_name<E> for I where I: IntoIterator, I::Item: Send + 'static
+                    {
+                        impl_binding_layout_extension!(__impl_trait $t, $trait_name, $method_name, $method_name_options);
+                    }
+                }
+            }
+        }
     }
     pub use macros::*;
 
@@ -2180,25 +2245,29 @@ mod vec_layout {
     pub use flex::*;
 
     mod impls {
-        use crate::state::{Signal, StoreContainer, Binding, StateFilter};
+        use crate::state::{FixedSignal, Signal, StoreContainer, Binding, StateFilter};
         use crate::core::Environment;
         use crate::view::IntoViewProvider;
         use crate::core::MSlock;
-        use crate::{impl_hetero_layout, impl_binding_layout_extension, impl_signal_layout_extension};
+        use crate::{impl_hetero_layout, impl_binding_layout_extension, impl_signal_layout_extension, impl_iterator_layout_extension};
         use crate::view::layout::{VecSignalLayout, VecBindingLayout, VecLayoutProvider, VStack, ZStack, HStack, FlexStack};
         use crate::util::{FromOptions};
 
         impl_signal_layout_extension!(VStack, SignalVMap, sig_vmap, sig_vmap_options, where E: Environment);
         impl_binding_layout_extension!(VStack, BindingVMap, binding_vmap, binding_vmap_options, where E: Environment);
+        impl_iterator_layout_extension!(VStack, IteratorVMap, vmap, vmap_options, where E: Environment);
 
         impl_signal_layout_extension!(HStack, SignalHMap, sig_hmap, sig_hmap_options, where E: Environment);
         impl_binding_layout_extension!(HStack, BindingHMap, binding_hmap, binding_hmap_options, where E: Environment);
+        impl_iterator_layout_extension!(HStack, IteratorHMap, hmap, hmap_options, where E: Environment);
 
         impl_signal_layout_extension!(ZStack, SignalZMap, sig_zmap, sig_zmap_options, where E: Environment);
         impl_binding_layout_extension!(ZStack, BindingZMap, binding_zmap, binding_zmap_options, where E: Environment);
+        impl_iterator_layout_extension!(ZStack, IteratorZMap, zmap, zmap_options, where E: Environment);
 
         impl_signal_layout_extension!(FlexStack, SignalFlexMap, sig_flexmap, sig_flexmap_options, where E: Environment);
         impl_binding_layout_extension!(FlexStack, BindingFlexMap, binding_flexmap, binding_flexmap_options, where E: Environment);
+        impl_iterator_layout_extension!(FlexStack, IteratorFlexMap, flexmap, flexmap_options, where E: Environment);
 
         impl_hetero_layout!(VStack, vstack);
         pub use vstack;

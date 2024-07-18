@@ -43,12 +43,40 @@ impl<E, I> ScrollView<E, I, > where E: Environment, I: IntoViewProvider<E> {
         }
     }
 
+    pub fn vertical_with_binding(
+        content: I,
+        offset_y: impl Binding<Filterless<ScreenUnit>> + Clone
+    ) -> impl IntoViewProvider<E, UpContext=I::UpContext, DownContext=I::DownContext> {
+        ScrollViewBinding {
+            vertical: true,
+            horizontal: false,
+            binding_x: Store::new(0.0),
+            binding_y: offset_y,
+            content,
+            phantom: Default::default(),
+        }
+    }
+
     pub fn horizontal(content: I) -> Self {
         ScrollView {
             vertical: false,
             horizontal: true,
             content,
             phantom: PhantomData
+        }
+    }
+
+    pub fn horizontal_with_binding(
+        content: I,
+        offset_x: impl Binding<Filterless<ScreenUnit>> + Clone
+    ) -> impl IntoViewProvider<E, UpContext=I::UpContext, DownContext=I::DownContext> {
+        ScrollViewBinding {
+            vertical: false,
+            horizontal: true,
+            binding_x: offset_x,
+            binding_y: Store::new(0.0),
+            content,
+            phantom: Default::default(),
         }
     }
 
@@ -61,31 +89,17 @@ impl<E, I> ScrollView<E, I, > where E: Environment, I: IntoViewProvider<E> {
         }
     }
 
-    pub fn hoist_x_offset(
-        self,
-        x_offset: impl Binding<Filterless<ScreenUnit>> + Clone,
-    ) -> impl IntoViewProvider<E, UpContext=I::UpContext, DownContext=I::DownContext> {
-        self.hoist_offset(x_offset, Store::new(0.0).binding())
-    }
-
-    pub fn hoist_y_offset(
-        self,
-        y_offset: impl Binding<Filterless<ScreenUnit>> + Clone,
-    ) -> impl IntoViewProvider<E, UpContext=I::UpContext, DownContext=I::DownContext> {
-        self.hoist_offset(Store::new(0.0).binding(), y_offset)
-    }
-
-    pub fn hoist_offset(
-        self,
+    pub fn horizontal_and_vertical_with_binding(
+        content: I,
         x_offset: impl Binding<Filterless<ScreenUnit>> + Clone,
         y_offset: impl Binding<Filterless<ScreenUnit>> + Clone
     ) -> impl IntoViewProvider<E, UpContext=I::UpContext, DownContext=I::DownContext> {
         ScrollViewBinding {
-            vertical: self.vertical,
-            horizontal: self.horizontal,
+            vertical: true,
+            horizontal: true,
             binding_x: x_offset,
             binding_y: y_offset,
-            content: self.content,
+            content,
             phantom: Default::default(),
         }
     }

@@ -84,3 +84,4 @@ pub mod control;
 pub mod scroll;
 pub mod menu;
 mod focus;
+mod modal;

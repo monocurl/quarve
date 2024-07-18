@@ -69,7 +69,7 @@ impl quarve::core::WindowProvider for WindowProvider {
         let offset_y = Store::new(0.0);
         let selected = Store::new(None);
 
-        let v1 = ScrollView::vertical(
+        let v1 = ScrollView::vertical_with_binding(
             VStack::hetero_options(VStackOptions::default().align(HorizontalAlignment::Leading))
                 .push(
                     Button::new_with_label(
@@ -90,24 +90,24 @@ impl quarve::core::WindowProvider for WindowProvider {
                         .option("World")
                 )
                 .push(
-                    FixedSignal::new((0..14).collect())
-                        .sig_vmap(|x, s| {
+                    (0..14)
+                        .vmap(|x, _s| {
                             Color::white()
                                 .intrinsic(100, 100 + 10 * *x)
                                 .cursor(Cursor::Pointer)
                         })
                         .padding(10)
                         .border(Color::black(), 1)
-                )
+                ),
+            offset_y.binding()
         )
-            .hoist_y_offset(offset_y.binding())
             .frame(Frame::default()
                 .intrinsic(300, 300)
                     .unlimited_stretch()
                     .align(Alignment::Center)
             );
 
-        let v2 = ScrollView::vertical(
+        let v2 = ScrollView::vertical_with_binding(
                 VStack::hetero_options(VStackOptions::default().align(HorizontalAlignment::Leading))
                     .push(
                         Button::new_with_label(
@@ -118,17 +118,16 @@ impl quarve::core::WindowProvider for WindowProvider {
                             .offset_signal(FixedSignal::new(0.0), offset_y.signal())
                     )
                     .push(
-                        FixedSignal::new((0..14).collect())
-                            .sig_vmap(|x, s| {
+                        (0..14).vmap(|x, s| {
                                 Color::black()
                                     .intrinsic(100, 100 + 10 * *x)
                                     .cursor(Cursor::Pointer)
                             })
                             .padding(10)
                             .border(Color::white(), 1)
-                    )
+                    ),
+                offset_y.binding()
             )
-                .hoist_y_offset(offset_y.binding())
                 .frame(Frame::default()
                     .intrinsic(300, 300)
                     .unlimited_stretch()
