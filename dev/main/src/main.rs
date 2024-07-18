@@ -7,6 +7,7 @@ use quarve::view::conditional::view_if;
 use quarve::view::control::{Button, Dropdown};
 use quarve::view::layout::*;
 use quarve::view::menu::{Menu, MenuButton, MenuSend, WindowMenu};
+use quarve::view::modal::{MessageBoxButton, MessageBox};
 use quarve::view::modifers::{Cursor, CursorModifiable, EnvironmentModifier, Frame, FrameModifiable, KeyListener, Layer, LayerModifiable, OffsetModifiable, PaddingModifiable, WhenModifiable};
 use quarve::view::scroll::ScrollView;
 use quarve::view::util::Color;
@@ -75,7 +76,11 @@ impl quarve::core::WindowProvider for WindowProvider {
                     Button::new_with_label(
                         Color::black()
                             .intrinsic(100, 100),
-                        |_| println!("Clicked")
+                        |s| {
+                            MessageBox::new(None, None)
+                                .run(|o, _| println!("Option Selected {:?}", o));
+                            println!("Clicked")
+                        }
                     )
                         .offset_signal(FixedSignal::new(0.0), offset_y.signal())
                 )

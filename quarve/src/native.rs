@@ -103,9 +103,10 @@ impl From<BufferEvent> for Event {
 
 /* back -> front call backs */
 mod callbacks {
-    use crate::core::{APP, MSlock, slock_force_main_owner, slock_main_owner};
+    use crate::core::{APP, MSlock, slock_force_main_owner, slock_main_owner, SlockOwner};
     use crate::native::{BufferEvent, FatPointer};
     use crate::util::geo::ScreenUnit;
+    use crate::util::marker::MainThreadMarker;
 
     #[no_mangle]
     extern "C" fn front_will_spawn() {
@@ -151,14 +152,13 @@ mod callbacks {
     #[no_mangle]
     extern "C" fn front_execute_fn_once(bx: FatPointer) {
         /* ownership taken */
-        let b: Box<dyn FnOnce(MSlock) + Send> = unsafe {
+        let b: Box<dyn FnOnce(SlockOwner<MainThreadMarker>) + Send> = unsafe {
             std::mem::transmute(bx)
         };
 
         /* main thread only */
         let s = slock_main_owner();
-
-        b(s.marker());
+        b(s);
     }
 
     #[no_mangle]
@@ -225,7 +225,7 @@ mod callbacks {
 // FIXME use libc types at some point
 pub mod global {
     use std::cell::Cell;
-    use crate::core::Slock;
+    use crate::core::{Slock, SlockOwner};
     use crate::native::FatPointer;
     use crate::util::marker::MainThreadMarker;
 
@@ -249,12 +249,13 @@ pub mod global {
         }
     }
 
+    #[inline]
     pub fn is_main() -> bool {
         MAIN.get()
     }
 
-    pub fn run_main<F: for<'a> FnOnce(Slock<'a, MainThreadMarker>) + Send + 'static>(f: F) {
-        let b: Box<dyn for<'a> FnOnce(Slock<'a, MainThreadMarker>)> = Box::new(f);
+    pub fn run_main_slock_owner(f: impl FnOnce(SlockOwner<MainThreadMarker>) + Send + 'static) {
+        let b: Box<dyn FnOnce(SlockOwner<MainThreadMarker>) + Send> = Box::new(f);
         let b = unsafe {
             std::mem::transmute(b)
         };
@@ -262,6 +263,10 @@ pub mod global {
         unsafe {
             back_run_main(b);
         }
+    }
+
+    pub fn run_main<F>(f: F) where F: for<'a> FnOnce(Slock<'a, MainThreadMarker>) + Send + 'static {
+        run_main_slock_owner(move |s| f(s.marker()))
     }
 
     pub fn exit() {
@@ -371,6 +376,7 @@ pub mod window {
 
 // view methods
 pub mod view {
+    use std::ffi;
     use std::ffi::{c_ulonglong, c_void};
     use crate::core::MSlock;
     use crate::native::FatPointer;
@@ -418,6 +424,13 @@ pub mod view {
         fn back_view_dropdown_clear(_view: *mut c_void);
         fn back_view_dropdown_select(_view: *mut c_void, selection: *const u8) -> u8;
         fn back_view_dropdown_size(_view: *mut c_void) -> Size;
+
+        /* message box */
+        fn back_message_box_init(title: *const u8, message: *const u8) -> *mut c_void;
+        fn back_message_box_add_button(mb: *mut c_void, button_type: u8);
+
+        // returns index that was clicked
+        fn back_message_box_run(mb: *mut c_void) -> ffi::c_int;
     }
 
     pub fn view_clear_children(view: *mut c_void, _s: MSlock) {
@@ -641,10 +654,19 @@ pub mod view {
 
         pub fn dropdown_select(view: *mut c_void, option: Option<&str>, _s: MSlock) -> bool {
             unsafe {
-                back_view_dropdown_select(
-                    view,
-                    option.map(|s| s.as_bytes().as_ptr()).unwrap_or(0 as *const u8)
-                ) != 0
+                if let Some(s) = option {
+                    let cstr = CString::new(s).unwrap();
+                    back_view_dropdown_select(
+                        view,
+                        cstr.as_bytes().as_ptr()
+                    ) != 0
+                }
+                else {
+                    back_view_dropdown_select(
+                        view,
+                        0 as *const u8
+                    ) != 0
+                }
             }
         }
 
@@ -658,6 +680,36 @@ pub mod view {
         pub fn dropdown_size(view: *mut c_void, _s: MSlock) -> Size {
             unsafe {
                 back_view_dropdown_size(view)
+            }
+        }
+    }
+
+    pub mod message_box {
+        use std::ffi::{c_void, CString};
+        use crate::core::MSlock;
+        use crate::native::view::{back_message_box_add_button, back_message_box_init, back_message_box_run};
+
+        pub fn init_message_box(title: Option<String>, message: Option<String>, _s: MSlock) -> *mut c_void {
+            unsafe {
+                let title_cstr = title.map(|s| CString::new(s).unwrap());
+                let message_cstr = message.map(|s| CString::new(s).unwrap());
+                back_message_box_init(
+                    title_cstr.as_ref().map(|c| c.as_bytes().as_ptr()).unwrap_or(0 as *const u8),
+                    message_cstr.as_ref().map(|c| c.as_bytes().as_ptr()).unwrap_or(0 as *const u8)
+                )
+            }
+        }
+
+        pub fn message_box_add(mb: *mut c_void, button_type: u8, _s: MSlock) {
+            unsafe {
+                back_message_box_add_button(mb, button_type)
+            }
+        }
+
+        // takes ownership
+        pub fn message_box_run(mb: *mut c_void) -> i32 {
+            unsafe {
+                back_message_box_run(mb) as i32
             }
         }
     }

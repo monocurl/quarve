@@ -50,7 +50,7 @@ impl<E, I> ScrollView<E, I, > where E: Environment, I: IntoViewProvider<E> {
         ScrollViewBinding {
             vertical: true,
             horizontal: false,
-            binding_x: Store::new(0.0),
+            binding_x: Store::new(0.0).binding(),
             binding_y: offset_y,
             content,
             phantom: Default::default(),
@@ -74,7 +74,7 @@ impl<E, I> ScrollView<E, I, > where E: Environment, I: IntoViewProvider<E> {
             vertical: false,
             horizontal: true,
             binding_x: offset_x,
-            binding_y: Store::new(0.0),
+            binding_y: Store::new(0.0).binding(),
             content,
             phantom: Default::default(),
         }

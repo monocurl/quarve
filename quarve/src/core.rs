@@ -41,7 +41,7 @@ mod debug_stats {
             if hang > Duration::from_millis(500) {
                 println!("quarve: state locked attained for {} milliseconds. \
                     This may cause visible stalls; \
-                    please try to release the state lock as soon as the transaction is complete.",
+                    try to release the state lock as soon as the transaction is complete.",
                          hang.as_millis());
             }
         }

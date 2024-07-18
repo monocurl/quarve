@@ -38,18 +38,27 @@ mod file_picker {
 pub use file_picker::*;
 
 mod message_box {
-    pub enum ButtonType {
+    use crate::core::{MSlock, slock_main_owner};
+    use crate::native::global::run_main_slock_owner;
+    use crate::native::view::message_box::{init_message_box, message_box_add, message_box_run};
+
+    #[derive(Copy, Clone, Debug)]
+    #[repr(u8)]
+    pub enum MessageBoxButton {
         Ok = 1,
-        Cancel = 2
+        Cancel = 2,
+        Delete = 3
     }
 
     pub struct MessageBox<'a, 'b> {
         title: Option<&'a str>,
         message: Option<&'b str>,
-        buttons: Vec<ButtonType>
+        buttons: Vec<MessageBoxButton>
     }
 
     impl<'a, 'b> MessageBox<'a, 'b> {
+        /// NOTE: at this time you may receive warnings about
+        /// acquiring the state lock for too long. We are looking into better options
         pub fn new(title: Option<&'a str>, message: Option<&'b str>) -> Self {
             Self {
                 title,
@@ -58,20 +67,37 @@ mod message_box {
             }
         }
 
-        pub fn button(mut self, button: ButtonType) -> Self {
+        pub fn button(mut self, button: MessageBoxButton) -> Self {
             self.buttons.push(button);
             self
         }
 
-        pub fn run(self) -> ButtonType {
+        pub fn run(self, callback: impl FnOnce(MessageBoxButton, MSlock) + Send + 'static) {
             let buttons = if self.buttons.is_empty() {
-                Vec::new()
+                vec![MessageBoxButton::Ok]
             }
             else {
                 self.buttons
             };
 
-            todo!()
+            // more than 3 rarely makes sense anyway
+            assert!(buttons.len() <= 3);
+
+            let title = self.title.map(|t| t.to_string());
+            let message = self.message.map(|t| t.to_string());
+            run_main_slock_owner(move |s| {
+                let mb = init_message_box(title, message, s.marker());
+                for button in &buttons {
+                    message_box_add(mb, *button as u8, s.marker());
+                }
+
+                // don't hold it during the actual message box
+                drop(s);
+                let res = message_box_run(mb);
+                let s = slock_main_owner();
+                callback(buttons[res as usize], s.marker());
+            });
         }
     }
 }
+pub use message_box::*;

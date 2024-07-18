@@ -17,7 +17,7 @@ extern void front_window_dispatch_event(fat_pointer handle, buffer_event event);
 // fp: &'static dyn WindowBase
 extern void front_window_will_fullscreen(fat_pointer p, uint8_t fs);
 
-// box: Box<dyn FnOnce(MSlock) + Send + 'static>
+// box: Box<dyn FnOnce(MainThreadMarker) + Send + 'static>
 extern void front_execute_fn_once(fat_pointer box);
 
 // box: Box<dyn FnMut(MSlock)>

@@ -14,6 +14,7 @@ fn build() {
         .file("macos/button_view.m")
         .file("macos/dropdown_view.m")
         .file("macos/menu.m")
+        .file("macos/message_box.m")
         .compile("backend");
 }
 
