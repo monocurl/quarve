@@ -808,6 +808,76 @@ pub mod menu {
     }
 }
 
+pub mod file_picker {
+    use std::ffi::{c_char, c_void, CStr, CString};
+    use std::path::{Path, PathBuf};
+    use crate::core::MSlock;
+
+    extern "C" {
+        fn back_file_open_picker_init(allowed_mask: *const u8) -> *mut c_void;
+        fn back_file_open_picker_run(op: *mut c_void) -> *const u8;
+        fn back_file_open_picker_free(op: *mut c_void);
+
+        fn back_file_save_picker_init(allowed_mask: *const u8) -> *mut c_void;
+        fn back_file_save_picker_run(op: *mut c_void) -> *const u8;
+        fn back_file_save_picker_free(op: *mut c_void);
+    }
+
+    pub fn open_panel_init(mask: Option<String>, _s: MSlock) -> *mut c_void {
+        unsafe {
+            let cstr = mask.map(|s| CString::new(s).unwrap());
+            back_file_open_picker_init(cstr.as_ref().map(|c| c.as_bytes().as_ptr()).unwrap_or(0 as *const u8))
+        }
+    }
+
+    pub fn open_panel_run(op: *mut c_void) -> Option<PathBuf> {
+        unsafe {
+            let res = back_file_open_picker_run(op);
+            if res.is_null() {
+                None
+            }
+            else {
+                let c = CStr::from_ptr(res as *const c_char);
+                let cstring = CString::from(c);
+                Some(PathBuf::from(cstring.into_string().unwrap()))
+            }
+        }
+    }
+
+    pub fn open_panel_free(op: *mut c_void, _s: MSlock) {
+        unsafe {
+            back_file_open_picker_free(op);
+        }
+    }
+
+    pub fn save_panel_init(mask: Option<String>, _s: MSlock) -> *mut c_void {
+        unsafe {
+            let cstr = mask.map(|s| CString::new(s).unwrap());
+            back_file_save_picker_init(cstr.as_ref().map(|c| c.as_bytes().as_ptr()).unwrap_or(0 as *const u8))
+        }
+    }
+
+    pub fn save_panel_run(sp: *mut c_void) -> Option<PathBuf> {
+        unsafe {
+            let res = back_file_save_picker_run(sp);
+            if res.is_null() {
+                None
+            }
+            else {
+                let c = CStr::from_ptr(res as *const c_char);
+                let cstring = CString::from(c);
+                Some(PathBuf::from(cstring.into_string().unwrap()))
+            }
+        }
+    }
+
+    pub fn save_panel_free(sp: *mut c_void, _s: MSlock) {
+        unsafe {
+            back_file_save_picker_free(sp);
+        }
+    }
+}
+
 pub mod path {
     #[cfg(not(debug_assertions))]
     use std::path::PathBuf;

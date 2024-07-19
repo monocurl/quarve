@@ -1,37 +1,64 @@
 mod file_picker {
     use std::path::PathBuf;
+    use crate::core::{MSlock, slock_main_owner};
+    use crate::native::file_picker::{open_panel_free, open_panel_init, open_panel_run, save_panel_free, save_panel_init, save_panel_run};
+    use crate::native::global::run_main_slock_owner;
 
-    pub struct SavePicker<'a> {
-        file_type: &'a str
+    pub struct SaveFilePicker<'a> {
+        file_type: Option<&'a str>
     }
 
-    impl<'a> SavePicker<'a> {
-        pub fn new(content_types: &'a str) -> Self {
+    impl<'a> SaveFilePicker<'a> {
+        pub fn new() -> Self {
             Self {
-                file_type: content_types,
+                file_type: None
             }
         }
 
-        pub fn run(self) -> Option<PathBuf> {
+        pub fn content_types(mut self, types: &'a str) -> Self {
+            self.file_type = Some(types);
+            self
+        }
 
-            None
+        pub fn run(self, callback: impl FnOnce(Option<PathBuf>, MSlock) + Send + 'static) {
+            let file_type = self.file_type.map(|s| s.to_string());
+            run_main_slock_owner(move |so| {
+                let modal = save_panel_init(file_type, so.marker());
+                drop(so);
+                let res = save_panel_run(modal);
+                let so = slock_main_owner();
+                save_panel_free(modal, so.marker());
+                callback(res, so.marker());
+            })
         }
     }
 
-    pub struct OpenPicker<'a> {
-        file_type: &'a str
+    pub struct OpenFilePicker<'a> {
+        file_type: Option<&'a str>
     }
 
-    impl<'a> OpenPicker<'a> {
-        // Separated by pipe
-        pub fn new(content_types: &'a str) -> Self {
+    impl<'a> OpenFilePicker<'a> {
+        pub fn new() -> Self {
             Self {
-                file_type: content_types,
+                file_type: None
             }
         }
 
-        pub fn run(self) -> Option<PathBuf> {
-            None
+        pub fn content_types(mut self, types: &'a str) -> Self {
+            self.file_type = Some(types);
+            self
+        }
+
+        pub fn run(self, callback: impl FnOnce(Option<PathBuf>, MSlock) + Send + 'static) {
+            let file_type = self.file_type.map(|s| s.to_string());
+            run_main_slock_owner(move |so| {
+                let modal = open_panel_init(file_type, so.marker());
+                drop(so);
+                let res = open_panel_run(modal);
+                let so = slock_main_owner();
+                open_panel_free(modal, so.marker());
+                callback(res, so.marker());
+            })
         }
     }
 }
@@ -91,9 +118,10 @@ mod message_box {
                     message_box_add(mb, *button as u8, s.marker());
                 }
 
-                // don't hold it during the actual message box
+                // don't hold it during the actual message box (which may take time)
                 drop(s);
                 let res = message_box_run(mb);
+                // reacquire state lock for the callback
                 let s = slock_main_owner();
                 callback(buttons[res as usize], s.marker());
             });
