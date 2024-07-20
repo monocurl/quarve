@@ -1,6 +1,7 @@
 mod general_layout {
     use std::marker::PhantomData;
     use crate::core::{Environment, MSlock};
+    use crate::event::{Event, EventResult};
     use crate::state::slock_cell::{MainSlockCell};
     use crate::util::geo::{Rect, Size};
     use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, Subtree, ViewProvider};
@@ -57,6 +58,10 @@ mod general_layout {
             env: &mut EnvRef<E>,
             s: MSlock
         ) -> Rect;
+        
+        fn handle_event(&self, e: &Event, s: MSlock) -> EventResult {
+            EventResult::NotHandled
+        }
     }
 
     pub struct LayoutViewProvider<E, L>(L, PhantomData<MainSlockCell<E>>) where E: Environment, L: LayoutProvider<E>;
@@ -109,6 +114,10 @@ mod general_layout {
         fn layout_down(&mut self, subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
             let rect = self.0.layout_down(subtree, frame, layout_context, env, s);
             (rect, rect)
+        }
+
+        fn handle_event(&self, e: &Event, s: MSlock) -> EventResult {
+            self.0.handle_event(e, s)
         }
     }
 
@@ -2284,3 +2293,4 @@ mod vec_layout {
     pub use impls::*;
 }
 pub use vec_layout::*;
+    use crate::event::{Event, EventResult};
