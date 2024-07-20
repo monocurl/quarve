@@ -3,7 +3,6 @@ use crate::core::{Environment, MSlock};
 use crate::event::{Event, EventResult};
 use crate::util::geo::{Rect, Size};
 use crate::view::{EnvRef, InnerView, IntoViewProvider, WeakInvalidator, NativeView, Subtree, View};
-use crate::view::util::SizeContainer;
 
 pub trait ViewProvider<E>: Sized + 'static
     where E: Environment
@@ -19,16 +18,6 @@ pub trait ViewProvider<E>: Sized + 'static
     fn into_view(self, s: MSlock) -> View<E, Self>
     {
         View(InnerView::new(self, s))
-    }
-
-    fn sizes(&mut self, s: MSlock) -> SizeContainer {
-        SizeContainer::new(
-            self.intrinsic_size(s),
-            self.xsquished_size(s),
-            self.xstretched_size(s),
-            self.ysquished_size(s),
-            self.ystretched_size(s)
-        )
     }
 
     fn intrinsic_size(&mut self, s: MSlock) -> Size;

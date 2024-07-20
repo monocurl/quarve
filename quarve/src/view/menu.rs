@@ -26,17 +26,17 @@ mod window_menu {
             }
         }
 
-        pub fn standard(env: &StandardConstEnv, file: Menu, mut edit: Menu, view: Menu, help: Menu) -> Self {
+        pub fn standard(env: &StandardConstEnv, file: Menu, mut edit: Menu, view: Menu, help: Menu, s: MSlock) -> Self {
             edit = edit
-                .push(MenuReceiver::new(&env.channels.undo_menu, "Undo", "z", EventModifiers::new().set_command()))
-                .push(MenuReceiver::new(&env.channels.redo_menu, "Redo", "Z", EventModifiers::new().set_shift().set_command()))
+                .push(MenuReceiver::new(&env.channels.undo_menu, "Undo", "z", EventModifiers::new().set_command(), s))
+                .push(MenuReceiver::new(&env.channels.redo_menu, "Redo", "Z", EventModifiers::new().set_shift().set_command(), s))
                 .push(MenuSeparator::new())
-                .push(MenuReceiver::new(&env.channels.cut_menu, "Cut", "x", EventModifiers::new().set_command()))
-                .push(MenuReceiver::new(&env.channels.copy_menu, "Copy", "c", EventModifiers::new().set_command()))
-                .push(MenuReceiver::new(&env.channels.paste_menu, "Paste", "v", EventModifiers::new().set_command()))
-                .push(MenuReceiver::new(&env.channels.delete_menu, "Delete", "", EventModifiers::new()))
+                .push(MenuReceiver::new(&env.channels.cut_menu, "Cut", "x", EventModifiers::new().set_command(), s))
+                .push(MenuReceiver::new(&env.channels.copy_menu, "Copy", "c", EventModifiers::new().set_command(), s))
+                .push(MenuReceiver::new(&env.channels.paste_menu, "Paste", "v", EventModifiers::new().set_command(), s))
+                .push(MenuReceiver::new(&env.channels.delete_menu, "Delete", "", EventModifiers::new(), s))
                 .push(MenuSeparator::new())
-                .push(MenuReceiver::new(&env.channels.select_all_menu, "Select All", "a", EventModifiers::new().set_command()));
+                .push(MenuReceiver::new(&env.channels.select_all_menu, "Select All", "a", EventModifiers::new().set_command(), s));
 
             WindowMenu::new()
                 .push(file)
@@ -117,6 +117,7 @@ mod menu_button_backing {
     use crate::native::menu::button_free;
 
     pub(super) struct MenuButtonBacking {
+        // for send compliance
         pub backing: *mut c_void
     }
 
@@ -221,12 +222,12 @@ mod menu_separator {
 pub use menu_separator::*;
 
 mod menu_receiver {
-    use std::cell::RefCell;
     use std::ffi::c_void;
-    use std::rc::Rc;
+    use std::sync::Arc;
     use crate::core::MSlock;
     use crate::event::EventModifiers;
     use crate::native::menu::{button_init, button_set_enabled};
+    use crate::state::slock_cell::{MainSlockCell};
     use crate::view::menu::menu_button_backing::MenuButtonBacking;
     use crate::view::menu::{MenuChannel, MenuItem};
 
@@ -239,20 +240,20 @@ mod menu_receiver {
     }
 
     pub struct MenuReceiver {
-        inner: Rc<RefCell<MenuReceiverInner>>,
+        inner: Arc<MainSlockCell<MenuReceiverInner>>,
     }
 
     impl MenuReceiver {
-        pub fn new(channel: &MenuChannel, name: impl Into<String>, keys: impl Into<String>, modifiers: EventModifiers) -> Self {
-            let inner = Rc::new(RefCell::new(MenuReceiverInner {
+        pub fn new(channel: &MenuChannel, name: impl Into<String>, keys: impl Into<String>, modifiers: EventModifiers, s: MSlock) -> Self {
+            let inner = Arc::new(MainSlockCell::new_main(MenuReceiverInner {
                 backing: MenuButtonBacking { backing: 0 as *mut c_void },
                 default_name: name.into(),
                 key: keys.into(),
                 modifiers,
                 currently_set: false,
-            }));
-            assert!(channel.receiver.take().is_none(), "Channel already in used");
-            channel.receiver.set(Some(Rc::downgrade(&inner)));
+            }, s));
+            assert!(channel.receiver.borrow(s).receiver.is_none(), "Channel already in used");
+            channel.receiver.borrow_mut(s).receiver = Some(Arc::downgrade(&inner));
 
             MenuReceiver {
                 inner,
@@ -262,7 +263,7 @@ mod menu_receiver {
 
     unsafe impl MenuItem for MenuReceiver {
         fn backing(&mut self, s: MSlock) -> *mut c_void {
-            let mut borrow = self.inner.borrow_mut();
+            let mut borrow = self.inner.borrow_mut_main(s);
             let backing = button_init(borrow.default_name.clone(), borrow.key.clone(), borrow.modifiers.modifiers, s);
             button_set_enabled(backing, 0, s);
             borrow.backing.backing = backing;
@@ -273,66 +274,72 @@ mod menu_receiver {
 pub use menu_receiver::*;
 
 mod menu_channel {
-    use std::cell::{Cell, RefCell};
-    use std::rc::{Rc, Weak};
-    use crate::core::MSlock;
+    use std::sync::{Arc, Weak};
+    use crate::core::{MSlock};
     use crate::native::menu::{button_set_action, button_set_enabled, button_set_title};
+    use crate::state::slock_cell::{MainSlockCell, SlockCell};
     use crate::view::menu::menu_receiver::MenuReceiverInner;
 
     pub(super) struct MenuChannelInner {
-        pub receiver: Option<Weak<RefCell<MenuReceiverInner>>>
+        pub receiver: Option<Weak<MainSlockCell<MenuReceiverInner>>>
     }
 
     pub struct MenuChannel {
-        pub(super) receiver: Rc<Cell<Option<Weak<RefCell<MenuReceiverInner>>>>>
+        pub(super) receiver: Arc<SlockCell<MenuChannelInner>>
     }
 
     impl MenuChannel {
         pub fn new() -> MenuChannel {
             MenuChannel {
-                receiver: Rc::new(Cell::new(None)),
+                receiver: Arc::new(SlockCell::new(MenuChannelInner {
+                    receiver: None,
+                }))
             }
         }
 
-        pub(super) fn clone(&self) -> MenuChannel {
+        pub(crate) fn clone(&self) -> MenuChannel {
             MenuChannel {
                 receiver: self.receiver.clone()
             }
         }
 
         pub fn set(&mut self, action: Box<dyn FnMut(MSlock)>, title: Option<String>, s: MSlock) {
-            let inner = self.receiver.take();
+            let inner = self.receiver.borrow(s);
 
             {
-                let upgraded = inner.as_ref().and_then(|i| i.upgrade())
+                let upgraded = inner.receiver.as_ref().and_then(|i| i.upgrade())
                     .expect("Menu Channels should have a sole active receiver in place at all times. \
                               There are currently none mounted for this channel!");
-                let mut borrow = upgraded.borrow_mut();
+                let mut borrow = upgraded.borrow_mut_main(s);
                 assert!(!borrow.currently_set, "MenuChannel already mounted!");
                 borrow.currently_set = true;
                 button_set_title(borrow.backing.backing, title.unwrap_or_else(|| borrow.default_name.clone()), s);
                 button_set_enabled(borrow.backing.backing, 1, s);
                 button_set_action(borrow.backing.backing, action, s);
             }
+        }
 
-            self.receiver.set(inner);
+        pub fn is_set(&self, s: MSlock) -> bool {
+            let inner = self.receiver.borrow(s);
+            inner.receiver
+                .as_ref().and_then(|i| i.upgrade())
+                .map(|a| a.borrow_mut_main(s).currently_set)
+                .unwrap_or(false)
         }
 
         pub fn unset(&mut self, s: MSlock) {
-            let inner = self.receiver.take();
+            let inner = self.receiver.borrow(s);
 
             {
-                let upgraded = inner.as_ref().and_then(|i| i.upgrade())
+                let upgraded = inner.receiver.as_ref().and_then(|i| i.upgrade())
                     .expect("Menu Channels should have a sole active receiver in place at all times. \
                               There are currently none mounted for this channel!");
-                let mut borrow = upgraded.borrow_mut();
+                let mut borrow = upgraded.borrow_mut_main(s);
                 assert!(borrow.currently_set, "MenuChannel not currently mounted!");
                 borrow.currently_set = false;
                 button_set_enabled(borrow.backing.backing, 0, s);
                 button_set_title(borrow.backing.backing, borrow.default_name.clone(), s);
             }
-
-            self.receiver.set(inner);
         }
     }
 }

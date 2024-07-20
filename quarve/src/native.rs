@@ -280,7 +280,7 @@ pub mod window {
     use std::ffi::{c_void, CString};
     use crate::core::{MSlock, WindowNativeCallback};
     use crate::native::{FatPointer, WindowHandle};
-    use crate::view::menu::{Menu, WindowMenu};
+    use crate::view::menu::{WindowMenu};
 
     extern "C" {
         fn back_window_init() -> *mut c_void;
@@ -810,7 +810,7 @@ pub mod menu {
 
 pub mod file_picker {
     use std::ffi::{c_char, c_void, CStr, CString};
-    use std::path::{Path, PathBuf};
+    use std::path::{PathBuf};
     use crate::core::MSlock;
 
     extern "C" {

@@ -15,6 +15,8 @@ pub mod slock_cell {
 
     pub struct SlockCell<T>(RefCell<T>) where T: Send + ?Sized;
     struct DropHalter;
+
+    // FIXME at some point have a constructor without slockcell that is runtime checked
     pub struct MainSlockCell<T>(DropHalter, RefCell<T>) where T: ?Sized;
 
     impl<T> SlockCell<T> where T: Send {

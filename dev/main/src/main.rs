@@ -1,4 +1,4 @@
-use quarve::core::{Application, Environment, launch, MSlock, StandardConstEnv, StandardEnvironment, Window};
+use quarve::core::{Application, Environment, launch, MSlock, StandardConstEnv};
 use quarve::event::EventModifiers;
 use quarve::state::{FixedSignal, Signal, Store};
 use quarve::util::geo::{Alignment, HorizontalAlignment, Size};
@@ -7,9 +7,9 @@ use quarve::view::conditional::view_if;
 use quarve::view::control::{Button, Dropdown};
 use quarve::view::layout::*;
 use quarve::view::menu::{Menu, MenuButton, MenuSend, WindowMenu};
-use quarve::view::modal::{MessageBoxButton, MessageBox, OpenFilePicker, SaveFilePicker};
-use quarve::view::modifers::{Cursor, CursorModifiable, EnvironmentModifier, Frame, FrameModifiable, KeyListener, Layer, LayerModifiable, OffsetModifiable, PaddingModifiable, WhenModifiable};
+use quarve::view::modifers::{Cursor, CursorModifiable, EnvironmentModifier, Frame, FrameModifiable, OffsetModifiable, PaddingModifiable};
 use quarve::view::scroll::ScrollView;
+use quarve::view::undo_manager::{UndoManager, UndoManagerExt};
 use quarve::view::util::Color;
 
 struct Env(StandardConstEnv, ());
@@ -37,10 +37,6 @@ impl Environment for Env {
     fn variable_env_mut(&mut self) -> &mut Self::Variable {
         &mut self.1
     }
-}
-
-impl StandardEnvironment for Env {
-
 }
 
 impl quarve::core::ApplicationProvider for ApplicationProvider {
@@ -108,7 +104,8 @@ impl quarve::core::WindowProvider for WindowProvider {
                 .intrinsic(300, 300)
                     .unlimited_stretch()
                     .align(Alignment::Center)
-            );
+            )
+            .mount_undo_manager(UndoManager::new(&selected, s));
 
         let v2 = ScrollView::vertical_with_binding(
                 VStack::hetero_options(VStackOptions::default().align(HorizontalAlignment::Leading))
@@ -154,10 +151,10 @@ impl quarve::core::WindowProvider for WindowProvider {
             Menu::new("File")
                 .push(MenuButton::new("Test", "", EventModifiers::new(), |_| println!("Test Called")))
             ,
-            Menu::new("Edit")
-            ,
+            Menu::new("Edit") ,
             Menu::new("View"),
-            Menu::new("Help")
+            Menu::new("Help"),
+            s
         )
     }
 }

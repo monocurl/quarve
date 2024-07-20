@@ -376,7 +376,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
     }
 
     // basically for correction when parent frame rect is not actually grand parent suggested rect
-    fn translate(&mut self, by: Point, s: MSlock) {
+    fn translate(&mut self, by: Point, _s: MSlock) {
         debug_assert!(!self.needs_layout_down.get());
         self.last_suggested = self.last_suggested.translate(by);
         self.last_exclusion = self.last_exclusion.translate(by);
@@ -446,10 +446,13 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
     }
 
     fn sizes(&mut self, s: MSlock) -> SizeContainer {
-        debug_assert!(!self.needs_layout_up() && self.depth() != u32::MAX,
-                      "This method must only be called after the subview \
-                      has been mounted to the parent. Also, this view cannot be in an invalidated/dirty state");
-        self.provider.sizes(s)
+        SizeContainer::new(
+            self.intrinsic_size(s),
+            self.xsquished_size(s),
+            self.xstretched_size(s),
+            self.ysquished_size(s),
+            self.ystretched_size(s)
+        )
     }
 
     fn show(
@@ -684,7 +687,7 @@ impl<'a, E> Subtree<'a, E> where E: Environment {
     fn dfs(curr: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, s: MSlock) {
         // safety is same reason invalidate above is safe
         // (only touching send parts)
-        let mut borrow = curr.borrow_mut_main(s);
+        let borrow = curr.borrow_main(s);
         borrow.invalidate(Arc::downgrade(curr), s.to_general_slock());
 
         for subview in borrow.graph().subviews() {

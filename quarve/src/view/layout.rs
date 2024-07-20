@@ -58,7 +58,8 @@ mod general_layout {
             env: &mut EnvRef<E>,
             s: MSlock
         ) -> Rect;
-        
+
+        #[allow(unused_variables)]
         fn handle_event(&self, e: &Event, s: MSlock) -> EventResult {
             EventResult::NotHandled
         }
@@ -2293,4 +2294,3 @@ mod vec_layout {
     pub use impls::*;
 }
 pub use vec_layout::*;
-    use crate::event::{Event, EventResult};

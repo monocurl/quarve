@@ -131,8 +131,6 @@ mod environment {
         fn variable_env_mut(&mut self) -> &mut Self::Variable;
     }
 
-    pub trait StandardEnvironment: Environment where Self::Const: AsRef<StandardConstEnv> {}
-
     pub struct StandardChannels {
         pub undo_menu: MenuChannel,
         pub redo_menu: MenuChannel,
