@@ -1,8 +1,8 @@
 use std::cell::Cell;
-use std::collections::HashMap;
+use std::collections::{VecDeque};
 use std::marker::PhantomData;
 use std::sync::{Arc, Weak};
-use crate::core::{Environment, MSlock, run_main_async, Slock, StandardConstEnv};
+use crate::core::{Environment, MSlock, run_main_async, Slock, slock_drop_listener, slock_init_listener, StandardConstEnv};
 use crate::event::{Event, EventResult};
 use crate::state::{DirectlyInvertible, StoreContainer};
 use crate::state::slock_cell::SlockCell;
@@ -12,11 +12,43 @@ use crate::view::menu::MenuChannel;
 
 #[derive(Default)]
 struct History {
-    // id is not currently being used
-    // but in the future it can be used to merge consecutive entries in some cases
     menu: Option<MenuChannel>,
-    callbacks: HashMap<usize, Vec<Box<dyn DirectlyInvertible>>>,
-    order: Vec<usize>,
+    callbacks: VecDeque<Box<dyn DirectlyInvertible>>,
+    multiplicity: VecDeque<usize>, // number of events in each undo group
+    current_group: usize, // number of elements in current group
+    mem_limit: usize,
+}
+
+impl History {
+    fn new(limit: usize) -> History {
+        History {
+            menu: None,
+            callbacks: VecDeque::new(),
+            multiplicity: VecDeque::new(),
+            current_group: 0,
+            mem_limit: limit,
+        }
+    }
+
+    fn register(&mut self, action: Box<dyn DirectlyInvertible>) {
+        self.callbacks.push_back(action);
+
+        if self.current_group == 0 {
+            // push new group
+            self.multiplicity.push_back(1);
+        }
+        else {
+            *self.multiplicity.back_mut().unwrap() += 1;
+        }
+        self.current_group += 1;
+
+        while self.multiplicity.len() > self.mem_limit {
+            let drop_amount = self.multiplicity.pop_front().unwrap();
+            for _ in 0..drop_amount {
+                self.callbacks.pop_front();
+            }
+        }
+    }
 }
 
 struct UndoManagerInner {
@@ -26,11 +58,11 @@ struct UndoManagerInner {
 }
 
 impl UndoManagerInner {
-    fn new() -> Self {
+    fn new(undo_limit: usize) -> Self {
         Self {
             is_undoing: Cell::new(false),
-            undo: SlockCell::new(History::default()),
-            redo: SlockCell::new(History::default()),
+            undo: SlockCell::new(History::new(undo_limit)),
+            redo: SlockCell::new(History::new(undo_limit))
         }
     }
 
@@ -53,7 +85,7 @@ impl UndoManagerInner {
                 undo.menu.as_mut().unwrap().unset(s);
             }
 
-            if !undo.order.is_empty() {
+            if !undo.multiplicity.is_empty() {
                 let weak = weak.clone();
                 undo.menu.as_mut().unwrap().set(Box::new(move |s| {
                     if let Some(strong) = weak.upgrade() {
@@ -70,7 +102,7 @@ impl UndoManagerInner {
                 redo.menu.as_mut().unwrap().unset(s);
             }
 
-            if !redo.order.is_empty() {
+            if !redo.multiplicity.is_empty() {
                 let weak = weak.clone();
                 redo.menu.as_mut().unwrap().set(Box::new(move |s| {
                     if let Some(strong) = weak.upgrade() {
@@ -85,44 +117,50 @@ impl UndoManagerInner {
     // caller expected to call update menus after this
     fn undo(&self, s: MSlock) {
         let mut undo = self.undo.borrow_mut(s);
-        let id = undo.order.pop()
+
+        let multiplicity = undo.multiplicity.pop_back()
             .expect("No actions to undo");
 
+        let current_redo_count = self.redo.borrow(s)
+            .callbacks.len();
+        let expected_redo_count = current_redo_count + multiplicity;
+
         self.is_undoing.set(true);
-        let mut action = undo.callbacks
-            .get_mut(&id).unwrap()
-            .pop().unwrap();
-        action.invert(s.to_general_slock());
+        for _ in 0..multiplicity {
+            let mut action = undo.callbacks.pop_back().unwrap();
+            action.invert(s.to_general_slock());
+        }
         self.is_undoing.set(false);
+
+        assert_eq!(expected_redo_count, self.redo.borrow(s).callbacks.len());
     }
 
     fn redo(&self, s: MSlock) {
         let mut redo = self.redo.borrow_mut(s);
-        let id = redo.order.pop()
-            .expect("No actions to undo");
 
-        let mut action = redo.callbacks
-            .get_mut(&id).unwrap()
-            .pop().unwrap();
-        action.invert(s.to_general_slock());
+        let multiplicity = redo.multiplicity.pop_back()
+            .expect("No actions to redo");
+
+        let current_undo_count = self.undo.borrow(s)
+            .callbacks.len();
+        let expected_undo_count = current_undo_count + multiplicity;
+
+        for _ in 0..multiplicity {
+            let mut action = redo.callbacks.pop_back().unwrap();
+            action.invert(s.to_general_slock());
+        }
+
+        assert_eq!(expected_undo_count, self.undo.borrow(s).callbacks.len());
     }
 
     fn register_undo(&self, action: Box<dyn DirectlyInvertible>, s: Slock) {
-        let mut undo = self.undo.borrow_mut(s);
-        undo.order.push(action.id());
-        undo.callbacks
-            .entry(action.id())
-            .or_default()
-            .push(action);
+        self.undo.borrow_mut(s)
+            .register(action);
     }
 
     fn register_redo(&self, action: Box<dyn DirectlyInvertible>, s: Slock) {
-        let mut redo = self.redo.borrow_mut(s);
-        redo.order.push(action.id());
-        redo.callbacks
-            .entry(action.id())
-            .or_default()
-            .push(action);
+        self.redo.borrow_mut(s)
+            .register(action);
     }
 
     fn register_inverter(&self, action: Box<dyn DirectlyInvertible>, s: Slock) {
@@ -133,6 +171,17 @@ impl UndoManagerInner {
             self.register_undo(action, s);
         }
     }
+
+    fn start_group(&self, _s: Slock) {
+        // no op
+    }
+
+    fn end_group(&self, s: Slock) {
+        self.undo.borrow_mut(s)
+            .current_group = 0;
+        self.redo.borrow_mut(s)
+            .current_group = 0;
+    }
 }
 
 #[derive(Clone)]
@@ -142,7 +191,12 @@ pub struct UndoManager {
 
 impl UndoManager {
     pub fn new(stores: &impl StoreContainer, s: MSlock) -> Self {
-        let inner = Arc::new(SlockCell::new(UndoManagerInner::new()));
+        UndoManager::new_with_limit(stores, 8192, s)
+    }
+
+    pub fn new_with_limit(stores: &impl StoreContainer, undo_limit: usize, s: MSlock) -> Self {
+        let inner =
+            Arc::new(SlockCell::new(UndoManagerInner::new(undo_limit)));
 
         let weak = Arc::downgrade(&inner);
         stores.subtree_inverse_listener(move |action, s| {
@@ -165,6 +219,26 @@ impl UndoManager {
             });
             true
         }, s);
+
+        let weak = Arc::downgrade(&inner);
+        slock_init_listener(move |s| {
+            let Some(strong) = weak.upgrade() else {
+                return false;
+            };
+
+            strong.borrow(s).start_group(s);
+            true
+        });
+
+        let weak = Arc::downgrade(&inner);
+        slock_drop_listener(move |s| {
+            let Some(strong) = weak.upgrade() else {
+                return false;
+            };
+
+            strong.borrow(s).end_group(s);
+            true
+        });
 
         UndoManager {
             inner,

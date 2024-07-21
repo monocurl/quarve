@@ -20,9 +20,12 @@ mod attribute {
     }
 
     mod run {
+        use crate::util::geo::ScreenUnit;
+
         pub struct Justification;
         pub struct Indentation {
-
+            leading: ScreenUnit,
+            trailing: ScreenUnit
         }
     }
 

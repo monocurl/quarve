@@ -1005,6 +1005,8 @@ mod slock {
     use crate::core::debug_stats::DebugInfo;
 
     static GLOBAL_STATE_LOCK: Mutex<()> = Mutex::new(());
+    static SLOCK_INIT_LISTENER: Mutex<Vec<Box<dyn FnMut(Slock) -> bool + Send>>> = Mutex::new(Vec::new());
+    static SLOCK_DROP_LISTENER: Mutex<Vec<Box<dyn FnMut(Slock) -> bool + Send>>> = Mutex::new(Vec::new());
     #[cfg(debug_assertions)]
     static LOCKED_THREAD: Mutex<Option<thread::ThreadId>> = Mutex::new(None);
 
@@ -1039,7 +1041,6 @@ mod slock {
 
     #[inline]
     fn global_guard() -> MutexGuard<'static, ()> {
-
         #[cfg(debug_assertions)]
         {
             let lock = GLOBAL_STATE_LOCK.try_lock();
@@ -1067,6 +1068,16 @@ mod slock {
         }
     }
 
+    pub fn slock_init_listener(f: impl FnMut(Slock) -> bool + Send + 'static) {
+        SLOCK_INIT_LISTENER.lock().unwrap()
+            .push(Box::new(f))
+    }
+
+    pub fn slock_drop_listener(f: impl FnMut(Slock) -> bool + Send + 'static) {
+        SLOCK_DROP_LISTENER.lock().unwrap()
+            .push(Box::new(f))
+    }
+
     /// The State Lock (often abbreviated 'slock') is a simple
     /// but important concept in quarve. It acts as a global
     /// mutex and whichever thread owns the slock is the only thread
@@ -1085,13 +1096,16 @@ mod slock {
     /// this may cause the user to view the result of a partially applied transaction.
     #[inline]
     pub fn slock_owner() -> SlockOwner {
-        SlockOwner {
+        let ret = SlockOwner {
             _guard: global_guard(),
             debug_info: DebugInfo::new(),
             unsend_unsync: PhantomData,
             thread_marker: PhantomData,
             is_nested: false,
-        }
+        };
+        SLOCK_INIT_LISTENER.lock().unwrap()
+            .retain_mut(|f| f(ret.marker()));
+        ret
     }
 
     #[inline]
@@ -1100,13 +1114,18 @@ mod slock {
             panic!("Cannot call slock_main_owner outside of main thread")
         }
 
-        SlockOwner {
+        let ret = SlockOwner {
             _guard: global_guard(),
             is_nested: false,
             debug_info: DebugInfo::new(),
             unsend_unsync: PhantomData,
             thread_marker: PhantomData,
-        }
+        };
+
+        SLOCK_INIT_LISTENER.lock().unwrap()
+            .retain_mut(|f| f(ret.marker().to_general_slock()));
+
+        ret
     }
 
     // some ffi makes it awkward to pass slock arround
@@ -1164,6 +1183,9 @@ mod slock {
         fn drop(&mut self) {
             if !self.is_nested {
                 *LOCKED_THREAD.lock().unwrap() = None;
+
+                SLOCK_DROP_LISTENER.lock().unwrap()
+                    .retain_mut(|f| f(self.marker().to_general_slock()));
             }
         }
     }
@@ -1181,10 +1203,6 @@ mod slock {
                     Some(std::mem::transmute::<Slock<'a, M>, MSlock<'a>>(self))
                 }
             }
-        }
-
-        pub fn to_main_slock(self) -> MSlock<'a> {
-            self.try_to_main_slock().expect("This method should only be called on the main thread!")
         }
 
         /// Given a slock that may be say the main slock
