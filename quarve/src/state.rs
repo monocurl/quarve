@@ -491,7 +491,7 @@ mod group {
             use crate::state::{GroupBasis,  Stateful, Word};
             use crate::util::marker::FalseMarker;
 
-            #[derive(Clone, Debug)]
+            #[derive(Clone, Debug, PartialEq, Eq)]
             pub struct EditingString(pub String);
 
             #[derive(Clone)]
@@ -1261,6 +1261,15 @@ mod store {
             where G: Send + FnMut(&F::Target, &<<F as StateFilter>::Target as Stateful>::Action, Slock) -> bool + 'static;
 
         fn apply(&self, action: impl IntoAction<<<F as StateFilter>::Target as Stateful>::Action, <F as StateFilter>::Target>, s: Slock<impl ThreadMarker>);
+        fn nested_apply(&self, action: impl IntoAction<<<F as StateFilter>::Target as Stateful>::Action, <F as StateFilter>::Target>, s: Slock<impl ThreadMarker>);
+
+        type WeakBinding: WeakBinding<F>;
+        fn downgrade(&self) -> Self::WeakBinding;
+    }
+
+    pub trait WeakBinding<F>: Clone where F: StateFilter {
+        type Binding: Binding<F>;
+        fn upgrade(&self) -> Option<Self::Binding>;
     }
 
     mod raw_store {
@@ -1279,7 +1288,7 @@ mod store {
             fn dispatcher_mut(&mut self) -> &mut StoreDispatcher<F::Target, F, Self::InverseListenerHolder>;
 
             // may introduce some additional behavior that the dispatcher does not handle
-            fn apply(inner: &Arc<SlockCell<Self>>, action: impl IntoAction<<F::Target as Stateful>::Action, F::Target>, skip_filters: bool, s: Slock<impl ThreadMarker>);
+            fn apply(inner: &Arc<SlockCell<Self>>, action: impl IntoAction<<F::Target as Stateful>::Action, F::Target>, allow_nested: bool, skip_filters: bool, s: Slock<impl ThreadMarker>);
 
             // Must be careful with these two methods
             // since generally not called with the state lock
@@ -1294,16 +1303,20 @@ mod store {
     }
 
     mod raw_store_shared_owner {
+        use std::marker::PhantomData;
         use std::sync::Arc;
         use crate::core::{Slock};
         use crate::state::{StateFilter, Filter, Filterable, Stateful, Signal, Binding, IntoAction};
         use crate::state::listener::StateListener;
         use crate::state::slock_cell::SlockCell;
+        use crate::state::store::general_binding::GeneralWeakBinding;
         use crate::state::store::raw_store::RawStore;
         use crate::util::marker::ThreadMarker;
 
         pub(super) trait RawStoreSharedOwner<F: StateFilter> : Signal<Target=F::Target> + Sync {
             type Inner: RawStore<F>;
+
+            fn from_ref(arc: Arc<SlockCell<Self::Inner>>) -> Self;
 
             fn inner_ref(&self) -> &Arc<SlockCell<Self::Inner>>;
 
@@ -1330,7 +1343,19 @@ mod store {
             }
 
             fn apply(&self, action: impl IntoAction<<<F as StateFilter>::Target as Stateful>::Action, <F as StateFilter>::Target>, s: Slock<impl ThreadMarker>) {
-                R::Inner::apply(self.inner_ref(), action, false, s)
+                R::Inner::apply(self.inner_ref(), action, false, false, s)
+            }
+
+            fn nested_apply(&self, action: impl IntoAction<<<F as StateFilter>::Target as Stateful>::Action, <F as StateFilter>::Target>, s: Slock<impl ThreadMarker>) {
+                R::Inner::apply(self.inner_ref(), action, true, false, s)
+            }
+
+            type WeakBinding = GeneralWeakBinding<F, R>;
+            fn downgrade(&self) -> Self::WeakBinding {
+                GeneralWeakBinding {
+                    weak: Arc::downgrade(self.inner_ref()),
+                    phantom: PhantomData
+                }
             }
         }
     }
@@ -1368,7 +1393,7 @@ mod store {
                 };
 
                 // skip filters on inversion to avoid weird behavior
-                I::apply(&state, self.action.take().unwrap(), true, s);
+                I::apply(&state, self.action.take().unwrap(), false, true, s);
             }
 
             unsafe fn right_multiply(&mut self, mut by: Box<dyn DirectlyInvertible>, s: Slock) {
@@ -1616,6 +1641,14 @@ mod store {
                     }
                 }
 
+                pub fn weak_binding(&self) -> impl WeakBinding<$f> {
+                    let ret: GeneralWeakBinding<$f, Self> = GeneralWeakBinding {
+                        weak: Arc::downgrade(self.inner_ref()),
+                        phantom: PhantomData
+                    };
+                    ret
+                }
+
                 pub fn signal(&self) -> impl Signal<Target=$s> + Clone {
                     <Self as RawStoreSharedOwner<$f>>::Inner::strong_count_increment(self.inner_ref());
 
@@ -1665,7 +1698,7 @@ mod store {
         use crate::state::StateListener;
         use crate::state::store::state_ref::StateRef;
         use crate::{
-            state::{StateFilter, Filterless, IntoAction, Signal, Stateful, StoreContainer, GeneralSignal},
+            state::{WeakBinding, StateFilter, Filterless, IntoAction, Signal, Stateful, StoreContainer, GeneralSignal},
             core::Slock,
         };
         use crate::state::{Binding};
@@ -1673,7 +1706,7 @@ mod store {
         use crate::state::listener::{GeneralListener, InverseListener};
         use crate::state::slock_cell::SlockCell;
         use crate::state::store::action_inverter::ActionInverter;
-        use crate::state::store::general_binding::GeneralBinding;
+        use crate::state::store::general_binding::{GeneralBinding, GeneralWeakBinding};
         use crate::state::store::inverse_listener_holder::ActualInverseListenerHolder;
         use crate::state::store::macros::{impl_adhoc_inner, impl_signal_inner, impl_store_container_inner};
         use crate::state::store::raw_store::RawStore;
@@ -1698,13 +1731,16 @@ mod store {
                 &mut self.dispatcher
             }
 
-            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<S::Action, S>, skip_filters: bool, s: Slock<impl ThreadMarker>) {
+            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<S::Action, S>, allow_nested: bool, skip_filters: bool, s: Slock<impl ThreadMarker>) {
                 #[cfg(debug_assertions)] {
-                    debug_assert_eq!(s.owner.debug_info.applying_transaction.borrow().len(), 0, "Fatal: store \
-                    changed as a result of the change of another state variable. \
-                    Stores, by default, are to be independent of other stores. If you would like one store to \
-                    be dependent on another, check out DerivedStore or Buffer (or in some circumstances, maybe CoupledStore)");
-                    s.owner.debug_info.applying_transaction.borrow_mut().push(Arc::as_ptr(arc) as usize);
+                    if !allow_nested {
+                        debug_assert_eq!(s.owner.debug_info.applying_transaction.borrow().len(), 0, "Fatal: store \
+                            changed as a result of the change of another state variable. \
+                            Stores, by default, are to be independent of other stores. \
+                            Depending on the circumstance you may instead need DerivedStore, \
+                            Buffer, CoupledStore, or in the worse case, apply_nested.");
+                    }
+                        s.owner.debug_info.applying_transaction.borrow_mut().push(Arc::as_ptr(arc) as usize);
                 }
                 let mut borrow = arc.borrow_mut(s);
                 let inner = borrow.deref_mut();
@@ -1780,6 +1816,12 @@ mod store {
         {
             type Inner = InnerStore<S, F>;
 
+            fn from_ref(arc: Arc<SlockCell<Self::Inner>>) -> Self {
+                Store {
+                    inner: arc,
+                }
+            }
+
             fn inner_ref(&self) -> &Arc<SlockCell<Self::Inner>> {
                 &self.inner
             }
@@ -1809,8 +1851,9 @@ mod store {
         use crate::state::store::store_dispatcher::StoreDispatcher;
         use crate::state::InverseListener;
         use crate::state::slock_cell::SlockCell;
-        use crate::state::store::general_binding::GeneralBinding;
+        use crate::state::store::general_binding::{GeneralBinding, GeneralWeakBinding};
         use crate::state::store::raw_store::RawStore;
+        use crate::state::store::WeakBinding;
         use crate::state::store::raw_store_shared_owner::RawStoreSharedOwner;
         use crate::util::marker::ThreadMarker;
 
@@ -1832,12 +1875,15 @@ mod store {
                 &mut self.dispatcher
             }
 
-            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<S::Action, S>, skip_filters: bool, s: Slock<impl ThreadMarker>) {
+            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<S::Action, S>, allow_nested: bool, skip_filters: bool, s: Slock<impl ThreadMarker>) {
                 #[cfg(debug_assertions)] {
-                    debug_assert_eq!(s.owner.debug_info.applying_transaction.borrow().len(), 0, "Fatal: token store \
-                    changed as a result of the change of another state variable. \
-                    Stores, by default, are to be independent of other stores. If you would like one store to \
-                    be dependent on another, check out DerivedStore or Buffer (or in some circumstances, maybe CoupledStore)");
+                    if !allow_nested {
+                        debug_assert_eq!(s.owner.debug_info.applying_transaction.borrow().len(), 0, "Fatal: store \
+                            changed as a result of the change of another state variable. \
+                            Stores, by default, are to be independent of other stores. \
+                            Depending on the circumstance you may instead need DerivedStore, \
+                            Buffer, CoupledStore, or in the worse case, apply_nested.");
+                    }
                     s.owner.debug_info.applying_transaction.borrow_mut().push(Arc::as_ptr(arc) as usize);
                 }
                 let mut borrow = arc.borrow_mut(s);
@@ -1944,6 +1990,12 @@ mod store {
             where S: Stateful + Copy + Hash + Eq, A: StateFilter<Target=S> {
             type Inner = InnerTokenStore<S, A>;
 
+            fn from_ref(arc: Arc<SlockCell<Self::Inner>>) -> Self {
+                TokenStore {
+                    inner: arc,
+                }
+            }
+
             fn inner_ref(&self) -> &Arc<SlockCell<Self::Inner>> {
                 &self.inner
             }
@@ -1964,7 +2016,7 @@ mod store {
         use crate::state::store::state_ref::StateRef;
         use crate::{
             state::{
-                StateFilter, Filterless, IntoAction, Signal, Stateful, StoreContainer, GeneralSignal,
+                WeakBinding, StateFilter, Filterless, IntoAction, Signal, Stateful, StoreContainer, GeneralSignal,
             },
             core::Slock,
         };
@@ -1972,7 +2024,7 @@ mod store {
         use crate::state::{Filter};
         use crate::state::listener::{GeneralListener, InverseListener};
         use crate::state::slock_cell::SlockCell;
-        use crate::state::store::general_binding::GeneralBinding;
+        use crate::state::store::general_binding::{GeneralBinding, GeneralWeakBinding};
         use crate::state::store::inverse_listener_holder::NullInverseListenerHolder;
         use crate::state::store::macros::{impl_adhoc_inner, impl_signal_inner, impl_store_container_inner};
         use crate::state::store::raw_store::RawStore;
@@ -1997,7 +2049,7 @@ mod store {
                 &mut self.dispatcher
             }
 
-            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<S::Action, S>, skip_filters: bool, s: Slock<impl ThreadMarker>) {
+            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<S::Action, S>, _allow_nested: bool, skip_filters: bool, s: Slock<impl ThreadMarker>) {
                 #[cfg(debug_assertions)] {
                     // Theoretically, someone may want to do an "async" derived store so this is left as an option
                     // debug_assert_ne!(s.owner.debug_info.applying_transaction.borrow().len(), 0, "Fatal: derived store \
@@ -2085,6 +2137,13 @@ mod store {
             where S: Stateful, F: StateFilter<Target=S>
         {
             type Inner = InnerDerivedStore<S, F>;
+
+            fn from_ref(arc: Arc<SlockCell<Self::Inner>>) -> Self {
+                DerivedStore {
+                    inner: arc
+                }
+            }
+
             fn inner_ref(&self) -> &Arc<SlockCell<Self::Inner>> {
                 &self.inner
             }
@@ -2109,14 +2168,14 @@ mod store {
         use crate::state::{GeneralListener, InverseListener, Filterless};
         use crate::{
             state::{
-                StateFilter, IntoAction, Signal, Stateful, StoreContainer,
+                WeakBinding, StateFilter, IntoAction, Signal, Stateful, StoreContainer,
             },
             core::Slock,
         };
         use crate::state::{Binding};
         use crate::state::coupler::Coupler;
         use crate::state::slock_cell::SlockCell;
-        use crate::state::store::general_binding::GeneralBinding;
+        use crate::state::store::general_binding::{GeneralBinding, GeneralWeakBinding};
         use crate::state::store::inverse_listener_holder::NullInverseListenerHolder;
         use crate::state::store::macros::{impl_adhoc_inner, impl_signal_inner, impl_store_container_inner};
         use crate::state::store::raw_store::RawStore;
@@ -2239,7 +2298,7 @@ mod store {
                 &mut self.dispatcher
             }
 
-            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<M::Action, M>, _skip_filters: bool, s: Slock<impl ThreadMarker>) {
+            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<M::Action, M>, _allow_nested: bool, _skip_filters: bool, s: Slock<impl ThreadMarker>) {
                 InnerCoupledStore::fully_apply(arc, None, alt_action, s);
             }
 
@@ -2358,6 +2417,13 @@ mod store {
             where I: Stateful, IB: Binding<Filterless<I>>, M: Stateful, F: StateFilter<Target=M>, C: Coupler<I, M, F>
         {
             type Inner = InnerCoupledStore<I, IB, M, F, C>;
+
+            fn from_ref(arc: Arc<SlockCell<Self::Inner>>) -> Self {
+                CoupledStore {
+                    inner: arc,
+                }
+            }
+
             fn inner_ref(&self) -> &Arc<SlockCell<Self::Inner>> {
                 &self.inner
             }
@@ -2374,9 +2440,9 @@ mod store {
     mod general_binding {
         use std::marker::PhantomData;
         use std::ops::Deref;
-        use std::sync::Arc;
+        use std::sync::{Arc, Weak};
         use crate::core::{Slock};
-        use crate::state::{StateFilter, StateListener};
+        use crate::state::{StateFilter, StateListener, WeakBinding};
         use crate::state::store::state_ref::StateRef;
         use crate::state::{Signal};
         use crate::state::signal::GeneralSignal;
@@ -2385,9 +2451,45 @@ mod store {
         use crate::state::store::raw_store_shared_owner::RawStoreSharedOwner;
         use crate::util::marker::ThreadMarker;
 
+        // will find better solution in the future
+        // This really shouldn't even have to be public in first place
+        // it's just because of rust typing issues
+        #[allow(private_bounds)]
+        pub struct GeneralWeakBinding<F, I> where F: StateFilter, I: RawStoreSharedOwner<F> {
+            pub(super) weak: Weak<SlockCell<I::Inner>>,
+            pub(super) phantom: PhantomData<(Weak<SlockCell<F>>, I)>
+        }
+
+        impl<F, I> Clone for GeneralWeakBinding<F, I> where F: StateFilter, I: RawStoreSharedOwner<F> {
+            fn clone(&self) -> Self {
+                GeneralWeakBinding {
+                    weak: self.weak.clone(),
+                    phantom: Default::default(),
+                }
+            }
+        }
+
+        #[allow(private_bounds)]
         pub struct GeneralBinding<F, I> where F: StateFilter, I: RawStoreSharedOwner<F> {
             pub(super) inner: I,
             pub(super) phantom: PhantomData<Arc<SlockCell<F>>>,
+        }
+
+        impl<F, I> WeakBinding<F> for GeneralWeakBinding<F, I> where F: StateFilter, I: RawStoreSharedOwner<F> {
+            type Binding = GeneralBinding<F, I>;
+
+            fn upgrade(&self) -> Option<Self::Binding> {
+                let Some(inner) = self.weak.upgrade() else {
+                    return None;
+                };
+
+                I::Inner::strong_count_increment(&inner);
+
+                Some(GeneralBinding {
+                    inner: I::from_ref(inner),
+                    phantom: Default::default(),
+                })
+            }
         }
 
         impl<F, I> Clone for GeneralBinding<F, I> where F: StateFilter, I: RawStoreSharedOwner<F> {
@@ -2427,6 +2529,14 @@ mod store {
 
         impl<F, I> RawStoreSharedOwner<F> for GeneralBinding<F, I> where F: StateFilter, I: RawStoreSharedOwner<F> {
             type Inner = I::Inner;
+
+            fn from_ref(arc: Arc<SlockCell<Self::Inner>>) -> Self {
+                GeneralBinding {
+                    inner: I::from_ref(arc),
+                    phantom: Default::default(),
+                }
+            }
+
             fn inner_ref(&self) -> &Arc<SlockCell<Self::Inner>> {
                 self.inner.inner_ref()
             }
@@ -3205,7 +3315,7 @@ mod test {
     use std::time::Duration;
     use rand::Rng;
     use crate::core::{clock_signal, setup_timing_thread, slock_owner, timed_worker};
-    use crate::state::{Store, Signal, TokenStore, Binding, StoreContainer, NumericAction, DirectlyInvertible, Filterable, DerivedStore, Stateful, CoupledStore, StringActionBasis, Buffer, Word, GroupAction, WithCapacitor, JoinedSignal, FixedSignal};
+    use crate::state::{Store, Signal, TokenStore, Binding, StoreContainer, NumericAction, DirectlyInvertible, Filterable, DerivedStore, Stateful, CoupledStore, StringActionBasis, Buffer, Word, GroupAction, WithCapacitor, JoinedSignal, FixedSignal, EditingString};
     use crate::state::capacitor::{ConstantSpeedCapacitor, ConstantTimeCapacitor, SmoothCapacitor};
     use crate::state::coupler::{FilterlessCoupler, NumericStringCoupler};
     use crate::state::SetAction::{Identity, Set};
@@ -3586,34 +3696,34 @@ mod test {
         let intrinsic = Store::new(1);
         let mapped = CoupledStore::new(intrinsic.binding(), NumericStringCoupler::new(), s.marker());
 
-        assert_eq!(*mapped.borrow(s.marker()), "1");
+        assert_eq!(*mapped.borrow(s.marker()), EditingString("1".to_string()));
         intrinsic.apply(NumericAction::Incr(5), s.marker());
 
-        assert_eq!(*mapped.borrow(s.marker()), "6");
+        assert_eq!(*mapped.borrow(s.marker()), EditingString("6".to_string()));
 
         intrinsic.apply(NumericAction::Decr(10), s.marker());
 
-        assert_eq!(*mapped.borrow(s.marker()), "-4");
+        assert_eq!(*mapped.borrow(s.marker()), EditingString("-4".to_string()));
 
         mapped.apply(StringActionBasis::ReplaceSubrange(0..1, "1".to_string()), s.marker());
 
-        assert_eq!(*mapped.borrow(s.marker()), "14".to_string());
+        assert_eq!(*mapped.borrow(s.marker()), EditingString("14".to_string()));
         assert_eq!(*intrinsic.borrow(s.marker()), 14);
 
         mapped.apply(StringActionBasis::ReplaceSubrange(0..1, "a".to_string()), s.marker());
 
-        assert_eq!(*mapped.borrow(s.marker()), "14".to_string());
+        assert_eq!(*mapped.borrow(s.marker()), EditingString("14".to_string()));
         assert_eq!(*intrinsic.borrow(s.marker()), 14);
 
         mapped.apply(StringActionBasis::ReplaceSubrange(0..2, "-11231".to_string()), s.marker());
-        assert_eq!(*mapped.borrow(s.marker()), "-11231".to_string());
+        assert_eq!(*mapped.borrow(s.marker()), EditingString("-11231".to_string()));
         assert_eq!(*intrinsic.borrow(s.marker()), -11231);
 
         drop(intrinsic);
 
         mapped.apply(StringActionBasis::ReplaceSubrange(0..1, "+".to_string()), s.marker());
 
-        assert_eq!(*mapped.borrow(s.marker()), "+11231");
+        assert_eq!(*mapped.borrow(s.marker()), EditingString("+11231".to_owned()));
     }
 
     #[test]
@@ -3788,7 +3898,7 @@ mod test {
         let _h = HeapChecker::new();
         let s = slock_owner();
         let actions: Arc<Mutex<Vec<Box<dyn DirectlyInvertible>>>> = Arc::new(Mutex::new(Vec::new()));
-        let store = Store::new("asdfasdf".to_string());
+        let store = Store::new(EditingString("asdfasdf".to_string()));
         let mut strings: Vec<String> = Vec::new();
         let a = actions.clone();
         store.subtree_inverse_listener(move |invertible, _s| {
@@ -3797,9 +3907,9 @@ mod test {
         }, s.marker());
         for _i in 0 .. 127 {
             let curr = store.borrow(s.marker()).clone();
-            let i = rand::thread_rng().gen_range(0 .. std::cmp::max(1, curr.len()));
-            let u = rand::thread_rng().gen_range(0 ..= curr.len() - i);
-            strings.push(curr);
+            let i = rand::thread_rng().gen_range(0 .. std::cmp::max(1, curr.0.len()));
+            let u = rand::thread_rng().gen_range(0 ..= curr.0.len() - i);
+            strings.push(curr.0);
             let mut str = rand::thread_rng().gen_range(0..100).to_string();
             str = str[0..rand::thread_rng().gen_range(0..= str.len())].to_string();
             store.apply(StringActionBasis::ReplaceSubrange(i..u+i, str), s.marker());
@@ -3810,7 +3920,7 @@ mod test {
 
         for (i, mut action) in actions.into_iter().enumerate() {
             action.invert(s.marker());
-            assert_eq!(*store.borrow(s.marker()), strings[strings.len() - 1 - i].clone());
+            assert_eq!(*store.borrow(s.marker()), EditingString(strings[strings.len() - 1 - i].clone()));
         }
     }
 
@@ -3818,7 +3928,7 @@ mod test {
     fn test_string_compress() {
         let _h = HeapChecker::new();
         let s = slock_owner();
-        let state = Store::new("asfasdf".to_string());
+        let state = Store::new(EditingString("asfasdf".to_string()));
         let vec: Option<Box<dyn DirectlyInvertible>> = None;
         let vectors = Arc::new(Mutex::new(Some(vec)));
         let c = vectors.clone();
@@ -3840,8 +3950,8 @@ mod test {
 
         for _i in 0 .. 100 {
             let curr = state.borrow(s.marker()).clone();
-            let i = rand::thread_rng().gen_range(0 .. std::cmp::max(1, curr.len()));
-            let u = rand::thread_rng().gen_range(0 ..= curr.len() - i);
+            let i = rand::thread_rng().gen_range(0 .. std::cmp::max(1, curr.0.len()));
+            let u = rand::thread_rng().gen_range(0 ..= curr.0.len() - i);
             let mut str = rand::thread_rng().gen_range(0..100).to_string();
             str = str[0..rand::thread_rng().gen_range(0..= str.len())].to_string();
             state.apply(StringActionBasis::ReplaceSubrange(i..u+i, str), s.marker());
@@ -3850,7 +3960,7 @@ mod test {
         let mut res = l.take().unwrap().unwrap();
         drop(l);
         res.invert(s.marker());
-        assert_eq!(*state.borrow(s.marker()), "asfasdf".to_string());
+        assert_eq!(*state.borrow(s.marker()), EditingString("asfasdf".to_string()));
     }
 
     #[test]
@@ -4265,7 +4375,7 @@ mod test {
         let _h = HeapChecker::new();
         let s = slock_owner();
         let actions: Arc<Mutex<Vec<Box<dyn DirectlyInvertible>>>> = Arc::new(Mutex::new(Vec::new()));
-        let store = Store::new(Vector(["asdfasdf".to_string()]));
+        let store = Store::new(Vector([EditingString("asdfasdf".to_string())]));
         let mut strings: Vec<String> = Vec::new();
         let a = actions.clone();
         store.subtree_inverse_listener(move |invertible, _s| {
@@ -4274,9 +4384,9 @@ mod test {
         }, s.marker());
         for _i in 0 .. 127 {
             let curr = store.borrow(s.marker()).x().clone();
-            let i = rand::thread_rng().gen_range(0 .. std::cmp::max(1, curr.len()));
-            let u = rand::thread_rng().gen_range(0 ..= curr.len() - i);
-            strings.push(curr);
+            let i = rand::thread_rng().gen_range(0 .. std::cmp::max(1, curr.0.len()));
+            let u = rand::thread_rng().gen_range(0 ..= curr.0.len() - i);
+            strings.push(curr.0);
             let mut str = rand::thread_rng().gen_range(0..100).to_string();
             str = str[0..rand::thread_rng().gen_range(0..= str.len())].to_string();
             store.apply([StringActionBasis::ReplaceSubrange(i..u+i, str)], s.marker());
@@ -4287,7 +4397,7 @@ mod test {
 
         for (i, mut action) in actions.into_iter().enumerate() {
             action.invert(s.marker());
-            assert_eq!(*store.borrow(s.marker()).x(), strings[strings.len() - 1 - i].clone());
+            assert_eq!(*store.borrow(s.marker()).x(), EditingString(strings[strings.len() - 1 - i].clone()));
         }
     }
 
@@ -4295,7 +4405,7 @@ mod test {
     fn test_vector_string_collapsed() {
         let _h = HeapChecker::new();
         let s = slock_owner();
-        let state = Store::new(Vector(["asfasdf".to_string()]));
+        let state = Store::new(Vector([EditingString("asfasdf".to_string())]));
         let vec: Option<Box<dyn DirectlyInvertible>> = None;
         let vectors = Arc::new(Mutex::new(Some(vec)));
         let c = vectors.clone();
@@ -4317,8 +4427,8 @@ mod test {
 
         for _i in 0 .. 100 {
             let curr = state.borrow(s.marker()).x().clone();
-            let i = rand::thread_rng().gen_range(0 .. std::cmp::max(1, curr.len()));
-            let u = rand::thread_rng().gen_range(0 ..= curr.len() - i);
+            let i = rand::thread_rng().gen_range(0 .. std::cmp::max(1, curr.0.len()));
+            let u = rand::thread_rng().gen_range(0 ..= curr.0.len() - i);
             let mut str = rand::thread_rng().gen_range(0..100).to_string();
             str = str[0..rand::thread_rng().gen_range(0..= str.len())].to_string();
             state.apply([StringActionBasis::ReplaceSubrange(i..u+i, str)], s.marker());
@@ -4327,7 +4437,7 @@ mod test {
         let mut res = l.take().unwrap().unwrap();
         drop(l);
         res.invert(s.marker());
-        assert_eq!(*state.borrow(s.marker()).x(), "asfasdf".to_string());
+        assert_eq!(*state.borrow(s.marker()).x(), EditingString("asfasdf".to_string()));
     }
 
     #[test]
@@ -4384,7 +4494,7 @@ mod test {
     fn test_buffer() {
         let _h = HeapChecker::new();
         let s = slock_owner();
-        let state = Store::new("asfasdf".to_string());
+        let state = Store::new(EditingString("asfasdf".to_string()));
         let buffer = Buffer::new(Word::identity());
         let buffer_writer = buffer.downgrade();
         state.action_listener(move |_, action, s| {
@@ -4398,14 +4508,14 @@ mod test {
 
         for _i in 0 .. 100 {
             let curr = state.borrow(s.marker()).clone();
-            let i = rand::thread_rng().gen_range(0 .. std::cmp::max(1, curr.len()));
-            let u = rand::thread_rng().gen_range(0 ..= curr.len() - i);
+            let i = rand::thread_rng().gen_range(0 .. std::cmp::max(1, curr.0.len()));
+            let u = rand::thread_rng().gen_range(0 ..= curr.0.len() - i);
             let mut str = rand::thread_rng().gen_range(0..100).to_string();
             str = str[0..rand::thread_rng().gen_range(0..= str.len())].to_string();
             state.apply(StringActionBasis::ReplaceSubrange(i..u+i, str), s.marker());
         }
 
-        let state2 = Store::new("asfasdf".to_string());
+        let state2 = Store::new(EditingString("asfasdf".to_string()));
         state2.apply(buffer.replace(Word::identity(), s.marker()), s.marker());
         assert_eq!(*state2.borrow(s.marker()), *state.borrow(s.marker()));
     }
