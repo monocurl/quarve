@@ -351,6 +351,7 @@ pub mod geo {
     pub const UNBOUNDED: f64 = 1e7;
 
     #[derive(Copy, Clone, Default, Debug, PartialEq)]
+    #[repr(C)]
     pub struct Rect {
         pub x: ScreenUnit,
         pub y: ScreenUnit,

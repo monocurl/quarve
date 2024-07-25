@@ -814,9 +814,9 @@ mod layer_modifier {
     {
         fn default() -> Self {
             Layer {
-                background_color: SignalOrValue::value(Color::transparent()),
+                background_color: SignalOrValue::value(Color::clear()),
                 corner_radius: SignalOrValue::value(0.0),
-                border_color: SignalOrValue::value(Color::transparent()),
+                border_color: SignalOrValue::value(Color::clear()),
                 border_width: SignalOrValue::value(0.0),
                 opacity: SignalOrValue::value(1.0),
             }
@@ -1082,7 +1082,7 @@ mod layer_modifier {
                 );
             }
             else {
-                native::view::layer::update_layer_view(self.backing, Color::transparent(), Color::transparent(), 0.0, 0.0, 1.0, s);
+                native::view::layer::update_layer_view(self.backing, Color::clear(), Color::clear(), 0.0, 0.0, 1.0, s);
             }
             // generally only called if subview propagated to here
             true

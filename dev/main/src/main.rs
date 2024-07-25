@@ -1,4 +1,4 @@
-use quarve::core::{Application, Environment, launch, MSlock, StandardConstEnv};
+use quarve::core::{Application, Environment, launch, MSlock, StandardConstEnv, StandardVarEnv};
 use quarve::event::EventModifiers;
 use quarve::state::{FixedSignal, Signal, Store};
 use quarve::util::geo::{Alignment, HorizontalAlignment, Size};
@@ -9,10 +9,11 @@ use quarve::view::layout::*;
 use quarve::view::menu::{Menu, MenuButton, MenuSend, WindowMenu};
 use quarve::view::modifers::{Cursor, CursorModifiable, EnvironmentModifier, Frame, FrameModifiable, OffsetModifiable, PaddingModifiable};
 use quarve::view::scroll::ScrollView;
+use quarve::view::text::Text;
 use quarve::view::undo_manager::{UndoManager, UndoManagerExt};
 use quarve::view::util::Color;
 
-struct Env(StandardConstEnv, ());
+struct Env(StandardConstEnv, StandardVarEnv);
 
 struct ApplicationProvider;
 
@@ -20,10 +21,10 @@ struct WindowProvider;
 
 impl Environment for Env {
     type Const = StandardConstEnv;
-    type Variable = ();
+    type Variable = StandardVarEnv;
 
     fn root_environment() -> Self {
-        Env(StandardConstEnv::new(), ())
+        Env(StandardConstEnv::new(), StandardVarEnv::new())
     }
 
     fn const_env(&self) -> &Self::Const {
@@ -31,7 +32,7 @@ impl Environment for Env {
     }
 
     fn variable_env(&self) -> &Self::Variable {
-        &()
+        &self.1
     }
 
     fn variable_env_mut(&mut self) -> &mut Self::Variable {
@@ -82,6 +83,9 @@ impl quarve::core::WindowProvider for WindowProvider {
                     Dropdown::new(selected.binding())
                         .option("Hello")
                         .option("World")
+                )
+                .push(
+                    Text::new("Test")
                 )
                 .push(
                     Dropdown::new(selected.binding())

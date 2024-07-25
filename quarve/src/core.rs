@@ -118,7 +118,11 @@ mod life_cycle {
 pub(crate) use life_cycle::*;
 
 mod environment {
+    use crate::resource::Resource;
+    use crate::util::geo::ScreenUnit;
     use crate::view::menu::MenuChannel;
+    use crate::view::text::Justification;
+    use crate::view::util::Color;
 
     pub trait Environment: 'static {
         type Const: 'static;
@@ -163,6 +167,47 @@ mod environment {
 
     impl AsRef<StandardConstEnv> for StandardConstEnv {
         fn as_ref(&self) -> &StandardConstEnv {
+            self
+        }
+    }
+
+    #[derive(Clone)]
+    pub struct StandardVarEnv {
+        pub text_bold: bool,
+        pub text_italic: bool,
+        pub text_underline: bool,
+        pub text_strikethrough: bool,
+        pub text_size: ScreenUnit,
+        pub text_color: Color,
+        pub text_backcolor: Color,
+        pub text_justification: Justification,
+        pub text_font: Option<Resource>,
+    }
+
+    impl StandardVarEnv {
+        pub fn new() -> Self {
+            StandardVarEnv {
+                text_bold: false,
+                text_italic: false,
+                text_underline: false,
+                text_strikethrough: false,
+                text_size: 14.0,
+                text_color: Color::black(),
+                text_backcolor: Color::clear(),
+                text_justification: Justification::Leading,
+                text_font: None,
+            }
+        }
+    }
+
+    impl AsRef<StandardVarEnv> for StandardVarEnv {
+        fn as_ref(&self) -> &StandardVarEnv {
+            self
+        }
+    }
+
+    impl AsMut<StandardVarEnv> for StandardVarEnv {
+        fn as_mut(&mut self) -> &mut StandardVarEnv {
             self
         }
     }

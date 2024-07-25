@@ -97,7 +97,7 @@ mod color {
             }
         }
 
-        pub fn transparent() -> Color {
+        pub fn clear() -> Color {
             Color {
                 r: 0, g: 0, b: 0, a: 0
             }

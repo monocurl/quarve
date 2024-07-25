@@ -64,7 +64,7 @@ impl<E, S> ViewProvider<E> for ColorView<S> where E: Environment, S: Signal<Targ
     }
 
     fn layout_up(&mut self, _subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, s: MSlock) -> bool {
-        native::view::layer::update_layer_view(self.1, self.0.inner(s), Color::transparent(), 0.0, 0.0, 1.0, s);
+        native::view::layer::update_layer_view(self.1, self.0.inner(s), Color::clear(), 0.0, 0.0, 1.0, s);
         false
     }
 
@@ -98,7 +98,7 @@ impl<E: Environment> IntoViewProvider<E> for EmptyView {
     type DownContext = ();
 
     fn into_view_provider(self, env: &E::Const, s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
-        Color::transparent()
+        Color::clear()
             .frame(Frame::default().intrinsic(0, 0))
             .into_view_provider(env, s)
     }

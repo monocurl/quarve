@@ -16,6 +16,7 @@ fn build() {
         .file("macos/menu.m")
         .file("macos/message_box.m")
         .file("macos/file_picker.m")
+        .file("macos/text.m")
         .compile("backend");
 }
 

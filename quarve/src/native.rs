@@ -425,6 +425,24 @@ pub mod view {
         fn back_view_dropdown_select(_view: *mut c_void, selection: *const u8) -> u8;
         fn back_view_dropdown_size(_view: *mut c_void) -> Size;
 
+        /* text */
+        fn back_text_init() -> *mut c_void;
+        fn back_text_update(
+            view: *mut c_void,
+            str: *const u8,
+            max_lines: ffi::c_int,
+            bold: u8,
+            italic: u8,
+            underline: u8,
+            strikethrough: u8,
+            back: Color,
+            front: Color,
+            font: *const u8,
+            font_size: f64
+        );
+        fn back_text_size(view: *mut c_void, suggested: Size) -> Size;
+        fn back_text_free(view: *mut c_void);
+
         /* message box */
         fn back_message_box_init(title: *const u8, message: *const u8) -> *mut c_void;
         fn back_message_box_add_button(mb: *mut c_void, button_type: u8);
@@ -680,6 +698,56 @@ pub mod view {
         pub fn dropdown_size(view: *mut c_void, _s: MSlock) -> Size {
             unsafe {
                 back_view_dropdown_size(view)
+            }
+        }
+    }
+
+    pub mod text {
+        use std::ffi;
+        use std::ffi::{c_void, CString};
+        use std::os::unix::ffi::OsStrExt;
+        use crate::core::{MSlock, StandardVarEnv};
+        use crate::native::view::{back_text_free, back_text_init, back_text_size, back_text_update};
+        use crate::util::geo::Size;
+
+        pub fn text_init(_s: MSlock) -> *mut c_void {
+            unsafe {
+                back_text_init()
+            }
+        }
+
+        pub fn text_update(view: *mut c_void, str: &str, max_lines: u32, env: &StandardVarEnv, _s: MSlock) {
+            unsafe {
+                let cstring = CString::new(str).unwrap();
+                let cpath = env.text_font
+                    .as_ref()
+                    .map(|s| s.cstring());
+
+                back_text_update(
+                    view,
+                    cstring.as_bytes().as_ptr(),
+                    max_lines as ffi::c_int,
+                    env.text_bold as u8,
+                    env.text_italic as u8,
+                    env.text_underline as u8,
+                    env.text_strikethrough as u8,
+                    env.text_backcolor,
+                    env.text_color,
+                    cpath.map(|c| c.as_bytes().as_ptr()).unwrap_or(0 as *const u8),
+                    env.text_size
+                )
+            }
+        }
+
+        pub fn text_size(view: *mut c_void, suggested: Size, _s: MSlock) -> Size {
+            unsafe {
+                back_text_size(view, suggested)
+            }
+        }
+
+        pub fn text_free(view: *mut c_void) {
+            unsafe {
+                back_text_free(view);
             }
         }
     }

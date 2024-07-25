@@ -1,3 +1,4 @@
+use std::ffi::{CStr, CString};
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 
@@ -19,7 +20,7 @@ fn resource_root() -> PathBuf {
     }
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Clone)]
 pub struct Resource(PathBuf);
 
 impl Resource {
@@ -33,6 +34,31 @@ impl Resource {
 
     pub fn path(&self) -> &Path {
         self.0.deref()
+    }
+
+    // https://stackoverflow.com/a/59224987
+    pub(crate) fn cstring(&self) -> CString {
+        let mut buf = Vec::new();
+
+        #[cfg(unix)] {
+            use std::os::unix::ffi::OsStrExt;
+            buf.extend(self.path().as_os_str().as_bytes());
+            buf.push(0);
+        }
+
+        #[cfg(windows)] {
+            use std::os::windows::ffi::OsStrExt;
+            buf.extend(self.path().as_os_str()
+                .encode_wide()
+                .chain(Some(0))
+                .map(|b| {
+                    let b = b.to_ne_bytes();
+                    b.get(0).map(|s| *s).into_iter().chain(b.get(1).map(|s| *s))
+                })
+                .flatten());
+        }
+
+        CString::new(buf).unwrap()
     }
 }
 
