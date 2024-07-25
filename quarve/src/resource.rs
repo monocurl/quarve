@@ -43,14 +43,12 @@ impl Resource {
         #[cfg(unix)] {
             use std::os::unix::ffi::OsStrExt;
             buf.extend(self.path().as_os_str().as_bytes());
-            buf.push(0);
         }
 
         #[cfg(windows)] {
             use std::os::windows::ffi::OsStrExt;
             buf.extend(self.path().as_os_str()
                 .encode_wide()
-                .chain(Some(0))
                 .map(|b| {
                     let b = b.to_ne_bytes();
                     b.get(0).map(|s| *s).into_iter().chain(b.get(1).map(|s| *s))

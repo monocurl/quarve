@@ -719,7 +719,7 @@ pub mod view {
         pub fn text_update(view: *mut c_void, str: &str, max_lines: u32, env: &StandardVarEnv, _s: MSlock) {
             unsafe {
                 let cstring = CString::new(str).unwrap();
-                let cpath = env.text_font
+                let cpath = env.text.font
                     .as_ref()
                     .map(|s| s.cstring());
 
@@ -727,14 +727,14 @@ pub mod view {
                     view,
                     cstring.as_bytes().as_ptr(),
                     max_lines as ffi::c_int,
-                    env.text_bold as u8,
-                    env.text_italic as u8,
-                    env.text_underline as u8,
-                    env.text_strikethrough as u8,
-                    env.text_backcolor,
-                    env.text_color,
-                    cpath.map(|c| c.as_bytes().as_ptr()).unwrap_or(0 as *const u8),
-                    env.text_size
+                    env.text.bold as u8,
+                    env.text.italic as u8,
+                    env.text.underline as u8,
+                    env.text.strikethrough as u8,
+                    env.text.backcolor,
+                    env.text.color,
+                    cpath.as_ref().map(|c| c.as_bytes().as_ptr()).unwrap_or(0 as *const u8),
+                    env.text.size
                 )
             }
         }

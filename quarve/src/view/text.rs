@@ -184,6 +184,127 @@ mod text {
 }
 pub use text::*;
 
+mod env {
+    use std::ops::Deref;
+    use std::path::Path;
+    use crate::core::{Environment, MSlock, StandardVarEnv, TextEnv};
+    use crate::resource::Resource;
+    use crate::util::geo::ScreenUnit;
+    use crate::view::modifers::{EnvironmentModifier, EnvModifiable, EnvModifierIVP};
+    use crate::view::{IntoViewProvider, WeakInvalidator};
+    use crate::view::util::Color;
+
+    // FIXME unnecessary clones for many operations
+    #[derive(Default)]
+    pub struct TextEnvModifier {
+        last_env: Option<TextEnv>,
+        bold: Option<bool>,
+        italic: Option<bool>,
+        underline: Option<bool>,
+        strikethrough: Option<bool>,
+        color: Option<Color>,
+        backcolor: Option<Color>,
+        font: Option<Option<Resource>>,
+        size: Option<ScreenUnit>,
+    }
+
+    impl<E> EnvironmentModifier<E> for TextEnvModifier where E: Environment, E::Variable: AsMut<StandardVarEnv> {
+        fn init(&mut self, _invalidator: WeakInvalidator<E>, _s: MSlock) {
+
+        }
+
+        fn push_environment(&mut self, env: &mut E::Variable, _s: MSlock) {
+            self.last_env = Some(env.as_mut().text.clone());
+
+            let text = &mut env.as_mut().text;
+            text.bold = self.bold.unwrap_or(text.bold);
+            text.italic = self.italic.unwrap_or(text.italic);
+            text.underline = self.underline.unwrap_or(text.underline);
+            text.strikethrough = self.strikethrough.unwrap_or(text.strikethrough);
+            text.color = self.color.unwrap_or(text.color);
+            text.backcolor = self.backcolor.unwrap_or(text.backcolor);
+            text.font = self.font.clone().unwrap_or_else(|| text.font.clone());
+            text.size = self.size.unwrap_or(text.size);
+        }
+
+        fn pop_environment(&mut self, env: &mut E::Variable, _s: MSlock) {
+            env.as_mut().text = self.last_env.take().unwrap();
+        }
+    }
+
+    pub trait TextModifier<E>: IntoViewProvider<E> where E: Environment, E::Variable: AsMut<StandardVarEnv> {
+        fn bold(self) -> EnvModifierIVP<E, Self, TextEnvModifier>;
+        fn italic(self) -> EnvModifierIVP<E, Self, TextEnvModifier>;
+        fn underline(self) -> EnvModifierIVP<E, Self, TextEnvModifier>;
+        fn strikethrough(self) -> EnvModifierIVP<E, Self, TextEnvModifier>;
+
+        fn text_color(self, color: Color) -> EnvModifierIVP<E, Self, TextEnvModifier>;
+        fn text_backcolor(self, color: Color) -> EnvModifierIVP<E, Self, TextEnvModifier>;
+        fn text_font(self, rel_path: &str) -> EnvModifierIVP<E, Self, TextEnvModifier>;
+        fn text_font_resource(self, resource: Resource) -> EnvModifierIVP<E, Self, TextEnvModifier>;
+        fn text_size(self, size: impl Into<ScreenUnit>) -> EnvModifierIVP<E, Self, TextEnvModifier>;
+    }
+
+    impl<E, I> TextModifier<E> for I where E: Environment, E::Variable: AsMut<StandardVarEnv>, I: IntoViewProvider<E> {
+        fn bold(self) -> EnvModifierIVP<E, Self, TextEnvModifier> {
+            let mut text = TextEnvModifier::default();
+            text.bold = Some(true);
+            self.env_modifier(text)
+        }
+
+        fn italic(self) -> EnvModifierIVP<E, Self, TextEnvModifier> {
+            let mut text = TextEnvModifier::default();
+            text.italic = Some(true);
+            self.env_modifier(text)
+        }
+
+        fn underline(self) -> EnvModifierIVP<E, Self, TextEnvModifier> {
+            let mut text = TextEnvModifier::default();
+            text.underline = Some(true);
+            self.env_modifier(text)
+        }
+
+        fn strikethrough(self) -> EnvModifierIVP<E, Self, TextEnvModifier> {
+            let mut text = TextEnvModifier::default();
+            text.strikethrough = Some(true);
+            self.env_modifier(text)
+        }
+
+        fn text_color(self, color: Color) -> EnvModifierIVP<E, Self, TextEnvModifier> {
+            let mut text = TextEnvModifier::default();
+            text.color = Some(color);
+            self.env_modifier(text)
+        }
+
+        fn text_backcolor(self, color: Color) -> EnvModifierIVP<E, Self, TextEnvModifier> {
+            let mut text = TextEnvModifier::default();
+            text.backcolor = Some(color);
+            self.env_modifier(text)
+        }
+
+        fn text_font(self, rel_path: &str) -> EnvModifierIVP<E, Self, TextEnvModifier> {
+            let path = Path::new("font").join(rel_path);
+
+            let mut text = TextEnvModifier::default();
+            text.font = Some(Some(Resource::new(path.deref())));
+            self.env_modifier(text)
+        }
+
+        fn text_font_resource(self, resource: Resource) -> EnvModifierIVP<E, Self, TextEnvModifier> {
+            let mut text = TextEnvModifier::default();
+            text.font = Some(Some(resource));
+            self.env_modifier(text)
+        }
+
+        fn text_size(self, size: impl Into<ScreenUnit>) -> EnvModifierIVP<E, Self, TextEnvModifier> {
+            let mut text = TextEnvModifier::default();
+            text.size = Some(size.into());
+            self.env_modifier(text)
+        }
+    }
+}
+pub use env::*;
+
 struct TextField {
 
 }

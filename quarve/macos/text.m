@@ -38,9 +38,10 @@ font_for(uint8_t const* name, double size, uint8_t bold, uint8_t italic)
             font = [NSFont fontWithDescriptor:desc size:size];
             break;
         }
+
         if (!font) {
-            fprintf(stderr, "Illegal Font %s\n", name);
-            exit(1);
+            fprintf(stderr, "quarve: unable to load font %s; defaulting to system\n", name);
+            font = [NSFont systemFontOfSize:size];
         }
     }
 
@@ -135,7 +136,7 @@ back_text_free(void *view)
 void*
 back_text_field_init(fat_pointer text_binding, fat_pointer focused_binding)
 {
-
+    return nil;
 }
 
 void

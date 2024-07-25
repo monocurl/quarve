@@ -9,7 +9,7 @@ use quarve::view::layout::*;
 use quarve::view::menu::{Menu, MenuButton, MenuSend, WindowMenu};
 use quarve::view::modifers::{Cursor, CursorModifiable, EnvironmentModifier, Frame, FrameModifiable, OffsetModifiable, PaddingModifiable};
 use quarve::view::scroll::ScrollView;
-use quarve::view::text::Text;
+use quarve::view::text::{Text, TextModifier};
 use quarve::view::undo_manager::{UndoManager, UndoManagerExt};
 use quarve::view::util::Color;
 
@@ -86,6 +86,12 @@ impl quarve::core::WindowProvider for WindowProvider {
                 )
                 .push(
                     Text::new("Test")
+                        .text_backcolor(Color::rgb(255, 0, 2))
+                        .text_size(24.0)
+                        .text_color(Color::white())
+                        .text_font("SignikaNegative-Regular.ttf")
+                        .underline()
+                        .bold()
                 )
                 .push(
                     Dropdown::new(selected.binding())
