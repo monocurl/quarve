@@ -184,6 +184,132 @@ mod text {
 }
 pub use text::*;
 
+mod text_field {
+    use std::ffi::c_void;
+    use crate::core::{Environment, MSlock, StandardVarEnv};
+    use crate::native::view::text_field::{text_field_init, text_field_size, text_field_update};
+    use crate::state::{Binding, Filterless, Signal, TokenStore};
+    use crate::util::geo;
+    use crate::util::geo::{Rect, Size};
+    use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, ViewProvider, WeakInvalidator};
+
+    pub struct TextField<B> where B: Binding<Filterless<String>> + Clone {
+        text: B,
+        max_lines: u32
+    }
+
+    struct TextFieldVP<B> where B: Binding<Filterless<String>> + Clone {
+        text: B,
+        max_lines: u32,
+        size: Size,
+        backing: *mut c_void,
+    }
+
+    impl<B> TextField<B> where B: Binding<Filterless<String>> + Clone {
+        pub fn new(binding: B) -> Self {
+            TextField {
+                text: binding,
+                max_lines: 1
+            }
+        }
+
+        pub fn max_lines(mut self, max_lines: u32) -> Self {
+            self.max_lines = max_lines;
+            self
+        }
+    }
+
+    impl<E, B> IntoViewProvider<E> for TextField<B>
+        where E: Environment,
+              E::Variable: AsRef<StandardVarEnv>,
+              B: Binding<Filterless<String>> + Clone {
+        type UpContext = ();
+        type DownContext = ();
+
+        fn into_view_provider(self, _env: &E::Const, _s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
+            TextFieldVP {
+                text: self.text,
+                max_lines: self.max_lines,
+                size: Size::default(),
+                backing: 0 as *mut c_void,
+            }
+        }
+    }
+
+    impl<E, B> ViewProvider<E> for TextFieldVP<B>
+        where E: Environment,
+              E::Variable: AsRef<StandardVarEnv>,
+              B: Binding<Filterless<String>> + Clone {
+        type UpContext = ();
+        type DownContext = ();
+
+        fn intrinsic_size(&mut self, _s: MSlock) -> Size {
+            self.size
+        }
+
+        fn xsquished_size(&mut self, _s: MSlock) -> Size {
+            Size::new(0.0, 0.0)
+        }
+
+        fn xstretched_size(&mut self, _s: MSlock) -> Size {
+            self.size
+        }
+
+        fn ysquished_size(&mut self, _s: MSlock) -> Size {
+            self.size
+        }
+
+        fn ystretched_size(&mut self, _s: MSlock) -> Size {
+            self.size
+        }
+
+        fn up_context(&mut self, _s: MSlock) -> Self::UpContext {
+            ()
+        }
+
+        fn init_backing(&mut self, invalidator: WeakInvalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+            self.text.listen(move |_, s| {
+                let Some(invalidator) = invalidator.upgrade() else {
+                    return false;
+                };
+                invalidator.invalidate(s);
+                true
+            }, s);
+
+            let nv = if let Some((nv, _)) = backing_source {
+                nv
+            }
+            else {
+                unsafe {
+                    let focused = TokenStore::new(None);
+                    NativeView::new(text_field_init(self.text.clone(), focused.binding(), s), s)
+                }
+            };
+
+            self.backing = nv.backing();
+            nv
+        }
+
+        fn layout_up(&mut self, _subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
+            text_field_update(
+                self.backing,
+                &*self.text.borrow(s),
+                self.max_lines,
+                env.variable_env().as_ref(),
+                s
+            );
+            self.size = text_field_size(self.backing, Size::new(geo::UNBOUNDED, geo::UNBOUNDED), s);
+            true
+        }
+
+        fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, _layout_context: &Self::DownContext, _env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
+            let used = text_field_size(self.backing, frame, s);
+            (used.full_rect(), used.full_rect())
+        }
+    }
+}
+pub use text_field::*;
+
 mod env {
     use std::ops::Deref;
     use std::path::Path;
@@ -304,10 +430,6 @@ mod env {
     }
 }
 pub use env::*;
-
-struct TextField {
-
-}
 
 struct TextView {
 

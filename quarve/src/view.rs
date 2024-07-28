@@ -85,4 +85,3 @@ pub mod scroll;
 pub mod modal;
 pub mod menu;
 pub mod undo_manager;
-mod focus;

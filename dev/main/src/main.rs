@@ -9,7 +9,7 @@ use quarve::view::layout::*;
 use quarve::view::menu::{Menu, MenuButton, MenuSend, WindowMenu};
 use quarve::view::modifers::{Cursor, CursorModifiable, EnvironmentModifier, Frame, FrameModifiable, OffsetModifiable, PaddingModifiable};
 use quarve::view::scroll::ScrollView;
-use quarve::view::text::{Text, TextModifier};
+use quarve::view::text::{Text, TextField, TextModifier};
 use quarve::view::undo_manager::{UndoManager, UndoManagerExt};
 use quarve::view::util::Color;
 
@@ -92,6 +92,9 @@ impl quarve::core::WindowProvider for WindowProvider {
                         .text_font("SignikaNegative-Regular.ttf")
                         .underline()
                         .bold()
+                )
+                .push(
+                    TextField::new(Store::new("".to_owned()).binding())
                 )
                 .push(
                     Dropdown::new(selected.binding())

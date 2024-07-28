@@ -111,7 +111,9 @@ back_text_update(
                                                 blue:front.b/255.0
                                                alpha:front.a/255.0];
     [astr addAttribute:NSForegroundColorAttributeName value:foregroundColor range:fullRange];
-    tf.attributedStringValue = astr;
+    if (![tf.attributedStringValue isEqualToAttributedString: astr]) {
+        tf.attributedStringValue = astr;
+    }
 
     tf.maximumNumberOfLines = max_lines;
 }
@@ -125,46 +127,84 @@ back_text_size(void* view, size suggested)
     return (size) { s.width, s.height };
 }
 
-void
-back_text_free(void *view)
-{
-    NSTextField* tf = view;
-    [tf release];
-}
-
 // MARK: textfield
+@interface TextField : NSTextField
+@property fat_pointer focused;
+@property fat_pointer text;
+@end
+
+@implementation TextField
+
+// text did Change
+
+// make first responder
+
+// resign first responder
+
+@end
+
 void*
 back_text_field_init(fat_pointer text_binding, fat_pointer focused_binding)
 {
-    return nil;
+    TextField* tf = [[TextField alloc] init];
+    tf.focused = focused_binding;
+    tf.text = text_binding;
+    return tf;
 }
 
 void
-back_text_field_focus()
+back_text_field_focus(void *view)
 {
-
+    TextField* tf = view;
+    [tf becomeFirstResponder];
 }
 
 void
-back_text_field_unfocus()
+back_text_field_unfocus(void *view)
 {
-
+    TextField* tf = view;
+    [tf resignFirstResponder];
 }
 
 void
-back_text_field_update()
+back_text_field_update(
+    void *view,
+    uint8_t const* str,
+    int max_lines,
+    uint8_t bold,
+    uint8_t italic,
+    uint8_t underline,
+    uint8_t strikethrough,
+    color back,
+    color front,
+    uint8_t const* font_path,
+    double font_size
+)
 {
-
+    back_text_update(
+        view,
+        str,
+        max_lines,
+        bold, italic, underline, strikethrough,
+        back, front,
+        font_path,
+        font_size
+    );
 }
 
-void
-back_text_field_free(void* view)
+size
+back_text_field_size(void* view, size suggested)
 {
-
+    NSTextField* tf = view;
+    NSCell *cell = [tf cell];
+    NSSize s = [cell cellSizeForBounds:NSMakeRect(0, 0, suggested.w, suggested.h)];
+    return (size) { s.width, s.height };
 }
+
 
 // MARK: textview
 void
 back_text_view_init()
 {
+
 }

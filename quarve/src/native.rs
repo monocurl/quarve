@@ -441,7 +441,25 @@ pub mod view {
             font_size: f64
         );
         fn back_text_size(view: *mut c_void, suggested: Size) -> Size;
-        fn back_text_free(view: *mut c_void);
+
+        /* text field */
+        fn back_text_field_init(text_binding: FatPointer, focused_binding: FatPointer) -> *mut c_void;
+        fn back_text_field_focus(view: *mut c_void);
+        fn back_text_field_unfocus(view: *mut c_void);
+        fn back_text_field_update(
+            view: *mut c_void,
+            str: *const u8,
+            max_lines: ffi::c_int,
+            bold: u8,
+            italic: u8,
+            underline: u8,
+            strikethrough: u8,
+            back: Color,
+            front: Color,
+            font: *const u8,
+            font_size: f64
+        );
+        fn back_text_field_size(view: *mut c_void, suggested: Size) -> Size;
 
         /* message box */
         fn back_message_box_init(title: *const u8, message: *const u8) -> *mut c_void;
@@ -705,9 +723,8 @@ pub mod view {
     pub mod text {
         use std::ffi;
         use std::ffi::{c_void, CString};
-        use std::os::unix::ffi::OsStrExt;
         use crate::core::{MSlock, StandardVarEnv};
-        use crate::native::view::{back_text_free, back_text_init, back_text_size, back_text_update};
+        use crate::native::view::{back_text_init, back_text_size, back_text_update};
         use crate::util::geo::Size;
 
         pub fn text_init(_s: MSlock) -> *mut c_void {
@@ -744,10 +761,58 @@ pub mod view {
                 back_text_size(view, suggested)
             }
         }
+    }
 
-        pub fn text_free(view: *mut c_void) {
+    pub mod text_field {
+        use std::ffi;
+        use std::ffi::{c_void, CString};
+        use crate::core::{MSlock, StandardVarEnv};
+        use crate::native::view::{back_text_field_init, back_text_field_size, back_text_field_update};
+        use crate::state::{Binding, Filterless, SetAction};
+        use crate::util::geo::Size;
+
+        pub fn text_field_init(content: impl Binding<Filterless<String>>, focused: impl Binding<Filterless<Option<i32>>>, _s: MSlock) -> *mut c_void {
             unsafe {
-                back_text_free(view);
+                let set_text = Box::new(move |val, s: MSlock|  {
+                    content.apply(SetAction::Set(val), s);
+                }) as Box<dyn Fn(String, MSlock)>;
+                let set_text = std::mem::transmute(set_text);
+
+                let set_focused= Box::new(move |val, s: MSlock|  {
+                    focused.apply(SetAction::Set(val), s);
+                }) as Box<dyn Fn(Option<i32>, MSlock)>;
+                let set_focused= std::mem::transmute(set_focused);
+
+                back_text_field_init(set_text, set_focused)
+            }
+        }
+
+        pub fn text_field_update(view: *mut c_void, str: &str, max_lines: u32, env: &StandardVarEnv, _s: MSlock) {
+            unsafe {
+                let cstring = CString::new(str).unwrap();
+                let cpath = env.text.font
+                    .as_ref()
+                    .map(|s| s.cstring());
+
+                back_text_field_update(
+                    view,
+                    cstring.as_bytes().as_ptr(),
+                    max_lines as ffi::c_int,
+                    env.text.bold as u8,
+                    env.text.italic as u8,
+                    env.text.underline as u8,
+                    env.text.strikethrough as u8,
+                    env.text.backcolor,
+                    env.text.color,
+                    cpath.as_ref().map(|c| c.as_bytes().as_ptr()).unwrap_or(0 as *const u8),
+                    env.text.size
+                )
+            }
+        }
+
+        pub fn text_field_size(view: *mut c_void, suggested: Size, _s: MSlock) -> Size {
+            unsafe {
+                back_text_field_size(view, suggested)
             }
         }
     }
