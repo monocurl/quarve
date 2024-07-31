@@ -11,6 +11,7 @@ font_for(uint8_t const* name, double size, uint8_t bold, uint8_t italic)
     if (!font_cache) {
         font_cache = [NSMutableDictionary dictionary];
         // not fully sure why this is needed...
+        // some weird arc stuff i suppose
         [font_cache retain];
     }
 
@@ -116,6 +117,13 @@ back_text_update(
     [astr addAttribute:NSForegroundColorAttributeName value:foregroundColor range:fullRange];
     if (![tf.attributedStringValue isEqualToAttributedString: astr]) {
         tf.attributedStringValue = astr;
+        tf.font = font;
+        tf.textColor = foregroundColor;
+
+        // FIXME, find a better solution
+        // although I'm not sure if you can actually even edit the attributes??
+        // but this preserves the attributes upon selection
+        tf.allowsEditingTextAttributes = underline || strikethrough || back.a != 0;
     }
 
     tf.maximumNumberOfLines = max_lines;
@@ -144,23 +152,6 @@ back_text_size(void* view, size suggested)
 // make first responder
 
 // resign first responder
-
-- (void)setStringValue:(NSString *)aString {
-    [super setStringValue:aString];
-    [self applyUnderlineAttribute];
-}
-
-- (void)setAttributedStringValue:(NSAttributedString *)obj {
-    [super setAttributedStringValue:obj];
-    [self applyUnderlineAttribute];
-}
-
-- (void)applyUnderlineAttribute {
-    NSMutableAttributedString *attributedString = [[NSMutableAttributedString alloc] initWithAttributedString:[self attributedStringValue]];
-    [attributedString addAttribute:NSUnderlineStyleAttributeName value:@(NSUnderlineStyleSingle) range:NSMakeRange(0, [attributedString length])];
-    [super setAttributedStringValue:attributedString];
-}
-
 @end
 
 void*

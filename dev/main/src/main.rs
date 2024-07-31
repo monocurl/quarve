@@ -86,7 +86,7 @@ impl quarve::core::WindowProvider for WindowProvider {
                         .option("World")
                 )
                 .push(
-                    Text::new("Test")
+                    Text::from_signal(text.signal())
                         .text_backcolor(Color::rgb(255, 0, 2))
                         .text_size(24.0)
                 )
