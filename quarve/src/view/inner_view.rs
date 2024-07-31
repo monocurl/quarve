@@ -1,5 +1,5 @@
 use std::any::Any;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::sync::{Arc, Weak};
 use crate::core::{Environment, MSlock, Slock, WindowViewCallback};
@@ -236,6 +236,11 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
         }
         // else: nothing to copy from so this is no op
     }
+}
+
+
+thread_local! {
+    static BALANCE: RefCell<u32> = RefCell::new(0);
 }
 
 impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewProvider<E> {
@@ -565,10 +570,15 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
 
     fn push_environment(&mut self, env: &mut E, s: MSlock) {
         self.provider.push_environment(env.variable_env_mut(), s);
+        let val = BALANCE.take() + 1;
+        BALANCE.set(val);
     }
 
     fn pop_environment(&mut self, env: &mut E, s: MSlock) {
         self.provider.pop_environment(env.variable_env_mut(), s);
+        let val = BALANCE.take() - 1;
+        BALANCE.set(val);
+        println!("BALANCE {:?}", val);
     }
 }
 

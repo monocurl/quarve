@@ -177,8 +177,7 @@ mod text {
         }
 
         fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, _layout_context: &Self::DownContext, _env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
-            let used = text_size(self.backing, frame, s);
-            (used.full_rect(), used.full_rect())
+            (frame.full_rect(), frame.full_rect())
         }
     }
 }
@@ -291,6 +290,7 @@ mod text_field {
         }
 
         fn layout_up(&mut self, _subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
+            println!("Env {:?}", env.variable_env().as_ref());
             text_field_update(
                 self.backing,
                 &*self.text.borrow(s),
@@ -303,8 +303,7 @@ mod text_field {
         }
 
         fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, _layout_context: &Self::DownContext, _env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
-            let used = text_field_size(self.backing, frame, s);
-            (used.full_rect(), used.full_rect())
+            (frame.full_rect(), frame.full_rect())
         }
     }
 }
@@ -351,10 +350,13 @@ mod env {
             text.backcolor = self.backcolor.unwrap_or(text.backcolor);
             text.font = self.font.clone().unwrap_or_else(|| text.font.clone());
             text.size = self.size.unwrap_or(text.size);
+
+            println!("Push");
         }
 
         fn pop_environment(&mut self, env: &mut E::Variable, _s: MSlock) {
             env.as_mut().text = self.last_env.take().unwrap();
+            println!("Pop");
         }
     }
 

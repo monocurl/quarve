@@ -3,16 +3,17 @@
 #import "color.h"
 #import "front.h"
 
+static NSMutableDictionary* font_cache = nil;
+
 static NSFont*
 font_for(uint8_t const* name, double size, uint8_t bold, uint8_t italic)
 {
-    static NSMutableDictionary* font_cache = nil;
     if (!font_cache) {
         font_cache = [NSMutableDictionary dictionary];
     }
 
     NSString *font_name = name ? [NSString stringWithUTF8String:(const char *)name] : @"SystemFont";
-    NSString *cache_key = [NSString stringWithFormat:@"%@-%.2f-%d-%d", font_name, size, bold, italic];
+    NSString *cache_key = [NSString stringWithFormat:@"%@;:;-%.2f-%d-%d", font_name, size, bold, italic];
 
     NSFont *cached_font = [font_cache objectForKey:cache_key];;
     if (cached_font) {
@@ -134,8 +135,9 @@ back_text_size(void* view, size suggested)
 @end
 
 @implementation TextField
-
-// text did Change
+- (void) textDidChange:(NSNotification *)notification {
+    front_set_opt_string_binding(self.text, (uint8_t *const) [self.stringValue UTF8String]);
+}
 
 // make first responder
 

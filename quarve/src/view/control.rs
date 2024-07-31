@@ -1,24 +1,27 @@
 mod button {
     use std::ffi::c_void;
     use std::marker::PhantomData;
-    use crate::core::{Environment, MSlock};
+    use crate::core::{Environment, MSlock, StandardVarEnv};
     use crate::event::{Event, EventPayload, EventResult, MouseEvent};
     use crate::native::view::button::{init_button_view, update_button_view};
     use crate::state::{Binding, SetAction, Signal, Store};
     use crate::util::geo::{Rect, Size};
-    use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, Subtree, ViewProvider, DummyProvider, View, ViewRef};
+    use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, Subtree, ViewProvider, View, ViewRef};
+    use crate::view::text::Text;
 
     pub struct Button {
         phantom_data: PhantomData<()>
     }
 
     impl Button {
-        pub fn new<E>(text: String, action: impl Fn(MSlock) + 'static)
+        pub fn new<E>(text: impl Into<String>, action: impl Fn(MSlock) + 'static)
                       -> impl IntoViewProvider<E, UpContext=(), DownContext=()>
-            where E: Environment
+            where E: Environment, E::Variable: AsRef<StandardVarEnv>
         {
-            todo!();
-            return DummyProvider(PhantomData)
+            Self::new_with_label(
+                Text::new(text),
+                action
+            )
         }
 
         pub fn new_with_label<E, I>(view: I, action: impl Fn(MSlock) + 'static)
@@ -391,7 +394,7 @@ mod dropdown {
         }
 
         fn init_backing(&mut self, invalidator: WeakInvalidator<E>, _subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, s: MSlock) -> NativeView {
-            self.current.listen(move |v, s| {
+            self.current.listen(move |_v, s| {
                 let Some(invalidator) = invalidator.upgrade() else {
                     return false;
                 };

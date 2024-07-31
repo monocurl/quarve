@@ -193,7 +193,6 @@ mod callbacks {
 
     #[no_mangle]
     extern "C" fn front_free_screen_unit_binding(bx: FatPointer) {
-        println!("Free Binding");
         let _b: Box<dyn Fn(ScreenUnit, MSlock)> = unsafe {
             std::mem::transmute(bx)
         };
@@ -216,6 +215,48 @@ mod callbacks {
     #[no_mangle]
     extern "C" fn front_free_opt_string_binding(bx: FatPointer) {
         let _b: Box<dyn Fn(*const u8, MSlock)> = unsafe {
+            std::mem::transmute(bx)
+        };
+    }
+
+    #[no_mangle]
+    extern "C" fn front_set_opt_i32_binding(bx: FatPointer, has_value: u8, value: i32) {
+        let s = unsafe {
+            slock_force_main_owner()
+        };
+        let b: Box<dyn Fn(Option<i32>, MSlock)> = unsafe {
+            std::mem::transmute(bx)
+        };
+
+        b(if has_value != 0 { Some(value) } else { None }, s.marker());
+
+        std::mem::forget(b);
+    }
+
+    #[no_mangle]
+    extern "C" fn front_free_opt_i32_binding(bx: FatPointer) {
+        let _b: Box<dyn Fn(u8, MSlock)> = unsafe {
+            std::mem::transmute(bx)
+        };
+    }
+
+    #[no_mangle]
+    extern "C" fn front_set_bool_binding(bx: FatPointer, value: u8) {
+        let s = unsafe {
+            slock_force_main_owner()
+        };
+        let b: Box<dyn Fn(u8, MSlock)> = unsafe {
+            std::mem::transmute(bx)
+        };
+
+        b(value, s.marker());
+
+        std::mem::forget(b);
+    }
+
+    #[no_mangle]
+    extern "C" fn front_free_bool_binding(bx: FatPointer) {
+        let _b: Box<dyn Fn(u8, MSlock)> = unsafe {
             std::mem::transmute(bx)
         };
     }
@@ -765,7 +806,7 @@ pub mod view {
 
     pub mod text_field {
         use std::ffi;
-        use std::ffi::{c_void, CString};
+        use std::ffi::{c_char, c_void, CStr, CString};
         use crate::core::{MSlock, StandardVarEnv};
         use crate::native::view::{back_text_field_init, back_text_field_size, back_text_field_update};
         use crate::state::{Binding, Filterless, SetAction};
@@ -773,9 +814,10 @@ pub mod view {
 
         pub fn text_field_init(content: impl Binding<Filterless<String>>, focused: impl Binding<Filterless<Option<i32>>>, _s: MSlock) -> *mut c_void {
             unsafe {
-                let set_text = Box::new(move |val, s: MSlock|  {
-                    content.apply(SetAction::Set(val), s);
-                }) as Box<dyn Fn(String, MSlock)>;
+                let set_text = Box::new(move |str: *const u8, s: MSlock|  {
+                    let cstr = CStr::from_ptr(str as *const c_char);
+                    content.apply(SetAction::Set(CString::from(cstr).into_string().unwrap()), s);
+                }) as Box<dyn Fn(*const u8, MSlock)>;
                 let set_text = std::mem::transmute(set_text);
 
                 let set_focused= Box::new(move |val, s: MSlock|  {

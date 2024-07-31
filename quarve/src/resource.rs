@@ -1,4 +1,4 @@
-use std::ffi::{CStr, CString};
+use std::ffi::{CString};
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 
@@ -20,7 +20,7 @@ fn resource_root() -> PathBuf {
     }
 }
 
-#[derive(PartialEq, Eq, Clone)]
+#[derive(PartialEq, Eq, Clone, Debug)]
 pub struct Resource(PathBuf);
 
 impl Resource {

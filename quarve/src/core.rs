@@ -121,7 +121,6 @@ mod environment {
     use crate::resource::Resource;
     use crate::util::geo::ScreenUnit;
     use crate::view::menu::MenuChannel;
-    use crate::view::text::Justification;
     use crate::view::util::Color;
 
     pub trait Environment: 'static {
@@ -171,7 +170,7 @@ mod environment {
         }
     }
 
-    #[derive(Clone)]
+    #[derive(Clone, Debug)]
     pub struct TextEnv {
         pub bold: bool,
         pub italic: bool,
@@ -183,7 +182,7 @@ mod environment {
         pub size: ScreenUnit,
     }
 
-    #[derive(Clone)]
+    #[derive(Clone, Debug)]
     pub struct StandardVarEnv {
         pub text: TextEnv
     }
@@ -629,9 +628,10 @@ mod window {
             // equalize level
             let mut targ_stack = vec![];
 
-            let mut targ_depth = to.as_ref().map(|t| t.borrow_main(s).depth() as i32).unwrap_or(-1);
+            let mut org_targ_depth = to.as_ref().map(|t| t.borrow_main(s).depth() as i32).unwrap_or(-1);
+            let mut targ_depth = org_targ_depth;
 
-            let mut targ = to;
+            let mut targ = to.clone();
             while *curr_depth > targ_depth {
                 if *curr_depth == min_depth {
                     // about to perform double borrow, abort
@@ -681,7 +681,11 @@ mod window {
             for node in targ_stack.into_iter().rev() {
                 node.borrow_mut_main(s)
                     .push_environment(env, s);
+                *curr_depth += 1;
             }
+
+            *curr = to;
+            debug_assert_eq!(*curr_depth, org_targ_depth);
 
             true
         }
@@ -922,7 +926,7 @@ mod window {
 
                 // move environment to target
                 drop(view_borrow);
-                if !Self::walk_env(env, &mut env_spot.clone(), Some(view.clone()), &mut env_depth, depth, s) {
+                if !Self::walk_env(env, &mut env_spot, Some(view.clone()), &mut env_depth, depth, s) {
                     // must be out of scope, mark as unhandled
                     unhandled.push(curr);
                     continue;

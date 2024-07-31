@@ -66,6 +66,7 @@ impl quarve::core::WindowProvider for WindowProvider {
     fn root(&self, env: &<Env as Environment>::Const, s: MSlock) -> impl ViewProvider<Env, DownContext=()> {
         let offset_y = Store::new(0.0);
         let selected = Store::new(None);
+        let text = Store::new("Velociraptor".to_owned());
 
         let v1 = ScrollView::vertical_with_binding(
             VStack::hetero_options(VStackOptions::default().align(HorizontalAlignment::Leading))
@@ -94,8 +95,11 @@ impl quarve::core::WindowProvider for WindowProvider {
                         .bold()
                 )
                 .push(
-                    TextField::new(Store::new("".to_owned()).binding())
+                    TextField::new(text.binding())
                 )
+                // .push(
+                //     TextField::new(text.binding())
+                // )
                 .push(
                     Dropdown::new(selected.binding())
                         .option("Hello")

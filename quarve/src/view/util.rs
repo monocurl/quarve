@@ -78,7 +78,7 @@ mod size_container {
 pub use size_container::*;
 
 mod color {
-    #[derive(Default, Copy, Clone, PartialEq, Eq)]
+    #[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
     #[repr(C)]
     pub struct Color {
         r: u8, g: u8, b: u8, a: u8
