@@ -1,13 +1,16 @@
-use quarve::core::{Application, Environment, launch, MSlock, StandardConstEnv, StandardVarEnv};
+use quarve::core::{Application, Environment, launch, MSlock, run_main_async, StandardConstEnv, StandardVarEnv};
 use quarve::event::EventModifiers;
-use quarve::state::{FixedSignal, Signal, Store};
+use quarve::state::{Bindable, FixedSignal, SetAction, Signal, Store, TokenStore};
 use quarve::util::geo::{Alignment, HorizontalAlignment, Size};
 use quarve::view::{ViewProvider, IntoViewProvider, WeakInvalidator};
+use quarve::view::color_view::EmptyView;
+use quarve::state::Binding;
 use quarve::view::conditional::view_if;
 use quarve::view::control::{Button, Dropdown};
 use quarve::view::layout::*;
 use quarve::view::menu::{Menu, MenuButton, MenuSend, WindowMenu};
 use quarve::view::modifers::{Cursor, CursorModifiable, EnvironmentModifier, Frame, FrameModifiable, OffsetModifiable, PaddingModifiable};
+use quarve::view::portal::{Portal, PortalReceiver, PortalSendable};
 use quarve::view::scroll::ScrollView;
 use quarve::view::text::{Text, TextField, TextModifier};
 use quarve::view::undo_manager::{UndoManager, UndoManagerExt};
@@ -67,6 +70,11 @@ impl quarve::core::WindowProvider for WindowProvider {
         let offset_y = Store::new(0.0);
         let selected = Store::new(None);
         let text = Store::new("Velociraptor".to_owned());
+        let focused = TokenStore::new(Some(2));
+        let binding = focused.binding();
+        let binding2 = focused.binding();
+
+        // let portal = Portal::new();
 
         let v1 = ScrollView::vertical_with_binding(
             VStack::hetero_options(VStackOptions::default().align(HorizontalAlignment::Leading))
@@ -74,11 +82,16 @@ impl quarve::core::WindowProvider for WindowProvider {
                     Button::new_with_label(
                         Color::black()
                             .intrinsic(100, 100),
-                        |s| {
-
+                        move |s| {
+                            binding.apply(SetAction::Set(None), s);
                         }
                     )
                         .offset_signal(FixedSignal::new(0.0), offset_y.signal())
+                )
+                .push(
+                    Button::new("Focus", move |s| {
+                        binding2.apply(SetAction::Set(Some(2)), s);
+                    })
                 )
                 .push(
                     Dropdown::new(selected.binding())
@@ -92,10 +105,8 @@ impl quarve::core::WindowProvider for WindowProvider {
                 )
                 .push(
                     TextField::new(text.binding())
+                        .focused_if_eq(focused.binding(), 2)
                         .text_size(24.0)
-                )
-                .push(
-                    TextField::new(text.binding())
                 )
                 .push(
                     Dropdown::new(selected.binding())

@@ -808,7 +808,7 @@ pub mod view {
         use std::ffi;
         use std::ffi::{c_char, c_void, CStr, CString};
         use crate::core::{MSlock, StandardVarEnv};
-        use crate::native::view::{back_text_field_init, back_text_field_size, back_text_field_update};
+        use crate::native::view::{back_text_field_focus, back_text_field_init, back_text_field_size, back_text_field_unfocus, back_text_field_update};
         use crate::state::{Binding, Filterless, SetAction};
         use crate::util::geo::Size;
 
@@ -849,6 +849,18 @@ pub mod view {
                     cpath.as_ref().map(|c| c.as_bytes().as_ptr()).unwrap_or(0 as *const u8),
                     env.text.size
                 )
+            }
+        }
+
+        pub fn text_field_focus(view: *mut c_void, _s: MSlock) {
+            unsafe {
+                back_text_field_focus(view)
+            }
+        }
+
+        pub fn text_field_unfocus(view: *mut c_void, _s: MSlock) {
+            unsafe {
+                back_text_field_unfocus(view)
             }
         }
 

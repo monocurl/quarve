@@ -456,7 +456,7 @@ mod vec_layout {
         use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, Subtree, UpContextAdapter, View, ViewProvider, ViewRef};
         use crate::view::layout::{VecLayoutProvider};
 
-        pub trait HeteroIVPNode<E, U, D> where E: Environment, U: 'static, D: 'static {
+        pub trait HeteroIVPNode<E, U, D> : where E: Environment, U: 'static, D: 'static {
             fn into_layout(self, env: &E::Const, build: impl HeteroVPNode<E, U, D>, s: MSlock) -> impl HeteroVPNode<E, U, D>;
         }
 
@@ -753,7 +753,7 @@ mod vec_layout {
                   F: StateFilter<Target=Vec<S>>,
                   B: Binding<F>,
                   M: FnMut(&S, MSlock) -> P + 'static,
-                  U: Into<L::SubviewUpContext>,
+                  U: Into<L::SubviewUpContext> + 'static,
                   P: IntoViewProvider<E,
                       DownContext=L::SubviewDownContext,
                       UpContext=U
@@ -763,8 +763,7 @@ mod vec_layout {
             binding: B,
             layout: L,
             map: M,
-            // everything is static so dont care about variacne too much
-            phantom: PhantomData<(fn(S) -> P, F, E, S, U)>,
+            phantom: PhantomData<(fn(S, &U) -> P, F, E, S)>,
         }
 
         impl<E, S, F, B, M, U, P, L> VecBindingLayout<E, S, F, B, M, U, P, L>
@@ -815,7 +814,7 @@ mod vec_layout {
                   F: StateFilter<Target=Vec<S>>,
                   B: Binding<F>,
                   M: FnMut(&S, MSlock) -> P + 'static,
-                  U: Into<L::SubviewUpContext>,
+                  U: Into<L::SubviewUpContext> + 'static,
                   P: IntoViewProvider<E,
                       DownContext=L::SubviewDownContext,
                       UpContext=U

@@ -455,11 +455,11 @@ impl<E, U, D, P, W> ConditionalVPModifier<E> for PortalSenderVP<E, U, D, P, W>
 }
 
 pub trait PortalSendable<E>: IntoViewProvider<E> where E: Environment {
-    fn portal_sender<V: IntoViewProvider<E>>(self, portal: &Portal<E, V::UpContext, V::DownContext>, view: V) -> PortalSenderIVP<E, V::UpContext, V::DownContext, V, Self>;
+    fn portal_send<V: IntoViewProvider<E>>(self, portal: &Portal<E, V::UpContext, V::DownContext>, view: V) -> PortalSenderIVP<E, V::UpContext, V::DownContext, V, Self>;
 }
 
 impl<E, I> PortalSendable<E> for I where E: Environment, I: IntoViewProvider<E> {
-    fn portal_sender<V: IntoViewProvider<E>>(self, portal: &Portal<E, V::UpContext, V::DownContext>, view: V) -> PortalSenderIVP<E, V::UpContext, V::DownContext, V, Self>
+    fn portal_send<V: IntoViewProvider<E>>(self, portal: &Portal<E, V::UpContext, V::DownContext>, view: V) -> PortalSenderIVP<E, V::UpContext, V::DownContext, V, Self>
     {
         PortalSenderIVP {
             portal: Portal { inner: portal.inner.clone() },

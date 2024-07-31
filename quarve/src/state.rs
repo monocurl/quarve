@@ -1272,6 +1272,14 @@ mod store {
         fn upgrade(&self) -> Option<Self::Binding>;
     }
 
+    pub trait Bindable<F> where F: StateFilter {
+        type Binding: Binding<F> + Clone;
+        type WeakBinding: WeakBinding<F>;
+
+        fn binding(&self) -> Self::Binding;
+        fn weak_binding(&self) -> Self::WeakBinding;
+    }
+
     mod raw_store {
         use std::sync::Arc;
         use crate::core::Slock;
@@ -1302,7 +1310,7 @@ mod store {
         }
     }
 
-    mod raw_store_shared_owner {
+    pub(super) mod raw_store_shared_owner {
         use std::marker::PhantomData;
         use std::sync::Arc;
         use crate::core::{Slock};
@@ -1469,11 +1477,11 @@ mod store {
             }
         }
 
-        pub(super) struct ActualInverseListenerHolder(Option<BoxInverseListener>);
+        pub(super) struct InverseListenerHolderImpl(Option<BoxInverseListener>);
 
-        impl InverseListenerHolder for ActualInverseListenerHolder {
+        impl InverseListenerHolder for InverseListenerHolderImpl {
             fn new() -> Self {
-                ActualInverseListenerHolder(None)
+                InverseListenerHolderImpl(None)
             }
 
             fn set_listener(&mut self, listener: BoxInverseListener) {
@@ -1630,9 +1638,12 @@ mod store {
             }
         }
 
-        macro_rules! impl_adhoc_inner {
+        macro_rules! impl_bindable_inner {
             ($s:ty, $f:ty) => {
-                pub fn binding(&self) -> impl Binding<$f> + Clone {
+                type Binding = GeneralBinding<$f, Self>;
+                type WeakBinding = GeneralWeakBinding<$f, Self>;
+
+                fn binding(&self) -> Self::Binding {
                     <Self as RawStoreSharedOwner<$f>>::Inner::strong_count_increment(self.inner_ref());
 
                     GeneralBinding {
@@ -1641,7 +1652,7 @@ mod store {
                     }
                 }
 
-                pub fn weak_binding(&self) -> impl WeakBinding<$f> {
+                fn weak_binding(&self) -> Self::WeakBinding {
                     let ret: GeneralWeakBinding<$f, Self> = GeneralWeakBinding {
                         weak: Arc::downgrade(self.inner_ref()),
                         phantom: PhantomData
@@ -1649,6 +1660,11 @@ mod store {
                     ret
                 }
 
+            }
+        }
+
+        macro_rules! impl_adhoc_inner {
+            ($s:ty, $f:ty) => {
                 pub fn signal(&self) -> impl Signal<Target=$s> + Clone {
                     <Self as RawStoreSharedOwner<$f>>::Inner::strong_count_increment(self.inner_ref());
 
@@ -1687,7 +1703,7 @@ mod store {
             };
         }
 
-        pub(super) use {impl_store_container_inner, impl_signal_inner, impl_adhoc_inner};
+        pub(super) use {impl_store_container_inner, impl_signal_inner, impl_bindable_inner, impl_adhoc_inner};
     }
 
     /* MARK: Stores */
@@ -1695,33 +1711,32 @@ mod store {
         use std::marker::PhantomData;
         use std::ops::{Deref, DerefMut};
         use std::sync::Arc;
-        use crate::state::StateListener;
+        use crate::state::{Bindable, StateListener};
         use crate::state::store::state_ref::StateRef;
         use crate::{
-            state::{WeakBinding, StateFilter, Filterless, IntoAction, Signal, Stateful, StoreContainer, GeneralSignal},
+            state::{StateFilter, Filterless, IntoAction, Signal, Stateful, StoreContainer, GeneralSignal},
             core::Slock,
         };
-        use crate::state::{Binding};
         use crate::state::{Filter};
         use crate::state::listener::{GeneralListener, InverseListener};
         use crate::state::slock_cell::SlockCell;
         use crate::state::store::action_inverter::ActionInverter;
         use crate::state::store::general_binding::{GeneralBinding, GeneralWeakBinding};
-        use crate::state::store::inverse_listener_holder::ActualInverseListenerHolder;
-        use crate::state::store::macros::{impl_adhoc_inner, impl_signal_inner, impl_store_container_inner};
+        use crate::state::store::inverse_listener_holder::InverseListenerHolderImpl;
+        use crate::state::store::macros::{impl_adhoc_inner, impl_bindable_inner, impl_signal_inner, impl_store_container_inner};
         use crate::state::store::raw_store::RawStore;
         use crate::state::store::raw_store_shared_owner::RawStoreSharedOwner;
         use crate::state::store::store_dispatcher::StoreDispatcher;
         use crate::util::marker::ThreadMarker;
 
         pub(super) struct InnerStore<S: Stateful, F: StateFilter<Target=S>> {
-            dispatcher: StoreDispatcher<S, F, ActualInverseListenerHolder>
+            dispatcher: StoreDispatcher<S, F, InverseListenerHolderImpl>
         }
 
         impl<S, F> RawStore<F> for InnerStore<S, F>
             where S: Stateful, F: StateFilter<Target=S>
         {
-            type InverseListenerHolder = ActualInverseListenerHolder;
+            type InverseListenerHolder = InverseListenerHolderImpl;
 
             fn dispatcher(&self) -> &StoreDispatcher<S, F, Self::InverseListenerHolder> {
                 &self.dispatcher
@@ -1799,6 +1814,12 @@ mod store {
             impl_store_container_inner!();
         }
 
+        impl<S, M> Bindable<M> for Store<S, M>
+            where S: Stateful, M: StateFilter<Target=S>
+        {
+            impl_bindable_inner!(S, M);
+        }
+
         impl<S, M> Store<S, M>
             where S: Stateful, M: StateFilter<Target=S>
         {
@@ -1841,31 +1862,30 @@ mod store {
         use std::hash::Hash;
         use std::ops::{Deref, DerefMut};
         use std::sync::Arc;
-        use crate::state::{Binding, StateListener};
+        use crate::state::{Bindable, StateListener};
         use crate::state::store::state_ref::StateRef;
         use crate::core::{Slock};
         use crate::state::{StateFilter, Filter, Filterless, GeneralListener, GeneralSignal, IntoAction, Signal, Stateful, StoreContainer};
         use crate::state::store::action_inverter::ActionInverter;
-        use crate::state::store::inverse_listener_holder::ActualInverseListenerHolder;
-        use crate::state::store::macros::{impl_adhoc_inner, impl_signal_inner, impl_store_container_inner};
+        use crate::state::store::inverse_listener_holder::InverseListenerHolderImpl;
+        use crate::state::store::macros::{impl_adhoc_inner, impl_bindable_inner, impl_signal_inner, impl_store_container_inner};
         use crate::state::store::store_dispatcher::StoreDispatcher;
         use crate::state::InverseListener;
         use crate::state::slock_cell::SlockCell;
         use crate::state::store::general_binding::{GeneralBinding, GeneralWeakBinding};
         use crate::state::store::raw_store::RawStore;
-        use crate::state::store::WeakBinding;
         use crate::state::store::raw_store_shared_owner::RawStoreSharedOwner;
         use crate::util::marker::ThreadMarker;
 
         pub(super) struct InnerTokenStore<S: Stateful + Copy + Hash + Eq, F: StateFilter<Target=S>> {
-            dispatcher: StoreDispatcher<S, F, ActualInverseListenerHolder>,
+            dispatcher: StoreDispatcher<S, F, InverseListenerHolderImpl>,
             equal_listeners: HashMap<S, Vec<Box<dyn FnMut(&S, Slock) -> bool + Send>>>,
         }
         impl<S, F> RawStore<F> for InnerTokenStore<S, F>
             where S: Stateful + Copy + Hash + Eq,
                   F: StateFilter<Target=S>
         {
-            type InverseListenerHolder = ActualInverseListenerHolder;
+            type InverseListenerHolder = InverseListenerHolderImpl;
 
             fn dispatcher(&self) -> &StoreDispatcher<S, F, Self::InverseListenerHolder> {
                 &self.dispatcher
@@ -1921,7 +1941,7 @@ mod store {
         }
 
         impl<S, F> TokenStore<S, F> where S: Stateful + Copy + Hash + Eq, F: StateFilter<Target=S> {
-            pub fn equals(&self, target: S, s: Slock) -> impl Signal<Target=bool> + Clone {
+            pub fn equals(&self, target: S, s: Slock<impl ThreadMarker>) -> impl Signal<Target=bool> + Clone {
                 GeneralSignal::from(self, &self.signal(), move |u| *u == target,
                     |this, listener, _s | {
                         this.inner.borrow_mut(s).equal_listeners.entry(target)
@@ -1976,6 +1996,11 @@ mod store {
             impl_store_container_inner!();
         }
 
+        impl<S, M> Bindable<M> for TokenStore<S, M>
+            where S: Stateful + Copy + Hash + Eq, M: StateFilter<Target=S> {
+            impl_bindable_inner!(S, M);
+        }
+
         impl<S, M> TokenStore<S, M>
             where S: Stateful + Copy + Hash + Eq, M: StateFilter<Target=S> {
             impl_adhoc_inner!(S, M);
@@ -2016,17 +2041,17 @@ mod store {
         use crate::state::store::state_ref::StateRef;
         use crate::{
             state::{
-                WeakBinding, StateFilter, Filterless, IntoAction, Signal, Stateful, StoreContainer, GeneralSignal,
+                StateFilter, Filterless, IntoAction, Signal, Stateful, StoreContainer, GeneralSignal,
             },
             core::Slock,
         };
-        use crate::state::{Binding, StateListener};
+        use crate::state::{Bindable, StateListener};
         use crate::state::{Filter};
         use crate::state::listener::{GeneralListener, InverseListener};
         use crate::state::slock_cell::SlockCell;
         use crate::state::store::general_binding::{GeneralBinding, GeneralWeakBinding};
         use crate::state::store::inverse_listener_holder::NullInverseListenerHolder;
-        use crate::state::store::macros::{impl_adhoc_inner, impl_signal_inner, impl_store_container_inner};
+        use crate::state::store::macros::{impl_adhoc_inner, impl_bindable_inner, impl_signal_inner, impl_store_container_inner};
         use crate::state::store::raw_store::RawStore;
         use crate::state::store::raw_store_shared_owner::RawStoreSharedOwner;
         use crate::state::store::store_dispatcher::StoreDispatcher;
@@ -2121,6 +2146,12 @@ mod store {
             impl_store_container_inner!();
         }
 
+        impl<S, M> Bindable<M> for DerivedStore<S, M>
+            where S: Stateful, M: StateFilter<Target=S>
+        {
+            impl_bindable_inner!(S, M);
+        }
+
         impl<S, M> DerivedStore<S, M>
             where S: Stateful, M: StateFilter<Target=S>
         {
@@ -2164,11 +2195,11 @@ mod store {
         use std::sync::atomic::AtomicUsize;
         use std::sync::atomic::Ordering::Release;
         use crate::state::store::state_ref::StateRef;
-        use crate::state::{StateListener, GeneralSignal};
+        use crate::state::{StateListener, GeneralSignal, Bindable};
         use crate::state::{GeneralListener, InverseListener, Filterless};
         use crate::{
             state::{
-                WeakBinding, StateFilter, IntoAction, Signal, Stateful, StoreContainer,
+                StateFilter, IntoAction, Signal, Stateful, StoreContainer,
             },
             core::Slock,
         };
@@ -2177,7 +2208,7 @@ mod store {
         use crate::state::slock_cell::SlockCell;
         use crate::state::store::general_binding::{GeneralBinding, GeneralWeakBinding};
         use crate::state::store::inverse_listener_holder::NullInverseListenerHolder;
-        use crate::state::store::macros::{impl_adhoc_inner, impl_signal_inner, impl_store_container_inner};
+        use crate::state::store::macros::{impl_adhoc_inner, impl_bindable_inner, impl_signal_inner, impl_store_container_inner};
         use crate::state::store::raw_store::RawStore;
         use crate::state::store::raw_store_shared_owner::RawStoreSharedOwner;
         use crate::state::store::store_dispatcher::StoreDispatcher;
@@ -2401,6 +2432,12 @@ mod store {
             impl_store_container_inner!();
         }
 
+        impl<I, IB, M, F, C> Bindable<F> for CoupledStore<I, IB, M, F, C>
+            where I: Stateful, IB: Binding<Filterless<I>>, M: Stateful, F: StateFilter<Target=M>, C: Coupler<I, M, F>
+        {
+            impl_bindable_inner!(M, F);
+        }
+
         impl<I, IB, M, F, C> CoupledStore<I, IB, M, F, C>
             where I: Stateful, IB: Binding<Filterless<I>>, M: Stateful, F: StateFilter<Target=M>, C: Coupler<I, M, F>
         {
@@ -2549,9 +2586,98 @@ mod store {
             }
         }
 
+        #[allow(private_bounds)]
+        impl<F, I> GeneralBinding<F, I> where F: StateFilter, I: RawStoreSharedOwner<F> {
+            pub fn store(&self) -> &I {
+                &self.inner
+            }
+        }
+
         impl<F, I> Drop for GeneralBinding<F, I> where F: StateFilter, I: RawStoreSharedOwner<F> {
             fn drop(&mut self) {
                 I::Inner::strong_count_decrement(self.inner.inner_ref());
+            }
+        }
+    }
+    pub use general_binding::*;
+
+    // only to make rust happy
+    pub mod unreachable_binding {
+        use std::marker::PhantomData;
+        use std::ops::Deref;
+        use std::sync::Arc;
+        use crate::core::Slock;
+        use crate::state::{GeneralSignal, IntoAction, Signal, StateFilter, Stateful};
+        use crate::state::slock_cell::{MainSlockCell, SlockCell};
+        use crate::state::store::inverse_listener_holder::InverseListenerHolderImpl;
+        use crate::state::store::raw_store::RawStore;
+        use crate::state::store::raw_store_shared_owner::RawStoreSharedOwner;
+        use crate::state::store::store_dispatcher::StoreDispatcher;
+        use crate::util::marker::ThreadMarker;
+
+        pub struct UnreachableBindingInner<F>(pub PhantomData<Arc<MainSlockCell<F>>>) where F: StateFilter;
+
+        impl<F> Deref for UnreachableBindingInner<F> where F: StateFilter {
+            type Target = F::Target;
+
+            fn deref(&self) -> &Self::Target {
+                unreachable!()
+            }
+        }
+
+        impl<F> RawStore<F> for UnreachableBindingInner<F> where F: StateFilter {
+            type InverseListenerHolder = InverseListenerHolderImpl;
+
+            fn dispatcher(&self) -> &StoreDispatcher<F::Target, F, Self::InverseListenerHolder> {
+                unreachable!()
+            }
+
+            fn dispatcher_mut(&mut self) -> &mut StoreDispatcher<F::Target, F, Self::InverseListenerHolder> {
+                unreachable!()
+            }
+
+            fn apply(_inner: &Arc<SlockCell<Self>>, _action: impl IntoAction<<F::Target as Stateful>::Action, F::Target>, _allow_nested: bool, _skip_filters: bool, _s: Slock<impl ThreadMarker>) {
+                unreachable!()
+            }
+        }
+
+        pub struct UnreachableBinding<F>(pub PhantomData<Arc<MainSlockCell<F>>>) where F: StateFilter;
+        impl<F> Signal for UnreachableBinding<F> where F: StateFilter {
+            type Target = F::Target;
+
+            fn borrow<'a>(&'a self, _s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=Self::Target> + 'a {
+                UnreachableBindingInner::<F>(PhantomData)
+            }
+
+            fn listen<G>(&self, _listener: G, _s: Slock<impl ThreadMarker>) where G: FnMut(&Self::Target, Slock) -> bool + Send + 'static {
+                unreachable!()
+            }
+
+            type MappedOutput<S: Send + 'static> = GeneralSignal<S>;
+            fn map<S, G>(&self, _map: G, _s: Slock<impl ThreadMarker>) -> Self::MappedOutput<S> where S: Send + 'static, G: Send + 'static + Fn(&Self::Target) -> S {
+                unreachable!()
+            }
+        }
+
+        impl<F> RawStoreSharedOwner<F> for UnreachableBinding<F> where F: StateFilter {
+            type Inner = UnreachableBindingInner<F>;
+
+            fn from_ref(_arc: Arc<SlockCell<Self::Inner>>) -> Self {
+                unreachable!()
+            }
+
+            fn inner_ref(&self) -> &Arc<SlockCell<Self::Inner>> {
+                unreachable!()
+            }
+
+            fn arc_clone(&self) -> Self {
+                unreachable!()
+            }
+        }
+
+        impl<F> Clone for UnreachableBinding<F> where F: StateFilter {
+            fn clone(&self) -> Self {
+                UnreachableBinding(PhantomData)
             }
         }
     }

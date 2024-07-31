@@ -251,7 +251,7 @@ impl UndoManager {
     }
 
     fn update_menus(&self, s: MSlock) {
-        let mut inner = self.inner.borrow_mut(s);
+        let inner = self.inner.borrow_mut(s);
         inner.update_menus(Arc::downgrade(&self.inner), s);
     }
 }

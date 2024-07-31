@@ -380,8 +380,8 @@ mod upcontext_adapter {
 pub use upcontext_adapter::*;
 
 // when need to return None for Option<impl ViewProvider> and need concrete type
-pub struct DummyProvider<E, U, D>(pub PhantomData<(E, U, D)>) where E: Environment, U: 'static, D: 'static;
-impl<E, U, D> IntoViewProvider<E> for DummyProvider<E, U, D>
+pub struct UnreachableProvider<E, U, D>(pub PhantomData<(E, U, D)>) where E: Environment, U: 'static, D: 'static;
+impl<E, U, D> IntoViewProvider<E> for UnreachableProvider<E, U, D>
     where E: Environment, U: 'static, D: 'static
 {
     type UpContext = U;
@@ -392,7 +392,7 @@ impl<E, U, D> IntoViewProvider<E> for DummyProvider<E, U, D>
     }
 }
 
-impl<E, U, D> ViewProvider<E> for DummyProvider<E, U, D>
+impl<E, U, D> ViewProvider<E> for UnreachableProvider<E, U, D>
     where E: Environment, U: 'static, D: 'static
 {
     type UpContext = U;

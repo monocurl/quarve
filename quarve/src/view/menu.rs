@@ -34,7 +34,6 @@ mod window_menu {
                 .push(MenuReceiver::new(&env.channels.cut_menu, "Cut", "x", EventModifiers::new().set_command(), s))
                 .push(MenuReceiver::new(&env.channels.copy_menu, "Copy", "c", EventModifiers::new().set_command(), s))
                 .push(MenuReceiver::new(&env.channels.paste_menu, "Paste", "v", EventModifiers::new().set_command(), s))
-                .push(MenuReceiver::new(&env.channels.delete_menu, "Delete", "", EventModifiers::new(), s))
                 .push(MenuSeparator::new())
                 .push(MenuReceiver::new(&env.channels.select_all_menu, "Select All", "a", EventModifiers::new().set_command(), s));
 

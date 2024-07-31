@@ -140,7 +140,6 @@ mod environment {
         pub cut_menu: MenuChannel,
         pub copy_menu: MenuChannel,
         pub paste_menu: MenuChannel,
-        pub delete_menu: MenuChannel,
         pub select_all_menu: MenuChannel
     }
 
@@ -157,7 +156,6 @@ mod environment {
                     cut_menu: MenuChannel::new(),
                     copy_menu: MenuChannel::new(),
                     paste_menu: MenuChannel::new(),
-                    delete_menu: MenuChannel::new(),
                     select_all_menu: MenuChannel::new(),
                 }
             }
@@ -281,7 +279,7 @@ mod window {
     use crate::{native, util};
     use crate::native::{WindowHandle};
     use crate::native::window::{window_exit, window_set_menu};
-    use crate::state::{ActualDiffSignal, Binding, Filterless, Signal, Store};
+    use crate::state::{ActualDiffSignal, Bindable, Binding, Filterless, Signal, Store};
     use crate::state::SetAction::Set;
     use crate::state::slock_cell::{MainSlockCell};
     use crate::util::geo::{Point, Rect, Size};
@@ -628,7 +626,7 @@ mod window {
             // equalize level
             let mut targ_stack = vec![];
 
-            let mut org_targ_depth = to.as_ref().map(|t| t.borrow_main(s).depth() as i32).unwrap_or(-1);
+            let org_targ_depth = to.as_ref().map(|t| t.borrow_main(s).depth() as i32).unwrap_or(-1);
             let mut targ_depth = org_targ_depth;
 
             let mut targ = to.clone();

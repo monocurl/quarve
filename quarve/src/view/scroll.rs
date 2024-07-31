@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use crate::core::{Environment, MSlock};
 use crate::{native};
 use crate::native::view::scroll::{scroll_view_set_x, scroll_view_set_y};
-use crate::state::{Binding, Buffer, Filterless, Store};
+use crate::state::{Bindable, Binding, Buffer, Filterless, Store};
 use crate::util::geo;
 use crate::util::geo::{Rect, ScreenUnit, Size};
 use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, NativeViewState, Subtree, View, ViewProvider, ViewRef};

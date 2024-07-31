@@ -139,19 +139,28 @@ back_text_size(void* view, size suggested)
 }
 
 // MARK: textfield
-@interface TextField : NSTextField
+@interface TextField : NSTextField<NSTextFieldDelegate>
 @property fat_pointer focused;
 @property fat_pointer text;
+@property BOOL scheduled_focused;
 @end
 
 @implementation TextField
 - (void) textDidChange:(NSNotification *)notification {
     front_set_opt_string_binding(self.text, (uint8_t *const) [self.stringValue UTF8String]);
 }
+- (void)viewDidMoveToWindow {
+    if (self.scheduled_focused) {
+        [self becomeFirstResponder];
+    }
+}
 
 // make first responder
 
 // resign first responder
+- (void)controlTextDidEndEditing:(NSNotification *)aNotification {
+    printf("Lost Focus\n");
+}
 @end
 
 void*
@@ -160,6 +169,9 @@ back_text_field_init(fat_pointer text_binding, fat_pointer focused_binding)
     TextField* tf = [[TextField alloc] init];
     tf.focused = focused_binding;
     tf.text = text_binding;
+    tf.scheduled_focused = NO;
+
+    tf.delegate = tf;
     return tf;
 }
 
@@ -167,14 +179,20 @@ void
 back_text_field_focus(void *view)
 {
     TextField* tf = view;
-    [tf becomeFirstResponder];
+    tf.scheduled_focused = YES;
+    if (tf.currentEditor == nil) {
+        [tf becomeFirstResponder];
+    }
 }
 
 void
 back_text_field_unfocus(void *view)
 {
     TextField* tf = view;
-    [tf resignFirstResponder];
+    tf.scheduled_focused = NO;
+    if (tf.currentEditor != nil) {
+        [tf.window makeFirstResponder:nil];
+    }
 }
 
 void

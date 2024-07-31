@@ -142,7 +142,7 @@ mod text {
             ()
         }
 
-        fn init_backing(&mut self, invalidator: WeakInvalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+        fn init_backing(&mut self, invalidator: WeakInvalidator<E>, _subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, s: MSlock) -> NativeView {
             self.text.listen(move |_, s| {
                 let Some(invalidator) = invalidator.upgrade() else {
                     return false;
@@ -176,7 +176,7 @@ mod text {
             true
         }
 
-        fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, _layout_context: &Self::DownContext, _env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
+        fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, _layout_context: &Self::DownContext, _env: &mut EnvRef<E>, _s: MSlock) -> (Rect, Rect) {
             (frame.full_rect(), frame.full_rect())
         }
     }
@@ -185,31 +185,59 @@ pub use text::*;
 
 mod text_field {
     use std::ffi::c_void;
+    use std::marker::PhantomData;
     use crate::core::{Environment, MSlock, StandardVarEnv};
-    use crate::native::view::text_field::{text_field_init, text_field_size, text_field_update};
-    use crate::state::{Binding, Filterless, Signal, TokenStore};
+    use crate::native::view::text_field::{text_field_focus, text_field_init, text_field_size, text_field_unfocus, text_field_update};
+    use crate::state::{Bindable, Binding, Filterless, Signal, TokenStore};
     use crate::util::geo;
     use crate::util::geo::{Rect, Size};
     use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, ViewProvider, WeakInvalidator};
 
-    pub struct TextField<B> where B: Binding<Filterless<String>> + Clone {
+    pub struct TextField<B>
+        where B: Binding<Filterless<String>> + Clone,
+    {
         text: B,
+        focused_token: i32,
+        focused: Option<<TokenStore<Option<i32>> as Bindable<Filterless<Option<i32>>>>::Binding>,
+        autofocus: bool,
         max_lines: u32
     }
 
-    struct TextFieldVP<B> where B: Binding<Filterless<String>> + Clone {
+    struct TextFieldVP<B>
+        where B: Binding<Filterless<String>> + Clone,
+    {
         text: B,
+        focused_token: i32,
+        focused: Option<<TokenStore<Option<i32>> as Bindable<Filterless<Option<i32>>>>::Binding>,
+        autofocus: bool,
         max_lines: u32,
         size: Size,
         backing: *mut c_void,
     }
 
-    impl<B> TextField<B> where B: Binding<Filterless<String>> + Clone {
-        pub fn new(binding: B) -> Self {
+    impl<B> TextField<B>
+        where B: Binding<Filterless<String>> + Clone,
+    {
+        pub fn new(binding: B) -> Self
+        {
             TextField {
                 text: binding,
+                focused_token: 0,
+                focused: None,
+                autofocus: false,
                 max_lines: 1
             }
+        }
+
+        pub fn focused_if_eq(mut self, indicator: <TokenStore<Option<i32>> as Bindable<Filterless<Option<i32>>>>::Binding, token: i32) -> Self {
+            self.focused = Some(indicator);
+            self.focused_token = token;
+            self
+        }
+
+        pub fn autofocus(mut self) -> Self {
+            self.autofocus = true;
+            self
         }
 
         pub fn max_lines(mut self, max_lines: u32) -> Self {
@@ -221,13 +249,17 @@ mod text_field {
     impl<E, B> IntoViewProvider<E> for TextField<B>
         where E: Environment,
               E::Variable: AsRef<StandardVarEnv>,
-              B: Binding<Filterless<String>> + Clone {
+              B: Binding<Filterless<String>> + Clone,
+    {
         type UpContext = ();
         type DownContext = ();
 
         fn into_view_provider(self, _env: &E::Const, _s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
             TextFieldVP {
                 text: self.text,
+                focused_token: self.focused_token,
+                focused: self.focused,
+                autofocus: self.autofocus,
                 max_lines: self.max_lines,
                 size: Size::default(),
                 backing: 0 as *mut c_void,
@@ -238,7 +270,8 @@ mod text_field {
     impl<E, B> ViewProvider<E> for TextFieldVP<B>
         where E: Environment,
               E::Variable: AsRef<StandardVarEnv>,
-              B: Binding<Filterless<String>> + Clone {
+              B: Binding<Filterless<String>> + Clone,
+    {
         type UpContext = ();
         type DownContext = ();
 
@@ -267,13 +300,25 @@ mod text_field {
         }
 
         fn init_backing(&mut self, invalidator: WeakInvalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+            let inv = invalidator.clone();
             self.text.listen(move |_, s| {
-                let Some(invalidator) = invalidator.upgrade() else {
+                let Some(invalidator) = inv.upgrade() else {
                     return false;
                 };
                 invalidator.invalidate(s);
                 true
             }, s);
+
+            if let Some(ref focused) = self.focused {
+                focused.store().equals(Some(self.focused_token), s)
+                    .listen(move |_, s| {
+                        let Some(invalidator) = invalidator.upgrade() else {
+                            return false;
+                        };
+                        invalidator.invalidate(s);
+                        true
+                    }, s);
+            }
 
             let nv = if let Some((nv, _)) = backing_source {
                 nv
@@ -290,6 +335,15 @@ mod text_field {
         }
 
         fn layout_up(&mut self, _subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
+            if let Some(ref focused) = self.focused {
+                if *focused.borrow(s) == Some(self.focused_token) {
+                     text_field_focus(self.backing, s);
+                }
+                else {
+                    text_field_unfocus(self.backing, s);
+                }
+            }
+
             text_field_update(
                 self.backing,
                 &*self.text.borrow(s),
@@ -297,6 +351,7 @@ mod text_field {
                 env.variable_env().as_ref(),
                 s
             );
+
             self.size = text_field_size(self.backing, Size::new(geo::UNBOUNDED, geo::UNBOUNDED), s);
             true
         }
