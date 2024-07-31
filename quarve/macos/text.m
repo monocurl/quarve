@@ -10,6 +10,8 @@ font_for(uint8_t const* name, double size, uint8_t bold, uint8_t italic)
 {
     if (!font_cache) {
         font_cache = [NSMutableDictionary dictionary];
+        // not fully sure why this is needed...
+        [font_cache retain];
     }
 
     NSString *font_name = name ? [NSString stringWithUTF8String:(const char *)name] : @"SystemFont";
@@ -142,6 +144,22 @@ back_text_size(void* view, size suggested)
 // make first responder
 
 // resign first responder
+
+- (void)setStringValue:(NSString *)aString {
+    [super setStringValue:aString];
+    [self applyUnderlineAttribute];
+}
+
+- (void)setAttributedStringValue:(NSAttributedString *)obj {
+    [super setAttributedStringValue:obj];
+    [self applyUnderlineAttribute];
+}
+
+- (void)applyUnderlineAttribute {
+    NSMutableAttributedString *attributedString = [[NSMutableAttributedString alloc] initWithAttributedString:[self attributedStringValue]];
+    [attributedString addAttribute:NSUnderlineStyleAttributeName value:@(NSUnderlineStyleSingle) range:NSMakeRange(0, [attributedString length])];
+    [super setAttributedStringValue:attributedString];
+}
 
 @end
 

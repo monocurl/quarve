@@ -89,17 +89,14 @@ impl quarve::core::WindowProvider for WindowProvider {
                     Text::new("Test")
                         .text_backcolor(Color::rgb(255, 0, 2))
                         .text_size(24.0)
-                        .text_color(Color::white())
-                        .text_font("SignikaNegative-Regular.ttf")
-                        .underline()
-                        .bold()
+                )
+                .push(
+                    TextField::new(text.binding())
+                        .text_size(24.0)
                 )
                 .push(
                     TextField::new(text.binding())
                 )
-                // .push(
-                //     TextField::new(text.binding())
-                // )
                 .push(
                     Dropdown::new(selected.binding())
                         .option("Hello")
@@ -122,7 +119,11 @@ impl quarve::core::WindowProvider for WindowProvider {
                     .unlimited_stretch()
                     .align(Alignment::Center)
             )
-            .mount_undo_manager(UndoManager::new(&selected, s));
+            .mount_undo_manager(UndoManager::new(&selected, s))
+            .text_color(Color::white())
+            .text_font("SignikaNegative-Regular.ttf")
+            .underline()
+            .bold();
 
         let v2 = ScrollView::vertical_with_binding(
                 VStack::hetero_options(VStackOptions::default().align(HorizontalAlignment::Leading))
