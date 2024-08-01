@@ -200,7 +200,10 @@ mod text_field {
         text: B,
         focused_token: i32,
         focused: Option<<TokenStore<Option<i32>> as Bindable<Filterless<Option<i32>>>>::Binding>,
+        callback: Option<Box<dyn FnMut(MSlock)>>,
         autofocus: bool,
+        unstyled: bool,
+        secret: bool,
         max_lines: u32
     }
 
@@ -210,7 +213,10 @@ mod text_field {
         text: B,
         focused_token: i32,
         focused: Option<<TokenStore<Option<i32>> as Bindable<Filterless<Option<i32>>>>::Binding>,
+        callback: Option<Box<dyn FnMut(MSlock)>>,
         autofocus: bool,
+        unstyled: bool,
+        secret: bool,
         max_lines: u32,
         intrinsic_size: Size,
         last_size: Size,
@@ -226,7 +232,10 @@ mod text_field {
                 text: binding,
                 focused_token: 0,
                 focused: None,
+                callback: None,
                 autofocus: false,
+                unstyled: false,
+                secret: false,
                 max_lines: 1
             }
         }
@@ -237,8 +246,25 @@ mod text_field {
             self
         }
 
-        pub fn autofocus(mut self) -> Self {
-            self.autofocus = true;
+        // TODO textfield autofocus
+        // pub fn autofocus(mut self) -> Self {
+        //     self.autofocus = true;
+        //     self
+        // }
+
+        // TODO password text
+        // pub fn secret(mut self) -> Self {
+        //     self.secret = true;
+        //     self
+        // }
+
+        pub fn action(mut self, f: impl FnMut(MSlock) + 'static) -> Self {
+            self.callback = Some(Box::new(f));
+            self
+        }
+
+        pub fn unstyled(mut self) -> Self {
+            self.unstyled = true;
             self
         }
 
@@ -261,7 +287,10 @@ mod text_field {
                 text: self.text,
                 focused_token: self.focused_token,
                 focused: self.focused,
+                callback: self.callback,
                 autofocus: self.autofocus,
+                unstyled: self.unstyled,
+                secret: self.secret,
                 max_lines: self.max_lines,
                 intrinsic_size: Size::default(),
                 last_size: Size::default(),
@@ -327,13 +356,17 @@ mod text_field {
                 nv
             }
             else {
+                let action = self.callback
+                    .take()
+                    .unwrap_or_else(|| Box::new(|_| {}));
+
                 unsafe {
                     if let Some(ref focused) = self.focused {
-                        NativeView::new(text_field_init(self.text.clone(), focused.clone(), self.focused_token, s), s)
+                        NativeView::new(text_field_init(self.text.clone(), focused.clone(), action, self.focused_token, self.unstyled, self.secret, s), s)
                     }
                     else {
                         let focused = TokenStore::new(None);
-                        NativeView::new(text_field_init(self.text.clone(), focused.binding(), self.focused_token, s), s)
+                        NativeView::new(text_field_init(self.text.clone(), focused.binding(), action, self.focused_token, self.unstyled, self.secret, s), s)
                     }
                 }
             };
@@ -343,6 +376,13 @@ mod text_field {
         }
 
         fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
+            if self.autofocus {
+                let view = Arc::downgrade(subtree.owner());
+                subtree.window().and_then(|w| w.upgrade()).unwrap()
+                    .borrow_main(s)
+                    .request_default_focus(view)
+            }
+
             if let Some(ref focused) = self.focused {
                 let view = Arc::downgrade(subtree.owner());
                 if *focused.borrow(s) == Some(self.focused_token) {
@@ -417,7 +457,13 @@ mod text_field {
                 }
             }
             else {
-                EventResult::Handled
+                // FIXME autofocus is not that great right now
+                if self.autofocus {
+                    EventResult::FocusAcquire
+                }
+                else {
+                    EventResult::Handled
+                }
             }
         }
     }

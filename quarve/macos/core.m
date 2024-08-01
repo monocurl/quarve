@@ -20,6 +20,9 @@ int performing_subview_insertion = 0;
 @interface ContentView : NSView
 @end
 
+@interface FieldEditor : NSTextView
+@end
+
 @interface Window : NSWindow<NSWindowDelegate> {
     /* callbacks */
     @public fat_pointer handle;
@@ -202,6 +205,26 @@ int performing_subview_insertion = 0;
 }
 - (void)windowWillExitFullScreen:(NSNotification *)notification {
     front_window_will_fullscreen(handle, NO);
+}
+
+- (NSText *)fieldEditor:(BOOL)createFlag
+              forObject:(id)object {
+    static FieldEditor *fieldEditor = nil;
+    if (!fieldEditor) {
+        fieldEditor = [[FieldEditor alloc] init];
+        fieldEditor.fieldEditor = YES;
+    }
+    return fieldEditor;
+}
+@end
+
+@implementation FieldEditor
+- (void)keyDown:(NSEvent *)event {
+    if (event.keyCode == 53) { // 53 is the key code for Escape
+        [self.window makeFirstResponder:nil];
+    } else {
+        [super keyDown:event];
+    }
 }
 @end
 

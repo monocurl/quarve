@@ -484,7 +484,7 @@ pub mod view {
         fn back_text_size(view: *mut c_void, suggested: Size) -> Size;
 
         /* text field */
-        fn back_text_field_init(text_binding: FatPointer, focused_binding: FatPointer, token: i32) -> *mut c_void;
+        fn back_text_field_init(text_binding: FatPointer, focused_binding: FatPointer, callback: FatPointer, token: i32, unstyled: u8, secret: u8) -> *mut c_void;
         fn back_text_field_focus(view: *mut c_void);
         fn back_text_field_unfocus(view: *mut c_void);
         fn back_text_field_update(
@@ -812,7 +812,11 @@ pub mod view {
         use crate::state::{Binding, Filterless, SetAction};
         use crate::util::geo::Size;
 
-        pub fn text_field_init(content: impl Binding<Filterless<String>>, focused: impl Binding<Filterless<Option<i32>>>, token: i32, _s: MSlock) -> *mut c_void {
+        pub fn text_field_init(
+            content: impl Binding<Filterless<String>>,
+            focused: impl Binding<Filterless<Option<i32>>>,
+            action: Box<dyn FnMut(MSlock)>,
+            token: i32, unstyled: bool, secret: bool, _s: MSlock) -> *mut c_void {
             unsafe {
                 let set_text = Box::new(move |str: *const u8, s: MSlock|  {
                     let cstr = CStr::from_ptr(str as *const c_char);
@@ -834,7 +838,8 @@ pub mod view {
                 }) as Box<dyn Fn(bool, i32, MSlock)>;
                 let set_focused= std::mem::transmute(set_focused);
 
-                back_text_field_init(set_text, set_focused, token)
+                let action = std::mem::transmute(action);
+                back_text_field_init(set_text, set_focused, action, token, unstyled as u8, secret as u8)
             }
         }
 

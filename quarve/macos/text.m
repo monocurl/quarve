@@ -139,14 +139,19 @@ back_text_size(void* view, size suggested)
 }
 
 // MARK: textfield
+@interface FieldEditor : NSTextView
+@end
+
 @interface TextField : NSTextField<NSTextFieldDelegate>
 @property fat_pointer focused;
 @property int32_t focused_token;
 @property fat_pointer text;
+@property fat_pointer callback;
 @property BOOL scheduled_focused;
 @end
 
 @implementation TextField
+
 - (void) textDidChange:(NSNotification *)notification {
     front_set_opt_string_binding(self.text, (uint8_t *const) [self.stringValue UTF8String]);
 }
@@ -207,6 +212,41 @@ back_text_size(void* view, size suggested)
     front_set_token_binding(self.focused, 0, self.focused_token);
 }
 
+// action
+- (void)action:(id)sender {
+    front_execute_fn_mut(self.callback);
+ }
+
+ - (void)keyDown:(NSEvent *)event {
+     if (event.keyCode == 53) { // 53 is the key code for Escape
+         [self.window makeFirstResponder:nil];
+     } else {
+         [super keyDown:event];
+     }
+}
+// key
+- (BOOL)control:(NSControl*)control textView:(NSTextView*)textView doCommandBySelector:(SEL)commandSelector
+{
+    BOOL result = NO;
+
+    if (commandSelector == @selector(insertTab:))
+    {
+        [self.window makeFirstResponder:nil];
+        front_set_token_binding(self.focused, 1, self.focused_token  + 1);
+
+        result = YES;
+    }
+    else if (commandSelector == @selector(insertBacktab:))
+    {
+        [self.window makeFirstResponder:nil];
+        front_set_token_binding(self.focused, 1, self.focused_token - 1);
+
+        result = YES;
+    }
+
+    return result;
+}
+
 - (void)dealloc {
     [super dealloc];
 
@@ -215,14 +255,34 @@ back_text_size(void* view, size suggested)
 }
 @end
 
+
 void*
-back_text_field_init(fat_pointer text_binding, fat_pointer focused_binding, int32_t token)
+back_text_field_init(
+    fat_pointer text_binding,
+    fat_pointer focused_binding,
+    fat_pointer callback,
+    int32_t token,
+    uint8_t unstyled,
+    uint8_t secure
+)
 {
+    (void) secure;
+
     TextField* tf = [[TextField alloc] init];
     tf.focused = focused_binding;
     tf.text = text_binding;
+    tf.callback = callback;
     tf.focused_token = token;
     tf.scheduled_focused = NO;
+    tf.drawsBackground = NO;
+    tf.bezeled = NO;
+
+    if (unstyled) {
+        tf.focusRingType = NSFocusRingTypeNone;
+    }
+
+    [tf setAction:@selector(action:)];
+    [tf setTarget:tf];
 
     tf.delegate = tf;
     return tf;

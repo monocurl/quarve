@@ -105,6 +105,7 @@ impl quarve::core::WindowProvider for WindowProvider {
                 )
                 .push(
                     TextField::new(text.binding())
+                        .unstyled()
                         .focused_if_eq(focused.binding(), 2)
                         .max_lines(0)
                         .text_size(24.0)
