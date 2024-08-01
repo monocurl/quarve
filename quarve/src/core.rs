@@ -825,7 +825,7 @@ mod window {
                     // 1. focus
                     let mut handled = false;
                     if let Some(focus_arc) = self.focus.borrow().deref().as_ref().and_then(|f| f.upgrade()) {
-                        let mut focus = focus_arc.borrow_mut_main(s);
+                        let focus = focus_arc.borrow_main(s);
                         let translate = -focus.view_rect_in_window(s).origin();
                         *at = raw_cursor.translate(translate);
                         handled = focus

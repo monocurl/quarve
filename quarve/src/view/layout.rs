@@ -1249,7 +1249,7 @@ mod vec_layout {
                     spacing: 10.0,
                     alignment: HorizontalAlignment::Center,
                     direction: VerticalDirection::Down,
-                    stretch: false
+                    stretch: true
                 }
             }
         }
@@ -1270,8 +1270,8 @@ mod vec_layout {
                 self
             }
 
-            pub fn stretch_children(mut self) -> Self {
-                self.stretch = true;
+            pub fn no_stretch(mut self) -> Self {
+                self.stretch = false;
                 self
             }
         }
@@ -1443,7 +1443,7 @@ mod vec_layout {
                     spacing: 10.0,
                     alignment: VerticalAlignment::Center,
                     direction: HorizontalDirection::Right,
-                    stretch: false
+                    stretch: true
                 }
             }
         }
@@ -1464,8 +1464,8 @@ mod vec_layout {
                 self
             }
 
-            pub fn stretch_children(mut self) -> Self {
-                self.stretch = true;
+            pub fn no_stretch(mut self) -> Self {
+                self.stretch = false;
                 self
             }
         }

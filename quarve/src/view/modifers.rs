@@ -706,32 +706,54 @@ mod provider_modifier {
         }
 
         fn xsquished_size(&mut self, src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, s: MSlock) -> Size {
-            let w = self.squished_w.unwrap_or(self.intrinsic_size(src, s).w);
-            let h = self.squished_h.unwrap_or(self.intrinsic_size(src, s).h);
+            let w = self.squished_w
+                .or(self.intrinsic.map(|i| i.w))
+                .unwrap_or_else(|| src.xsquished_size(s).w);
+            let h = self.squished_w
+                .or(self.intrinsic.map(|i| i.h))
+                .unwrap_or_else(|| src.xsquished_size(s).h);
             Size::new(w, h)
         }
 
         fn xstretched_size(&mut self, src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, s: MSlock) -> Size {
-            let w = self.stretched_w.unwrap_or(self.intrinsic_size(src, s).w);
-            let h = self.stretched_h.unwrap_or(self.intrinsic_size(src, s).h);
+            let w = self.stretched_w
+                .or(self.intrinsic.map(|i| i.w))
+                .unwrap_or_else(|| src.xstretched_size(s).w);
+            let h = self.stretched_h
+                .or(self.intrinsic.map(|i| i.h))
+                .unwrap_or_else(|| src.xstretched_size(s).h);
             Size::new(w, h)
         }
 
         fn ysquished_size(&mut self, src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, s: MSlock) -> Size {
-            self.xsquished_size(src, s)
+            let w = self.squished_w
+                .or(self.intrinsic.map(|i| i.w))
+                .unwrap_or_else(|| src.ysquished_size(s).w);
+            let h = self.squished_w
+                .or(self.intrinsic.map(|i| i.h))
+                .unwrap_or_else(|| src.ysquished_size(s).h);
+            Size::new(w, h)
         }
 
         fn ystretched_size(&mut self, src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, s: MSlock) -> Size {
-            self.xstretched_size(src, s)
+            let w = self.stretched_w
+                .or(self.intrinsic.map(|i| i.w))
+                .unwrap_or_else(|| src.ystretched_size(s).w);
+            let h = self.stretched_h
+                .or(self.intrinsic.map(|i| i.h))
+                .unwrap_or_else(|| src.ystretched_size(s).h);
+            Size::new(w, h)
         }
 
         fn layout_down(&mut self, src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, subtree: &Subtree<E>, frame: Size, layout_context: &D, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
-            let min = self.xsquished_size(src, s);
-            let max = self.xstretched_size(src, s);
+            let min_x = self.xsquished_size(src, s);
+            let max_x= self.xstretched_size(src, s);
+            let min_y = self.ysquished_size(src, s);
+            let max_y= self.ystretched_size(src, s);
 
             let chosen = Size::new(
-                frame.w.clamp(min.w, max.w),
-                frame.h.clamp(min.h, max.h)
+                frame.w.clamp(min_x.w, max_x.w),
+                frame.h.clamp(min_y.h, max_y.h)
             );
 
             // reposition

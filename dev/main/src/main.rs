@@ -76,7 +76,7 @@ impl quarve::core::WindowProvider for WindowProvider {
 
         // let portal = Portal::new();
 
-        let v1 = ScrollView::vertical_with_binding(
+        let v1 = ScrollView::vertical(
             VStack::hetero_options(VStackOptions::default().align(HorizontalAlignment::Leading))
                 .push(
                     Button::new_with_label(
@@ -106,7 +106,9 @@ impl quarve::core::WindowProvider for WindowProvider {
                 .push(
                     TextField::new(text.binding())
                         .focused_if_eq(focused.binding(), 2)
+                        .max_lines(0)
                         .text_size(24.0)
+                        .padding(10)
                 )
                 .push(
                     TextField::new(text.binding())
@@ -128,7 +130,7 @@ impl quarve::core::WindowProvider for WindowProvider {
                         .padding(10)
                         .border(Color::black(), 1)
                 ),
-            offset_y.binding()
+            // offset_y.binding()
         )
             .frame(Frame::default()
                 .intrinsic(300, 300)
@@ -171,10 +173,7 @@ impl quarve::core::WindowProvider for WindowProvider {
         VStack::hetero()
             .push(v1)
             .push(
-                view_if(offset_y.map(|y| *y < 10.0, s),
-                    v2
-                        .menu_send(&env.channels.select_all_menu, |_|println!("Delete"))
-                )
+                v2.menu_send(&env.channels.select_all_menu, |_|println!("Select All"))
             )
             .into_view_provider(env, s)
     }

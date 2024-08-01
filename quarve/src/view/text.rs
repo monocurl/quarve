@@ -287,15 +287,15 @@ mod text_field {
         }
 
         fn xstretched_size(&mut self, _s: MSlock) -> Size {
-            self.intrinsic_size
+            Size::new(geo::UNBOUNDED, 0.0)
         }
 
         fn ysquished_size(&mut self, _s: MSlock) -> Size {
-            self.intrinsic_size
+            Size::new(0.0, 0.0)
         }
 
         fn ystretched_size(&mut self, _s: MSlock) -> Size {
-            self.intrinsic_size
+            Size::new(0.0, geo::UNBOUNDED)
         }
 
         fn up_context(&mut self, _s: MSlock) -> Self::UpContext {
@@ -370,8 +370,16 @@ mod text_field {
         }
 
         fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, _layout_context: &Self::DownContext, _env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
-            self.last_size = frame;
-            (frame.full_rect(), frame.full_rect())
+            // reduce a little to avoid flickering
+            let inset = Size::new(
+                (frame.w - 4.0).max(0.0),
+                (frame.h - 4.0).max(0.0)
+            );
+            let mut size = text_field_size(self.backing, inset, s);
+            // always use fully given width
+            size.w = frame.w;
+            self.last_size = size;
+            (size.full_rect(), size.full_rect())
         }
 
         fn focused(&self, _rel_depth: u32, s: MSlock) {

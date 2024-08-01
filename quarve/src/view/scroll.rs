@@ -260,7 +260,7 @@ impl<E, P, BX, BY> ViewProvider<E> for ScrollViewVP<E, P, BX, BY>
 
     fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
         let w = if self.horizontal { geo::UNBOUNDED } else { frame.w };
-        let h = if self.horizontal { geo::UNBOUNDED } else { frame.h };
+        let h = if self.vertical { geo::UNBOUNDED } else { frame.h };
 
         let unbounded = Rect::new(0.0, 0.0, w, h);
 
