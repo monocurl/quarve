@@ -141,6 +141,7 @@ back_text_size(void* view, size suggested)
 // MARK: textfield
 @interface TextField : NSTextField<NSTextFieldDelegate>
 @property fat_pointer focused;
+@property int32_t focused_token;
 @property fat_pointer text;
 @property BOOL scheduled_focused;
 @end
@@ -149,6 +150,7 @@ back_text_size(void* view, size suggested)
 - (void) textDidChange:(NSNotification *)notification {
     front_set_opt_string_binding(self.text, (uint8_t *const) [self.stringValue UTF8String]);
 }
+
 - (void)viewDidMoveToWindow {
     if (self.scheduled_focused) {
         [self becomeFirstResponder];
@@ -156,19 +158,70 @@ back_text_size(void* view, size suggested)
 }
 
 // make first responder
+- (void) updateFocus {
+    if (self.currentEditor != nil) {
+        front_set_token_binding(self.focused, 1, self.focused_token);
+    }
+    else {
+        front_set_token_binding(self.focused, 0, self.focused_token);
+    }
+}
+
+- (BOOL)becomeFirstResponder
+{
+    BOOL status = [super becomeFirstResponder];
+    if (status) {
+        front_set_token_binding(self.focused, 1, self.focused_token);
+    }
+    return status;
+}
+
+- (void)controlTextDidBeginEditing:(NSNotification *)obj {
+    front_set_token_binding(self.focused, 1, self.focused_token);
+}
+
+- (void) mouseDown:(NSEvent*)event {
+    [super mouseDown:event];
+
+    [self updateFocus];
+}
+
+// for some reason contextual menus
+// dont invoke becomeFirstResponder at all??
+- (void) rightMouseDown:(NSEvent*)event {
+    front_set_token_binding(self.focused, 1, self.focused_token);
+    [super rightMouseDown:event];
+
+    [self updateFocus];
+}
+
+- (NSMenu *)menuForEvent:(NSEvent *)event {
+    NSMenu* ret = [super menuForEvent:event];
+
+    [self updateFocus];
+    return ret;
+}
 
 // resign first responder
 - (void)controlTextDidEndEditing:(NSNotification *)aNotification {
-    printf("Lost Focus\n");
+    front_set_token_binding(self.focused, 0, self.focused_token);
+}
+
+- (void)dealloc {
+    [super dealloc];
+
+    front_free_token_binding(self.focused);
+    front_free_opt_string_binding(self.text);
 }
 @end
 
 void*
-back_text_field_init(fat_pointer text_binding, fat_pointer focused_binding)
+back_text_field_init(fat_pointer text_binding, fat_pointer focused_binding, int32_t token)
 {
     TextField* tf = [[TextField alloc] init];
     tf.focused = focused_binding;
     tf.text = text_binding;
+    tf.focused_token = token;
     tf.scheduled_focused = NO;
 
     tf.delegate = tf;

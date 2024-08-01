@@ -220,22 +220,22 @@ mod callbacks {
     }
 
     #[no_mangle]
-    extern "C" fn front_set_opt_i32_binding(bx: FatPointer, has_value: u8, value: i32) {
+    extern "C" fn front_set_token_binding(bx: FatPointer, has_value: u8, value: i32) {
         let s = unsafe {
             slock_force_main_owner()
         };
-        let b: Box<dyn Fn(Option<i32>, MSlock)> = unsafe {
+        let b: Box<dyn Fn(bool, i32, MSlock)> = unsafe {
             std::mem::transmute(bx)
         };
 
-        b(if has_value != 0 { Some(value) } else { None }, s.marker());
+        b(has_value != 0, value, s.marker());
 
         std::mem::forget(b);
     }
 
     #[no_mangle]
-    extern "C" fn front_free_opt_i32_binding(bx: FatPointer) {
-        let _b: Box<dyn Fn(u8, MSlock)> = unsafe {
+    extern "C" fn front_free_token_binding(bx: FatPointer) {
+        let _b: Box<dyn Fn(bool, i32, MSlock)> = unsafe {
             std::mem::transmute(bx)
         };
     }
@@ -484,7 +484,7 @@ pub mod view {
         fn back_text_size(view: *mut c_void, suggested: Size) -> Size;
 
         /* text field */
-        fn back_text_field_init(text_binding: FatPointer, focused_binding: FatPointer) -> *mut c_void;
+        fn back_text_field_init(text_binding: FatPointer, focused_binding: FatPointer, token: i32) -> *mut c_void;
         fn back_text_field_focus(view: *mut c_void);
         fn back_text_field_unfocus(view: *mut c_void);
         fn back_text_field_update(
@@ -812,20 +812,29 @@ pub mod view {
         use crate::state::{Binding, Filterless, SetAction};
         use crate::util::geo::Size;
 
-        pub fn text_field_init(content: impl Binding<Filterless<String>>, focused: impl Binding<Filterless<Option<i32>>>, _s: MSlock) -> *mut c_void {
+        pub fn text_field_init(content: impl Binding<Filterless<String>>, focused: impl Binding<Filterless<Option<i32>>>, token: i32, _s: MSlock) -> *mut c_void {
             unsafe {
                 let set_text = Box::new(move |str: *const u8, s: MSlock|  {
                     let cstr = CStr::from_ptr(str as *const c_char);
-                    content.apply(SetAction::Set(CString::from(cstr).into_string().unwrap()), s);
+                    let string = CString::from(cstr).into_string().unwrap();
+                    if *content.borrow(s) != string {
+                        content.apply(SetAction::Set(string), s);
+                    }
                 }) as Box<dyn Fn(*const u8, MSlock)>;
                 let set_text = std::mem::transmute(set_text);
 
-                let set_focused= Box::new(move |val, s: MSlock|  {
-                    focused.apply(SetAction::Set(val), s);
-                }) as Box<dyn Fn(Option<i32>, MSlock)>;
+                let set_focused= Box::new(move |has_val, val, s: MSlock|  {
+                    if has_val {
+                        focused.apply(SetAction::Set(Some(val)), s);
+                    }
+                    else if *focused.borrow(s) == Some(val) {
+                        // only free if it's active
+                        focused.apply(SetAction::Set(None), s);
+                    }
+                }) as Box<dyn Fn(bool, i32, MSlock)>;
                 let set_focused= std::mem::transmute(set_focused);
 
-                back_text_field_init(set_text, set_focused)
+                back_text_field_init(set_text, set_focused, token)
             }
         }
 

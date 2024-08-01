@@ -40,11 +40,11 @@ extern void front_set_opt_string_binding(fat_pointer box, uint8_t const* value);
 // NOTE: can also be a string_binding
 extern void front_free_opt_string_binding(fat_pointer box);
 
-// box: Box<dyn Fn(Option<i32>, MSlock)>
-extern void front_set_opt_i32_binding(fat_pointer box, uint8_t has_value, int32_t value);
+// box: Box<dyn Fn(bool, i32, MSlock)>
+extern void front_set_token_binding(fat_pointer box, uint8_t has_value, int32_t value);
 
-// box: Box<dyn Fn(Option<i32>, MSlock)>
-extern void front_free_opt_i32_binding(fat_pointer box);
+// box: Box<dyn Fn(bool, i32, MSlock)>
+extern void front_free_token_binding(fat_pointer box);
 
 // box: Box<dyn Fn(u8, MSlock)>
 extern void front_set_bool_binding(fat_pointer box, uint8_t value);

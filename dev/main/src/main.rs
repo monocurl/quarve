@@ -99,13 +99,18 @@ impl quarve::core::WindowProvider for WindowProvider {
                         .option("World")
                 )
                 .push(
-                    Text::from_signal(text.signal())
+                    Text::from_signal(focused.map(|r| format!("Selected {:?}", r), s))
                         .text_backcolor(Color::rgb(255, 0, 2))
                         .text_size(24.0)
                 )
                 .push(
                     TextField::new(text.binding())
                         .focused_if_eq(focused.binding(), 2)
+                        .text_size(24.0)
+                )
+                .push(
+                    TextField::new(text.binding())
+                        .focused_if_eq(focused.binding(), 3)
                         .text_size(24.0)
                 )
                 .push(

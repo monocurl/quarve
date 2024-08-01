@@ -30,7 +30,7 @@ pub(crate) trait InnerViewBase<E> where E: Environment {
     fn depth(&self) -> u32;
 
     // true if handled
-    fn handle_mouse_event(&self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, event: &mut Event, prev_position: Point, s: MSlock) -> bool;
+    fn handle_mouse_event(&self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, event: &mut Event, prev_position: Point, focused: bool, s: MSlock) -> bool;
     // does not recurse
     fn handle_key_event(&mut self, event: &mut Event, s: MSlock) -> EventResult;
 
@@ -54,6 +54,9 @@ pub(crate) trait InnerViewBase<E> where E: Environment {
     fn translate(&mut self, by: Point, s: MSlock);
     // dispatches calculated frame to native
     fn finalize_view_frame(&self, s: MSlock);
+
+    fn scroll_offset(&self, s: MSlock) -> Point;
+    fn view_rect_in_window(&self, s: MSlock) -> Rect;
     fn view_rect(&self, s: MSlock) -> Rect;
     fn used_rect(&self, s: MSlock) -> Rect;
     fn suggested_rect(&self, _s: MSlock) -> Rect;
@@ -270,7 +273,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         self.graph.depth
     }
 
-    fn handle_mouse_event(&self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, event: &mut Event, prev_position: Point, s: MSlock) -> bool {
+    fn handle_mouse_event(&self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, event: &mut Event, prev_position: Point, focused: bool, s: MSlock) -> bool {
         let position = event.cursor();
 
         // last_bounding_rect is in parent coordinates
@@ -278,7 +281,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         let vf_offset = self.last_view_frame.origin();
         let prev_contains = self.last_bounding_rect.contains(prev_position.translate(vf_offset));
         let curr_contains = self.last_bounding_rect.contains(position.translate(vf_offset));
-        if !curr_contains && !prev_contains {
+        if !curr_contains && !prev_contains && !focused{
             return false;
         }
 
@@ -302,16 +305,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
             }
         }
 
-        let nv_delta = {
-            if let Some(borrow) = self.graph.native_view.state
-                .as_ref()
-                .map(|b| b.borrow(s)) {
-                Point::new(borrow.offset_x, borrow.offset_y)
-            }
-            else {
-                Point::new(0.0, 0.0)
-            }
-        };
+        let nv_delta = self.scroll_offset(s);
 
         self.graph.subviews.iter().rev()
             .any(|sv| {
@@ -321,7 +315,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
 
                 event.set_cursor(position.translate(delta));
 
-                borrow.handle_mouse_event(sv, event, prev, s)
+                borrow.handle_mouse_event(sv, event, prev, false, s)
             })
     }
 
@@ -387,6 +381,29 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
     fn finalize_view_frame(&self, s: MSlock) {
         debug_assert!(!self.needs_layout_down.get());
         view_set_frame(self.native_view(), self.last_view_frame, s)
+    }
+
+    fn scroll_offset(&self, s: MSlock) -> Point {
+        if let Some(borrow) = self.graph.native_view.state
+            .as_ref()
+            .map(|b| b.borrow(s)) {
+            Point::new(borrow.offset_x, borrow.offset_y)
+        }
+        else {
+            Point::new(0.0, 0.0)
+        }
+    }
+
+    fn view_rect_in_window(&self, s: MSlock) -> Rect {
+        let mut view = self.last_view_frame;
+        let mut curr = self.graph.superview.as_ref().and_then(|c| c.upgrade());
+        while let Some(at) = curr {
+            let this = at.borrow_main(s);
+            view = view.translate(this.view_rect(s).origin() + this.scroll_offset(s));
+            curr = this.superview();
+        }
+
+        view
     }
 
     fn view_rect(&self, _s: MSlock) -> Rect {

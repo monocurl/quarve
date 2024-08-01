@@ -808,19 +808,40 @@ mod window {
             self.performing_layout_down.set(false);
 
             self.clear_focus_request(s);
+            // theoretically there can be another invalidation requested
+            let relayout = !self.up_views.borrow().is_empty();
+            if relayout {
+                self.layout_full(w, h, s);
+            }
         }
 
         // FIXME, when weak fails to upgrade make the option None
         fn dispatch_native_event(&self, mut event: Event, s: MSlock) {
             match &mut event.payload {
                 EventPayload::Mouse(_, at) => {
-                    // match cursor
+                    let raw_cursor = *at;
+                    let last_cursor = self.last_cursor.take();
+
+                    // 1. focus
+                    let mut handled = false;
+                    if let Some(focus_arc) = self.focus.borrow().deref().as_ref().and_then(|f| f.upgrade()) {
+                        let mut focus = focus_arc.borrow_mut_main(s);
+                        let translate = -focus.view_rect_in_window(s).origin();
+                        *at = raw_cursor.translate(translate);
+                        handled = focus
+                            .handle_mouse_event(&focus_arc, &mut event, last_cursor.translate(translate), true, s);
+                    }
+
+                    // note: ensure cv is borrowed afterward in case focus == cv
                     let cv = self.content_view.borrow_mut_main(s);
-                    *at = at.translate(-cv.view_rect(s).origin());
+                    let EventPayload::Mouse(_, ref mut at) = event.payload else {
+                        unreachable!()
+                    };
+                    *at = raw_cursor.translate(-cv.view_rect(s).origin());
                     let cursor = *at;
-
-                    cv.handle_mouse_event(&self.content_view, &mut event, self.last_cursor.take(), s);
-
+                    if !handled {
+                        cv.handle_mouse_event(&self.content_view, &mut event, last_cursor, false, s);
+                    }
                     self.last_cursor.set(cursor);
                 },
                 EventPayload::Key(_) => 'key: {

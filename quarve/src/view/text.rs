@@ -185,10 +185,11 @@ pub use text::*;
 
 mod text_field {
     use std::ffi::c_void;
-    use std::marker::PhantomData;
+    use std::sync::Arc;
     use crate::core::{Environment, MSlock, StandardVarEnv};
+    use crate::event::{Event, EventPayload, EventResult, MouseEvent};
     use crate::native::view::text_field::{text_field_focus, text_field_init, text_field_size, text_field_unfocus, text_field_update};
-    use crate::state::{Bindable, Binding, Filterless, Signal, TokenStore};
+    use crate::state::{Bindable, Binding, Filterless, SetAction, Signal, TokenStore};
     use crate::util::geo;
     use crate::util::geo::{Rect, Size};
     use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, ViewProvider, WeakInvalidator};
@@ -211,7 +212,8 @@ mod text_field {
         focused: Option<<TokenStore<Option<i32>> as Bindable<Filterless<Option<i32>>>>::Binding>,
         autofocus: bool,
         max_lines: u32,
-        size: Size,
+        intrinsic_size: Size,
+        last_size: Size,
         backing: *mut c_void,
     }
 
@@ -261,7 +263,8 @@ mod text_field {
                 focused: self.focused,
                 autofocus: self.autofocus,
                 max_lines: self.max_lines,
-                size: Size::default(),
+                intrinsic_size: Size::default(),
+                last_size: Size::default(),
                 backing: 0 as *mut c_void,
             }
         }
@@ -276,7 +279,7 @@ mod text_field {
         type DownContext = ();
 
         fn intrinsic_size(&mut self, _s: MSlock) -> Size {
-            self.size
+            self.intrinsic_size
         }
 
         fn xsquished_size(&mut self, _s: MSlock) -> Size {
@@ -284,22 +287,22 @@ mod text_field {
         }
 
         fn xstretched_size(&mut self, _s: MSlock) -> Size {
-            self.size
+            self.intrinsic_size
         }
 
         fn ysquished_size(&mut self, _s: MSlock) -> Size {
-            self.size
+            self.intrinsic_size
         }
 
         fn ystretched_size(&mut self, _s: MSlock) -> Size {
-            self.size
+            self.intrinsic_size
         }
 
         fn up_context(&mut self, _s: MSlock) -> Self::UpContext {
             ()
         }
 
-        fn init_backing(&mut self, invalidator: WeakInvalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+        fn init_backing(&mut self, invalidator: WeakInvalidator<E>, _subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, s: MSlock) -> NativeView {
             let inv = invalidator.clone();
             self.text.listen(move |_, s| {
                 let Some(invalidator) = inv.upgrade() else {
@@ -325,8 +328,13 @@ mod text_field {
             }
             else {
                 unsafe {
-                    let focused = TokenStore::new(None);
-                    NativeView::new(text_field_init(self.text.clone(), focused.binding(), s), s)
+                    if let Some(ref focused) = self.focused {
+                        NativeView::new(text_field_init(self.text.clone(), focused.clone(), self.focused_token, s), s)
+                    }
+                    else {
+                        let focused = TokenStore::new(None);
+                        NativeView::new(text_field_init(self.text.clone(), focused.binding(), self.focused_token, s), s)
+                    }
                 }
             };
 
@@ -334,13 +342,18 @@ mod text_field {
             nv
         }
 
-        fn layout_up(&mut self, _subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
+        fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
             if let Some(ref focused) = self.focused {
+                let view = Arc::downgrade(subtree.owner());
                 if *focused.borrow(s) == Some(self.focused_token) {
-                     text_field_focus(self.backing, s);
+                    subtree.window().and_then(|w| w.upgrade()).unwrap()
+                        .borrow_main(s)
+                        .request_focus(view);
                 }
                 else {
-                    text_field_unfocus(self.backing, s);
+                    subtree.window().and_then(|w| w.upgrade()).unwrap()
+                        .borrow_main(s)
+                        .unrequest_focus(view);
                 }
             }
 
@@ -352,12 +365,52 @@ mod text_field {
                 s
             );
 
-            self.size = text_field_size(self.backing, Size::new(geo::UNBOUNDED, geo::UNBOUNDED), s);
+            self.intrinsic_size = text_field_size(self.backing, Size::new(geo::UNBOUNDED, geo::UNBOUNDED), s);
             true
         }
 
         fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, _layout_context: &Self::DownContext, _env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
+            self.last_size = frame;
             (frame.full_rect(), frame.full_rect())
+        }
+
+        fn focused(&self, _rel_depth: u32, s: MSlock) {
+            if let Some(ref f) = self.focused {
+                if *f.borrow(s) != Some(self.focused_token) {
+                    f.apply(SetAction::Set(Some(self.focused_token)), s);
+                }
+            }
+
+            text_field_focus(self.backing, s);
+        }
+
+        fn unfocused(&self, _rel_depth: u32, s: MSlock) {
+            if let Some(ref f) = self.focused {
+                if *f.borrow(s) == Some(self.focused_token) {
+                    f.apply(SetAction::Set(None), s);
+                }
+            }
+
+            text_field_unfocus(self.backing, s);
+        }
+        
+        fn handle_event(&self, e: &Event, _s: MSlock) -> EventResult {
+            if e.is_mouse() {
+                if let EventPayload::Mouse(MouseEvent::LeftDown, at) = &e.payload {
+                    if self.last_size.full_rect().contains(*at) {
+                        EventResult::FocusAcquire
+                    }
+                    else {
+                        EventResult::FocusRelease
+                    }
+                }
+                else {
+                    EventResult::NotHandled
+                }
+            }
+            else {
+                EventResult::Handled
+            }
         }
     }
 }
