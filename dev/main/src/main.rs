@@ -9,12 +9,14 @@ use quarve::view::conditional::view_if;
 use quarve::view::control::{Button, Dropdown};
 use quarve::view::layout::*;
 use quarve::view::menu::{Menu, MenuButton, MenuSend, WindowMenu};
+use quarve::view::modal::OpenFilePicker;
 use quarve::view::modifers::{Cursor, CursorModifiable, EnvironmentModifier, Frame, FrameModifiable, OffsetModifiable, PaddingModifiable};
 use quarve::view::portal::{Portal, PortalReceiver, PortalSendable};
 use quarve::view::scroll::ScrollView;
 use quarve::view::text::{Text, TextField, TextModifier};
 use quarve::view::undo_manager::{UndoManager, UndoManagerExt};
 use quarve::view::util::Color;
+use quarve_derive::StoreContainer;
 
 struct Env(StandardConstEnv, StandardVarEnv);
 
@@ -49,6 +51,12 @@ impl quarve::core::ApplicationProvider for ApplicationProvider {
     }
 }
 
+#[derive(StoreContainer)]
+struct Stores {
+    selected: Store<Option<String>>,
+    text: Store<String>
+}
+
 impl quarve::core::WindowProvider for WindowProvider {
     type Env = Env;
 
@@ -68,8 +76,12 @@ impl quarve::core::WindowProvider for WindowProvider {
 
     fn root(&self, env: &<Env as Environment>::Const, s: MSlock) -> impl ViewProvider<Env, DownContext=()> {
         let offset_y = Store::new(0.0);
-        let selected = Store::new(None);
-        let text = Store::new("Velociraptor".to_owned());
+        let stores = Stores {
+            selected: Store::new(None),
+            text: Store::new("Elide".to_string())
+        };
+        let selected = &stores.selected;
+        let text = &stores.text;
         let focused = TokenStore::new(Some(2));
         let binding = focused.binding();
         let binding2 = focused.binding();
@@ -83,6 +95,11 @@ impl quarve::core::WindowProvider for WindowProvider {
                         Color::black()
                             .intrinsic(100, 100),
                         move |s| {
+                            OpenFilePicker::new()
+                                .content_types("pdf")
+                                .run(|path, s| {
+
+                                });
                             binding.apply(SetAction::Set(None), s);
                         }
                     )
@@ -138,7 +155,7 @@ impl quarve::core::WindowProvider for WindowProvider {
                     .unlimited_stretch()
                     .align(Alignment::Center)
             )
-            .mount_undo_manager(UndoManager::new(&text, s))
+            .mount_undo_manager(UndoManager::new(&stores, s))
             .text_color(Color::white())
             .text_font("SignikaNegative-Regular.ttf")
             .underline()

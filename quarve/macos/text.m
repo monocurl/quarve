@@ -47,6 +47,8 @@ font_for(uint8_t const* name, double size, uint8_t bold, uint8_t italic)
             fprintf(stderr, "quarve: unable to load font %s; defaulting to system\n", name);
             font = [NSFont systemFontOfSize:size];
         }
+
+        [descriptors release];
     }
 
     NSFontManager *fontManager = [NSFontManager sharedFontManager];
@@ -125,6 +127,8 @@ back_text_update(
         // but this preserves the attributes upon selection
         tf.allowsEditingTextAttributes = underline || strikethrough || back.a != 0;
     }
+
+    [astr release];
 
     tf.maximumNumberOfLines = max_lines;
 }

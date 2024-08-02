@@ -5,10 +5,17 @@
 
 @interface Picker : NSObject
 @property(retain) NSSavePanel* panel;
-@property(copy) NSString* url;
+@property(retain) NSString* url;
 @end
 
 @implementation Picker
+- (void)dealloc {
+    if (self.url) {
+        [self.url release];
+    }
+
+    [super dealloc];
+}
 @end
 
 static NSMutableArray<UTType*>*
@@ -30,6 +37,8 @@ allowed_types(uint8_t const* mask)
         }
     }
 
+    [types retain];
+
     return types;
 }
 
@@ -37,7 +46,11 @@ void*
 back_file_open_picker_init(uint8_t const* allowed_mask) {
     Picker* picker = [Picker alloc];
     picker.panel = [NSOpenPanel openPanel];
-    picker.panel.allowedContentTypes = allowed_types(allowed_mask);
+
+    NSMutableArray<UTType*>* allowed = allowed_types(allowed_mask);
+    picker.panel.allowedContentTypes = allowed;
+    [allowed release];
+
     picker.url = NULL;
     return picker;
 }
@@ -66,7 +79,11 @@ void*
 back_file_save_picker_init(uint8_t const* allowed_mask) {
     Picker* picker = [Picker alloc];
     picker.panel = [NSSavePanel savePanel];
-    picker.panel.allowedContentTypes = allowed_types(allowed_mask);
+
+    NSMutableArray<UTType*>* allowed = allowed_types(allowed_mask);
+    picker.panel.allowedContentTypes = allowed;
+    [allowed release];
+
     picker.url = NULL;
     return picker;
 }

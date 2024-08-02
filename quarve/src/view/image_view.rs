@@ -39,7 +39,7 @@ impl ImageView {
 
     pub fn named(rel_path: &str) -> Self {
         ImageView {
-            location: Resource::new(Path::new(rel_path))
+            location: Resource::named(Path::new(rel_path))
         }
     }
 }

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 #[cfg(not(debug_assertions))]
 use crate::native;
 
-fn resource_root() -> PathBuf {
+pub fn resource_root() -> PathBuf {
     // if debug, just the project root
     #[cfg(debug_assertions)]
     {
@@ -20,15 +20,19 @@ fn resource_root() -> PathBuf {
     }
 }
 
+// pub fn app_root() -> PathBuf {
+//
+// }
+//
+// pub fn local_storage() -> PathBuf {
+//
+// }
+
 #[derive(PartialEq, Eq, Clone, Debug)]
-pub struct Resource(PathBuf);
+pub struct Resource(pub PathBuf);
 
 impl Resource {
-    pub fn new(rel_path: &Path) -> Resource {
-        Resource(resource_root().join(rel_path))
-    }
-
-    pub fn named(rel_path: &str) -> Resource {
+    pub fn named(rel_path: impl AsRef<Path>) -> Resource {
         Resource(resource_root().join(rel_path))
     }
 
@@ -62,6 +66,6 @@ impl Resource {
 
 impl From<&Path> for Resource {
     fn from(value: &Path) -> Self {
-        Self::new(value)
+        Self::named(value)
     }
 }

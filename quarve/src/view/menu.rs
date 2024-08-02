@@ -357,8 +357,8 @@ mod menu_sender {
 
     impl<E, I> MenuSend<E> for I where E: Environment, I: IntoViewProvider<E> {
         fn menu_send(self, on: &MenuChannel, action: impl FnMut(MSlock) + Clone + 'static) -> impl IntoViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
-            let mut mc1 = on.clone();
-            let mut mc2 = on.clone();
+            let mc1 = on.clone();
+            let mc2 = on.clone();
             self
                 .pre_show(move |s| {
                     mc1.set(Box::new(action.clone()), None, s)

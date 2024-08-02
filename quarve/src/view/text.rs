@@ -443,7 +443,6 @@ mod text_field {
             text_field_focus(self.backing, s);
 
             let backing = self.backing;
-            println!("Focus");
             self.select_all_menu.set(Box::new(move |s| {
                 text_field_select_all(backing, s);
             }), None, s);
@@ -603,7 +602,7 @@ mod env {
             let path = Path::new("font").join(rel_path);
 
             let mut text = TextEnvModifier::default();
-            text.font = Some(Some(Resource::new(path.deref())));
+            text.font = Some(Some(Resource::named(path.deref())));
             self.env_modifier(text)
         }
 
