@@ -138,7 +138,7 @@ impl quarve::core::WindowProvider for WindowProvider {
                     .unlimited_stretch()
                     .align(Alignment::Center)
             )
-            .mount_undo_manager(UndoManager::new(&selected, s))
+            .mount_undo_manager(UndoManager::new(&text, s))
             .text_color(Color::white())
             .text_font("SignikaNegative-Regular.ttf")
             .underline()
@@ -174,7 +174,7 @@ impl quarve::core::WindowProvider for WindowProvider {
         VStack::hetero()
             .push(v1)
             .push(
-                v2.menu_send(&env.channels.select_all_menu, |_|println!("Select All"))
+                v2
             )
             .into_view_provider(env, s)
     }

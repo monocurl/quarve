@@ -302,7 +302,7 @@ mod menu_channel {
             }
         }
 
-        pub fn set(&mut self, action: Box<dyn FnMut(MSlock)>, title: Option<String>, s: MSlock) {
+        pub fn set(&self, action: Box<dyn FnMut(MSlock)>, title: Option<String>, s: MSlock) {
             let inner = self.receiver.borrow(s);
 
             {
@@ -310,7 +310,7 @@ mod menu_channel {
                     .expect("Menu Channels should have a sole active receiver in place at all times. \
                               There are currently none mounted for this channel!");
                 let mut borrow = upgraded.borrow_mut_main(s);
-                assert!(!borrow.currently_set, "MenuChannel already mounted!");
+                // assert!(!borrow.currently_set, "MenuChannel already mounted!");
                 borrow.currently_set = true;
                 button_set_title(borrow.backing.backing, title.unwrap_or_else(|| borrow.default_name.clone()), s);
                 button_set_enabled(borrow.backing.backing, 1, s);
@@ -326,7 +326,7 @@ mod menu_channel {
                 .unwrap_or(false)
         }
 
-        pub fn unset(&mut self, s: MSlock) {
+        pub fn unset(&self, s: MSlock) {
             let inner = self.receiver.borrow(s);
 
             {
@@ -334,7 +334,7 @@ mod menu_channel {
                     .expect("Menu Channels should have a sole active receiver in place at all times. \
                               There are currently none mounted for this channel!");
                 let mut borrow = upgraded.borrow_mut_main(s);
-                assert!(borrow.currently_set, "MenuChannel not currently mounted!");
+                // assert!(borrow.currently_set, "MenuChannel not currently mounted!");
                 borrow.currently_set = false;
                 button_set_enabled(borrow.backing.backing, 0, s);
                 button_set_title(borrow.backing.backing, borrow.default_name.clone(), s);

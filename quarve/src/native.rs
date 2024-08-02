@@ -168,6 +168,9 @@ mod callbacks {
         };
         let s = slock_main_owner();
         b(s.marker());
+
+        // will be explicitly freed later
+        std::mem::forget(b);
     }
 
     #[no_mangle]
@@ -501,6 +504,10 @@ pub mod view {
             font_size: f64
         );
         fn back_text_field_size(view: *mut c_void, suggested: Size) -> Size;
+        fn back_text_field_select_all(view: *mut c_void);
+        fn back_text_field_cut(view: *mut c_void);
+        fn back_text_field_copy(view: *mut c_void);
+        fn back_text_field_paste(view: *mut c_void);
 
         /* message box */
         fn back_message_box_init(title: *const u8, message: *const u8) -> *mut c_void;
@@ -808,7 +815,7 @@ pub mod view {
         use std::ffi;
         use std::ffi::{c_char, c_void, CStr, CString};
         use crate::core::{MSlock, StandardVarEnv};
-        use crate::native::view::{back_text_field_focus, back_text_field_init, back_text_field_size, back_text_field_unfocus, back_text_field_update};
+        use crate::native::view::{back_text_field_copy, back_text_field_cut, back_text_field_focus, back_text_field_init, back_text_field_paste, back_text_field_select_all, back_text_field_size, back_text_field_unfocus, back_text_field_update};
         use crate::state::{Binding, Filterless, SetAction};
         use crate::util::geo::Size;
 
@@ -875,6 +882,30 @@ pub mod view {
         pub fn text_field_unfocus(view: *mut c_void, _s: MSlock) {
             unsafe {
                 back_text_field_unfocus(view)
+            }
+        }
+
+        pub fn text_field_select_all(view: *mut c_void, _s: MSlock) {
+            unsafe {
+                back_text_field_select_all(view);
+            }
+        }
+
+        pub fn text_field_cut(view: *mut c_void, _s: MSlock) {
+            unsafe {
+                back_text_field_cut(view);
+            }
+        }
+
+        pub fn text_field_copy(view: *mut c_void, _s: MSlock) {
+            unsafe {
+                back_text_field_copy(view);
+            }
+        }
+
+        pub fn text_field_paste(view: *mut c_void, _s: MSlock) {
+            unsafe {
+                back_text_field_paste(view);
             }
         }
 

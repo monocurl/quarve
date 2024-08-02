@@ -186,13 +186,14 @@ pub use text::*;
 mod text_field {
     use std::ffi::c_void;
     use std::sync::Arc;
-    use crate::core::{Environment, MSlock, StandardVarEnv};
+    use crate::core::{Environment, MSlock, StandardConstEnv, StandardVarEnv};
     use crate::event::{Event, EventPayload, EventResult, MouseEvent};
-    use crate::native::view::text_field::{text_field_focus, text_field_init, text_field_size, text_field_unfocus, text_field_update};
+    use crate::native::view::text_field::{text_field_copy, text_field_cut, text_field_focus, text_field_init, text_field_paste, text_field_select_all, text_field_size, text_field_unfocus, text_field_update};
     use crate::state::{Bindable, Binding, Filterless, SetAction, Signal, TokenStore};
     use crate::util::geo;
     use crate::util::geo::{Rect, Size};
     use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, ViewProvider, WeakInvalidator};
+    use crate::view::menu::MenuChannel;
 
     pub struct TextField<B>
         where B: Binding<Filterless<String>> + Clone,
@@ -221,6 +222,11 @@ mod text_field {
         intrinsic_size: Size,
         last_size: Size,
         backing: *mut c_void,
+
+        select_all_menu: MenuChannel,
+        cut_menu: MenuChannel,
+        copy_menu: MenuChannel,
+        paste_menu: MenuChannel,
     }
 
     impl<B> TextField<B>
@@ -276,13 +282,14 @@ mod text_field {
 
     impl<E, B> IntoViewProvider<E> for TextField<B>
         where E: Environment,
+              E::Const: AsRef<StandardConstEnv>,
               E::Variable: AsRef<StandardVarEnv>,
               B: Binding<Filterless<String>> + Clone,
     {
         type UpContext = ();
         type DownContext = ();
 
-        fn into_view_provider(self, _env: &E::Const, _s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
+        fn into_view_provider(self, env: &E::Const, _s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
             TextFieldVP {
                 text: self.text,
                 focused_token: self.focused_token,
@@ -295,6 +302,10 @@ mod text_field {
                 intrinsic_size: Size::default(),
                 last_size: Size::default(),
                 backing: 0 as *mut c_void,
+                select_all_menu: env.as_ref().channels.select_all_menu.clone(),
+                cut_menu: env.as_ref().channels.cut_menu.clone(),
+                copy_menu: env.as_ref().channels.copy_menu.clone(),
+                paste_menu: env.as_ref().channels.paste_menu.clone(),
             }
         }
     }
@@ -430,6 +441,21 @@ mod text_field {
             }
 
             text_field_focus(self.backing, s);
+
+            let backing = self.backing;
+            println!("Focus");
+            self.select_all_menu.set(Box::new(move |s| {
+                text_field_select_all(backing, s);
+            }), None, s);
+            self.cut_menu.set(Box::new(move |s| {
+                text_field_cut(backing, s);
+            }), None, s);
+            self.copy_menu.set(Box::new(move |s| {
+                text_field_copy(backing, s);
+            }), None, s);
+            self.paste_menu.set(Box::new(move |s| {
+                text_field_paste(backing, s);
+            }), None, s);
         }
 
         fn unfocused(&self, _rel_depth: u32, s: MSlock) {
@@ -440,6 +466,11 @@ mod text_field {
             }
 
             text_field_unfocus(self.backing, s);
+
+            self.select_all_menu.unset(s);
+            self.copy_menu.unset(s);
+            self.cut_menu.unset(s);
+            self.paste_menu.unset(s);
         }
         
         fn handle_event(&self, e: &Event, _s: MSlock) -> EventResult {

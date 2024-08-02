@@ -252,6 +252,7 @@ back_text_size(void* view, size suggested)
 
     front_free_token_binding(self.focused);
     front_free_opt_string_binding(self.text);
+    front_free_fn_mut(self.callback);
 }
 @end
 
@@ -343,6 +344,33 @@ back_text_field_size(void* view, size suggested)
     return (size) { s.width, s.height };
 }
 
+void
+back_text_field_select_all(void *view)
+{
+    TextField* tf = view;
+    [tf.currentEditor selectAll:view];
+}
+
+void
+back_text_field_cut(void *view)
+{
+    TextField* tf = view;
+    [tf.currentEditor cut:view];
+}
+
+void
+back_text_field_copy(void *view)
+{
+    TextField* tf = view;
+    [tf.currentEditor copy:view];
+}
+
+void
+back_text_field_paste(void *view)
+{
+    TextField* tf = view;
+    [tf.currentEditor paste:view];
+}
 
 // MARK: textview
 void
