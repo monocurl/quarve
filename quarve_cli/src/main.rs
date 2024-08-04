@@ -1,12 +1,14 @@
+mod util;
+
+use std::env::VarError;
 use std::fs::OpenOptions;
-use std::io;
 use std::io::Write;
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::process::{Command as Process};
 use clap::{Command, arg};
 use serde_json::Value;
-
-type Result<T> = io::Result<T>;
+use crate::util::copy_directory;
 
 fn append(name: &str, to: &str, contents: &str) {
     let mut toml = OpenOptions::new()
@@ -30,17 +32,15 @@ fn new(name: &str) {
     }
 
     // for local builds
-    let update =
-        // TODO this should instead be environment variables
-        if cfg!(debug_assertions) {
-            // typically done in debug or examples folder
+    let quarve_dep =
+        if std::env::var("QUARVE_DEV") != Err(VarError::NotPresent) {
             "quarve = { path = \"../../quarve\" }\n"
         }
         else {
             "quarve = { version = \"0.1.0\" }\n"
         };
 
-    append(name, "Cargo.toml", update);
+    append(name, "Cargo.toml", quarve_dep);
 
     append(name, ".gitignore", "quarve_target\n")
 }
@@ -48,6 +48,7 @@ fn new(name: &str) {
 fn find_path() -> PathBuf {
     let root = Process::new("cargo")
         .arg("locate-project")
+        .arg("--workspace")
         .arg("--message-format")
         .arg("plain")
         .output()
@@ -59,7 +60,7 @@ fn find_path() -> PathBuf {
         .to_owned()
 }
 
-fn find_name() -> String {
+fn find_name(name_hint: Option<&str>) -> Option<String> {
     let meta = Process::new("cargo")
         .arg("metadata")
         .arg("--no-deps")
@@ -71,25 +72,56 @@ fn find_name() -> String {
     let json: Value = serde_json::from_str(&str).unwrap();
     let map = json.as_object().unwrap();
 
-    map.get("packages").unwrap()
-        .as_array().unwrap()[0]
-        .as_object().unwrap()
-        .get("targets").unwrap()
-        .as_array().unwrap()[0]
-        .get("name").unwrap()
-        .as_str().unwrap().to_owned()
+    if let Some(hint) = name_hint {
+        let found = map.get("packages").unwrap()
+            .as_array().unwrap().iter()
+            .any(|p|
+                p.as_object().unwrap()
+                    .get("targets").unwrap()
+                    .as_array().unwrap().iter()
+                    .any(|t| {
+                        t.as_object().unwrap()
+                            .get("name").unwrap()
+                            .as_str().unwrap() == hint
+                    })
+            );
+
+        if found {
+            Some(hint.into())
+        }
+        else {
+            None
+        }
+    }
+    else {
+        Some(map.get("packages").unwrap()
+            .as_array().unwrap()[0]
+            .as_object().unwrap()
+            .get("targets").unwrap()
+            .as_array().unwrap()[0]
+            .get("name").unwrap()
+            .as_str().unwrap().to_owned())
+    }
 }
 
 #[cfg(target_os = "macos")]
-fn platform_run()  {
+fn platform_run(name_hint: Option<&str>, release: bool)  {
     let root = find_path();
-    let name = find_name();
+    let Some(name) = find_name(name_hint) else {
+        eprintln!("Could not find binary named '{}'", name_hint.unwrap());
+        return
+    };
 
     let mut source = root.clone();
-    source.push("target/debug/");
+    if release {
+        source.push("target/release/");
+    }
+    else {
+        source.push("target/debug/");
+    }
     source.push(&name);
 
-    let mut quarve_target = root;
+    let mut quarve_target = root.clone();
     quarve_target.push("quarve_target");
 
     quarve_target.push(format!("{}.app", name));
@@ -110,7 +142,14 @@ fn platform_run()  {
     /* Assets */
     {
         quarve_target.push("Resources");
+        if Path::exists(&quarve_target) {
+            std::fs::remove_dir_all(&quarve_target).unwrap();
+        }
         std::fs::create_dir_all(&quarve_target).unwrap();
+
+        let mut source = root.clone();
+        source.push("res");
+        copy_directory(&source, &quarve_target).unwrap();
 
         quarve_target.pop();
     }
@@ -152,29 +191,36 @@ fn platform_run()  {
 }
 
 #[cfg(target_os = "linux")]
-fn platform_run() {
+fn platform_run(name_hint: Option<&str>, release: bool) {
 
 }
 
 #[cfg(target_os = "windows")]
-fn platform_run() {
+fn platform_run(name_hint: Option<&str>, release: bool) {
 
 }
 
-fn run() {
-    let status = Process::new("cargo")
+fn run(name_hint: Option<&str>, release: bool) {
+    let mut build = Process::new("cargo")
         .arg("build")
-        .status();
+        .arg("--all")
+        .env("RUSTFLAGS", "--cfg quarve_managed_run");
+
+    if release {
+        build = build.arg("--release");
+    }
+
+    let status = build.status();
 
     if !status.expect("Failed to execute cargo").success() {
         return
     }
 
-    platform_run();
+    platform_run(name_hint);
 }
 
 #[cfg(target_os = "macos")]
-fn platform_deploy() -> Result<()> {
+fn platform_deploy() -> Result<(), ()> {
     /* copy binary */
     Ok(())
 }
@@ -189,8 +235,8 @@ fn platform_deploy() -> Result<()> {
 
 }
 
-fn deploy() {
-
+fn deploy(name_hint: Option<&str>) {
+    run(name_hint, true)
 }
 
 fn main() {
@@ -205,10 +251,12 @@ fn main() {
         )
         .subcommand(
             Command::new("run")
+                .arg(arg!(-n --name <NAME> "Explicitly specifies the name of the app to run"))
                 .about("Run an existing quarve project for development")
         )
         .subcommand(
             Command::new("deploy")
+                .arg(arg!(-n --name <NAME> "Explicitly specifies the name of the app to deploy"))
                 .about("Build a quarve project for release")
         );
 
@@ -219,11 +267,16 @@ fn main() {
 
             new(name)
         },
-        Some(("run", _)) => {
-            run()
+        Some(("run", submatches)) => {
+            run(submatches.get_one::<String>("name")
+                .map(|s| s.deref()),
+                false
+            )
         },
-        Some(("deploy", _)) => {
-            deploy()
+        Some(("deploy", submatches)) => {
+            deploy(submatches.get_one::<String>("name")
+                    .map(|s| s.deref())
+            )
         },
         _ => {
             unreachable!()

@@ -1111,13 +1111,32 @@ pub mod file_picker {
 }
 
 pub mod path {
-    #[cfg(not(debug_assertions))]
+    use std::ffi::{c_char, CStr, CString};
     use std::path::PathBuf;
 
-    #[cfg(all(target_os = "macos", not(debug_assertions)))]
+    extern "C" {
+        fn back_app_storage_directory(app_name: *const u8) -> *const u8;
+    }
+
+
+    #[cfg(all(target_os = "macos", quarve_managed_run))]
     pub fn production_resource_root() -> PathBuf {
         std::env::current_exe().unwrap()
             .parent().unwrap()
-            .join("Resources/res")
+            .parent().unwrap()
+            .join("Resources/")
+    }
+
+    pub fn local_storage(app_name: &str) -> PathBuf {
+        let raw = unsafe {
+            let cstring = CString::new(app_name).unwrap();
+            back_app_storage_directory(cstring.as_bytes().as_ptr())
+        };
+        let cstr = unsafe {
+            CStr::from_ptr(raw as *const c_char)
+        };
+        let string = CString::from(cstr).into_string().unwrap();
+
+        PathBuf::from(string)
     }
 }

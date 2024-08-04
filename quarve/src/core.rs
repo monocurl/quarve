@@ -227,6 +227,9 @@ mod application {
 
 
     pub trait ApplicationProvider: 'static {
+        // This name is used for determining application support directory
+        fn name(&self) -> &str;
+
         fn will_spawn(&self, app: &Application, s: MSlock);
     }
 
@@ -254,6 +257,10 @@ mod application {
             let slock = slock_main_owner();
 
             self.provider.will_spawn(self, slock.marker());
+        }
+
+        pub fn name(&self) -> &str {
+            self.provider.name()
         }
 
         pub fn spawn_window<W>(&self, provider: W, s: MSlock) where W: WindowProvider {
@@ -1080,7 +1087,6 @@ mod slock {
     static GLOBAL_STATE_LOCK: Mutex<()> = Mutex::new(());
     static SLOCK_INIT_LISTENER: Mutex<Vec<Box<dyn FnMut(Slock) -> bool + Send>>> = Mutex::new(Vec::new());
     static SLOCK_DROP_LISTENER: Mutex<Vec<Box<dyn FnMut(Slock) -> bool + Send>>> = Mutex::new(Vec::new());
-    #[cfg(debug_assertions)]
     static LOCKED_THREAD: Mutex<Option<thread::ThreadId>> = Mutex::new(None);
 
     #[allow(unused)]
@@ -1137,6 +1143,7 @@ mod slock {
 
         #[cfg(not(debug_assertions))]
         {
+            *LOCKED_THREAD.lock().unwrap() = Some(thread::current().id());
             GLOBAL_STATE_LOCK.lock().expect("Unable to lock context")
         }
     }

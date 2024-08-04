@@ -2,6 +2,7 @@ use cc;
 
 #[cfg(target_os = "macos")]
 fn build() {
+    println!("cargo::rustc-check-cfg=cfg(quarve_managed_run)");
     println!("cargo:rerun-if-changed=macos");
 
     cc::Build::new()
@@ -17,6 +18,7 @@ fn build() {
         .file("macos/message_box.m")
         .file("macos/file_picker.m")
         .file("macos/text.m")
+        .file("macos/path.m")
         .compile("backend");
 }
 

@@ -1,5 +1,6 @@
 use quarve::core::{Application, Environment, launch, MSlock, run_main_async, StandardConstEnv, StandardVarEnv};
 use quarve::event::EventModifiers;
+use quarve::resource::local_storage;
 use quarve::state::{Bindable, FixedSignal, SetAction, Signal, Store, TokenStore};
 use quarve::util::geo::{Alignment, HorizontalAlignment, Size};
 use quarve::view::{ViewProvider, IntoViewProvider, WeakInvalidator};
@@ -9,7 +10,7 @@ use quarve::view::conditional::view_if;
 use quarve::view::control::{Button, Dropdown};
 use quarve::view::layout::*;
 use quarve::view::menu::{Menu, MenuButton, MenuSend, WindowMenu};
-use quarve::view::modal::OpenFilePicker;
+use quarve::view::modal::{OpenFilePicker, SaveFilePicker};
 use quarve::view::modifers::{Cursor, CursorModifiable, EnvironmentModifier, Frame, FrameModifiable, OffsetModifiable, PaddingModifiable};
 use quarve::view::portal::{Portal, PortalReceiver, PortalSendable};
 use quarve::view::scroll::ScrollView;
@@ -46,6 +47,10 @@ impl Environment for Env {
 }
 
 impl quarve::core::ApplicationProvider for ApplicationProvider {
+    fn name(&self) -> &str {
+        "quarve_dev"
+    }
+
     fn will_spawn(&self, app: &Application, s: MSlock) {
         app.spawn_window(WindowProvider, s);
     }
@@ -95,7 +100,7 @@ impl quarve::core::WindowProvider for WindowProvider {
                         Color::black()
                             .intrinsic(100, 100),
                         move |s| {
-                            OpenFilePicker::new()
+                            SaveFilePicker::new()
                                 .content_types("pdf")
                                 .run(|path, s| {
 

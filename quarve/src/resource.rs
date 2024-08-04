@@ -1,39 +1,41 @@
 use std::ffi::{CString};
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
-
-#[cfg(not(debug_assertions))]
+use crate::core::APP;
 use crate::native;
 
 pub fn resource_root() -> PathBuf {
     // if debug, just the project root
-    #[cfg(debug_assertions)]
+    #[cfg(not(quarve_managed_run))]
     {
         std::env::current_dir().unwrap()
             .join("res")
     }
 
     // if production, os dependent
-    #[cfg(not(debug_assertions))]
+    #[cfg(quarve_managed_run)]
     {
         native::path::production_resource_root()
     }
 }
 
-// pub fn app_root() -> PathBuf {
-//
-// }
-//
-// pub fn local_storage() -> PathBuf {
-//
-// }
+pub fn local_storage() -> PathBuf {
+    APP.with(|app| {
+        native::path::local_storage(
+            app.get()
+                .expect("quarve::launch should have been called before this method")
+                .name()
+        )
+    })
+}
 
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct Resource(pub PathBuf);
 
 impl Resource {
     pub fn named(rel_path: impl AsRef<Path>) -> Resource {
-        Resource(resource_root().join(rel_path))
+        let path = resource_root().join(rel_path);
+        Resource(path)
     }
 
     pub fn path(&self) -> &Path {

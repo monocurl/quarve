@@ -1236,6 +1236,7 @@ mod vec_layout {
         #[derive(Default)]
         pub struct VStack(SizeContainer, VStackOptions);
 
+        #[derive(Copy, Clone)]
         pub struct VStackOptions {
             spacing: ScreenUnit,
             alignment: HorizontalAlignment,
@@ -1430,6 +1431,7 @@ mod vec_layout {
 
         pub struct HStack(SizeContainer, HStackOptions);
 
+        #[derive(Copy, Clone)]
         pub struct HStackOptions {
             spacing: ScreenUnit,
             alignment: VerticalAlignment,
@@ -1623,7 +1625,7 @@ mod vec_layout {
 
         pub struct ZStack(SizeContainer, ZStackOptions);
 
-        #[derive(Default)]
+        #[derive(Default, Copy, Clone)]
         pub struct ZStackOptions {
             alignment: Alignment
         }
