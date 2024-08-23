@@ -44,6 +44,16 @@ pub mod slock_cell {
     }
 
     impl<T> SlockCell<T> where T: Send + ?Sized {
+        pub fn is_borrowed(&self, _s: Slock<impl ThreadMarker>) -> bool {
+            // note that is borrowed must call borrowed mut
+            // and vice versa
+            self.0.try_borrow_mut().is_err()
+        }
+
+        pub fn is_borrowed_mut(&self, _s: Slock<impl ThreadMarker>) -> bool {
+            self.0.try_borrow().is_err()
+        }
+
         pub fn borrow<'a>(&'a self, _s: Slock<'a, impl ThreadMarker>) -> Ref<'a, T> {
             self.0.borrow()
         }
@@ -790,179 +800,6 @@ mod group {
 }
 pub use group::*;
 
-pub mod coupler {
-    use std::marker::PhantomData;
-    use std::str::FromStr;
-    use crate::state::{StateFilter, Filter, Filterless, GroupAction, GroupBasis, IntoAction, SetAction, Stateful, StringActionBasis, Word, EditingString};
-    use crate::state::coupler::sealed_base::CouplerBase;
-
-    mod sealed_base {
-        use crate::state::{StateFilter, Stateful};
-
-        // Associated types make more sense, but then
-        // we get conflicting implementations...
-        pub trait CouplerBase<I, M, F>: Send + 'static
-            where I: Stateful, M: Stateful, F: StateFilter<Target=M>
-        {
-
-            fn initial_mapped(&self, initial_intrinsic: &I) -> M;
-
-            fn mirror_intrinsic_to_mapped(
-                &self,
-                mapped: &M,
-                intrinsic: &I,
-                intrinsic_transaction: &I::Action
-            ) -> M::Action;
-
-            fn filter_mapped_and_mirror_to_intrinsic(
-                &self,
-                mapped: &M,
-                intrinsic: &I,
-                mapped_transaction: M::Action,
-            ) -> (I::Action, M::Action);
-        }
-    }
-
-    pub trait Coupler<I, M, F>: CouplerBase<I, M, F>
-        where I: Stateful, M: Stateful, F: StateFilter<Target=M>
-    {
-
-    }
-
-    pub trait FilteringCoupler: Send + 'static {
-        type Intrinsic: Stateful;
-        type Mapped: Stateful;
-
-        fn initial_mapped(&self, initial_intrinsic: &Self::Intrinsic) -> Self::Mapped;
-        fn mirror_intrinsic_to_mapped(
-            &self,
-            current_mapped: &Self::Mapped,
-            prior_intrinsic: &Self::Intrinsic,
-            intrinsic_transaction: &<Self::Intrinsic as Stateful>::Action
-        ) -> <Self::Mapped as Stateful>::Action;
-
-        fn filter_mapped_and_mirror_to_intrinsic(
-            &self,
-            prior_mapped: &Self::Mapped,
-            current_intrinsic: &Self::Intrinsic,
-            mapped_transaction: <Self::Mapped as Stateful>::Action,
-        ) -> (<Self::Intrinsic as Stateful>::Action, <Self::Mapped as Stateful>::Action);
-    }
-
-    impl<FC> CouplerBase<FC::Intrinsic, FC::Mapped, Filter<FC::Mapped>> for FC
-        where FC: FilteringCoupler {
-        fn initial_mapped(&self, initial_intrinsic: &FC::Intrinsic) -> FC::Mapped {
-            FC::initial_mapped(self, initial_intrinsic)
-        }
-
-        fn mirror_intrinsic_to_mapped(&self, current_mapped: &FC::Mapped, prior_intrinsic: &FC::Intrinsic, intrinsic_transaction: &<FC::Intrinsic as Stateful>::Action) -> <FC::Mapped as Stateful>::Action {
-            FC::mirror_intrinsic_to_mapped(self, current_mapped, prior_intrinsic, intrinsic_transaction)
-        }
-
-        fn filter_mapped_and_mirror_to_intrinsic(
-            &self,
-            prior_mapped: &FC::Mapped,
-            current_intrinsic: &FC::Intrinsic,
-            mapped_transaction: <FC::Mapped as Stateful>::Action
-        ) -> (<FC::Intrinsic as Stateful>::Action, <FC::Mapped as Stateful>::Action) {
-            FC::filter_mapped_and_mirror_to_intrinsic(self, prior_mapped, current_intrinsic, mapped_transaction, )
-        }
-    }
-
-    impl<FC> Coupler<FC::Intrinsic, FC::Mapped, Filter<FC::Mapped>> for FC
-        where FC: FilteringCoupler {
-
-    }
-
-    pub trait FilterlessCoupler: Send + 'static {
-        type Intrinsic: Stateful;
-        type Mapped: Stateful;
-
-        fn initial_mapped(&self, initial_intrinsic: &Self::Intrinsic) -> Self::Mapped;
-
-        fn mirror_intrinsic_to_mapped(
-            &self,
-            current_mapped: &Self::Mapped,
-            prior_intrinsic: &Self::Intrinsic,
-            intrinsic_transaction: &<Self::Intrinsic as Stateful>::Action
-        ) -> <Self::Mapped as Stateful>::Action;
-
-        fn mirror_mapped_to_intrinsic(
-            &self,
-            prior_mapped: &Self::Mapped,
-            current_intrinsic: &Self::Intrinsic,
-            mapped_transaction: &<Self::Mapped as Stateful>::Action
-        ) -> <Self::Intrinsic as Stateful>::Action;
-    }
-
-    impl<FC> CouplerBase<FC::Intrinsic, FC::Mapped, Filterless<FC::Mapped>> for FC
-        where FC: FilterlessCoupler {
-        fn initial_mapped(&self, initial_intrinsic: &FC::Intrinsic) -> FC::Mapped {
-            FC::initial_mapped(self, initial_intrinsic)
-        }
-
-        fn mirror_intrinsic_to_mapped(&self, mapped: &FC::Mapped, intrinsic: &FC::Intrinsic, intrinsic_transaction: &<FC::Intrinsic as Stateful>::Action) -> <FC::Mapped as Stateful>::Action {
-            FC::mirror_intrinsic_to_mapped(self, mapped, intrinsic, intrinsic_transaction)
-        }
-
-        fn filter_mapped_and_mirror_to_intrinsic(&self, mapped: &FC::Mapped, intrinsic: &FC::Intrinsic, mapped_transaction: <FC::Mapped as Stateful>::Action) -> (<FC::Intrinsic as Stateful>::Action, <FC::Mapped as Stateful>::Action) {
-            let intrinsic_transaction = FC::mirror_mapped_to_intrinsic(self, mapped, intrinsic, &mapped_transaction);
-
-            (intrinsic_transaction, mapped_transaction)
-        }
-    }
-
-    impl<FC> Coupler<FC::Intrinsic, FC::Mapped, Filterless<FC::Mapped>> for FC where FC: FilterlessCoupler {
-
-    }
-
-    pub struct NumericStringCoupler<N>
-        where N: Stateful<Action=SetAction<N>> + FromStr + ToString + Copy
-    {
-        numb: PhantomData<N>
-    }
-    impl<N> NumericStringCoupler<N>
-        where N: Stateful<Action=SetAction<N>> + FromStr + ToString + Copy {
-        pub fn new() -> Self {
-            NumericStringCoupler {
-                numb: PhantomData
-            }
-        }
-    }
-
-    impl<N> FilteringCoupler for NumericStringCoupler<N>
-        where N: Stateful<Action=SetAction<N>> + FromStr + ToString + Copy
-    {
-        type Intrinsic = N;
-        type Mapped = EditingString;
-
-        fn initial_mapped(&self, initial_intrinsic: &Self::Intrinsic) -> Self::Mapped {
-            EditingString(initial_intrinsic.to_string())
-        }
-
-        fn mirror_intrinsic_to_mapped(&self, current_mapped: &Self::Mapped, _prior_intrinsic: &Self::Intrinsic, intrinsic_transaction: &<Self::Intrinsic as Stateful>::Action) -> <Self::Mapped as Stateful>::Action {
-            match intrinsic_transaction {
-                SetAction::Set(new_val) => {
-                   StringActionBasis::ReplaceSubrange(0 .. current_mapped.0.len(), new_val.to_string()).into_action(current_mapped)
-                },
-                SetAction::Identity => {
-                    Word::identity()
-                }
-            }
-        }
-
-        fn filter_mapped_and_mirror_to_intrinsic(&self, prior_mapped: &Self::Mapped, _current_intrinsic: &Self::Intrinsic, mapped_transaction: <Self::Mapped as Stateful>::Action) -> (<Self::Intrinsic as Stateful>::Action, <Self::Mapped as Stateful>::Action) {
-            let cloned_action = mapped_transaction.clone();
-            let mut new_mapped = prior_mapped.clone();
-            cloned_action.apply(&mut new_mapped);
-            match new_mapped.0.parse::<N>() {
-                Ok(res) => (SetAction::Set(res), mapped_transaction),
-                Err(_) => (SetAction::identity(), Word::identity())
-            }
-        }
-    }
-}
-
 pub mod capacitor {
     use std::collections::VecDeque;
     use std::ops::{Add, Sub};
@@ -1229,10 +1066,15 @@ pub mod capacitor {
 }
 
 mod store {
+    use std::cell::Cell;
     use crate::core::{Slock};
     use crate::state::{StateFilter, IntoAction, Signal, Stateful};
     use crate::state::listener::{GeneralListener, InverseListener};
     use crate::util::marker::ThreadMarker;
+
+    thread_local! {
+        static EXECUTING_INVERSE: Cell<bool> = Cell::new(false);
+    }
 
     /// It is the implementors job to guarantee that subtree_listener
     /// and relatives do not get into call cycles
@@ -1254,14 +1096,17 @@ mod store {
     }
 
     // Like with signal, I believe it makes more sense for
-    // S to be an associated type, but then we can't have default
-    // filterless? So, it is done for consistency as a generic parameter
     pub trait Binding<F>: Signal<Target=F::Target> + Sized + Send + 'static where F: StateFilter {
+        fn is_applying(&self, s: Slock<impl ThreadMarker>) -> bool;
+        fn apply(&self, action: impl IntoAction<<<F as StateFilter>::Target as Stateful>::Action, <F as StateFilter>::Target>, s: Slock<impl ThreadMarker>);
+        fn apply_coupled(&self, action: impl IntoAction<<<F as StateFilter>::Target as Stateful>::Action, <F as StateFilter>::Target>, s: Slock<impl ThreadMarker>) {
+            if !self.is_applying(s) {
+                self.apply(action, s);
+            }
+        }
+
         fn action_listener<G>(&self, listener: G, s: Slock<impl ThreadMarker>)
             where G: Send + FnMut(&F::Target, &<<F as StateFilter>::Target as Stateful>::Action, Slock) -> bool + 'static;
-
-        fn apply(&self, action: impl IntoAction<<<F as StateFilter>::Target as Stateful>::Action, <F as StateFilter>::Target>, s: Slock<impl ThreadMarker>);
-        fn nested_apply(&self, action: impl IntoAction<<<F as StateFilter>::Target as Stateful>::Action, <F as StateFilter>::Target>, s: Slock<impl ThreadMarker>);
 
         type WeakBinding: WeakBinding<F>;
         fn downgrade(&self) -> Self::WeakBinding;
@@ -1296,7 +1141,7 @@ mod store {
             fn dispatcher_mut(&mut self) -> &mut StoreDispatcher<F::Target, F, Self::InverseListenerHolder>;
 
             // may introduce some additional behavior that the dispatcher does not handle
-            fn apply(inner: &Arc<SlockCell<Self>>, action: impl IntoAction<<F::Target as Stateful>::Action, F::Target>, allow_nested: bool, skip_filters: bool, s: Slock<impl ThreadMarker>);
+            fn apply(inner: &Arc<SlockCell<Self>>, action: impl IntoAction<<F::Target as Stateful>::Action, F::Target>, is_inverted_action: bool, s: Slock<impl ThreadMarker>);
 
             // Must be careful with these two methods
             // since generally not called with the state lock
@@ -1346,19 +1191,19 @@ mod store {
         // Since FixedSignal 'might' implement RawStoreSharedOwnerBase
         // It's therefore done as macros
         impl<F, R> Binding<F> for R where F: StateFilter, R: RawStoreSharedOwner<F> {
-            fn action_listener<G>(&self, listener: G, s: Slock<impl ThreadMarker>) where G: Send + FnMut(&F::Target, &<<F as StateFilter>::Target as Stateful>::Action, Slock) -> bool + 'static {
-                self.inner_ref().borrow_mut(s).dispatcher_mut().add_listener(StateListener::ActionListener(Box::new(listener)));
+            fn is_applying(&self, s: Slock<impl ThreadMarker>) -> bool {
+                self.inner_ref().is_borrowed_mut(s)
             }
 
             fn apply(&self, action: impl IntoAction<<<F as StateFilter>::Target as Stateful>::Action, <F as StateFilter>::Target>, s: Slock<impl ThreadMarker>) {
-                R::Inner::apply(self.inner_ref(), action, false, false, s)
+                R::Inner::apply(self.inner_ref(), action, false, s)
             }
 
-            fn nested_apply(&self, action: impl IntoAction<<<F as StateFilter>::Target as Stateful>::Action, <F as StateFilter>::Target>, s: Slock<impl ThreadMarker>) {
-                R::Inner::apply(self.inner_ref(), action, true, false, s)
+            fn action_listener<G>(&self, listener: G, s: Slock<impl ThreadMarker>) where G: Send + FnMut(&F::Target, &<<F as StateFilter>::Target as Stateful>::Action, Slock) -> bool + 'static {
+                self.inner_ref().borrow_mut(s).dispatcher_mut().add_listener(StateListener::ActionListener(Box::new(listener)));
             }
-
             type WeakBinding = GeneralWeakBinding<F, R>;
+
             fn downgrade(&self) -> Self::WeakBinding {
                 GeneralWeakBinding {
                     weak: Arc::downgrade(self.inner_ref()),
@@ -1400,8 +1245,7 @@ mod store {
                     return;
                 };
 
-                // skip filters on inversion to avoid weird behavior
-                I::apply(&state, self.action.take().unwrap(), false, true, s);
+                I::apply(&state, self.action.take().unwrap(), true, s);
             }
 
             unsafe fn right_multiply(&mut self, mut by: Box<dyn DirectlyInvertible>, s: Slock) {
@@ -1721,6 +1565,7 @@ mod store {
         use crate::state::listener::{GeneralListener, InverseListener};
         use crate::state::slock_cell::SlockCell;
         use crate::state::store::action_inverter::ActionInverter;
+        use crate::state::store::EXECUTING_INVERSE;
         use crate::state::store::general_binding::{GeneralBinding, GeneralWeakBinding};
         use crate::state::store::inverse_listener_holder::InverseListenerHolderImpl;
         use crate::state::store::macros::{impl_adhoc_inner, impl_bindable_inner, impl_signal_inner, impl_store_container_inner};
@@ -1746,27 +1591,24 @@ mod store {
                 &mut self.dispatcher
             }
 
-            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<S::Action, S>, allow_nested: bool, skip_filters: bool, s: Slock<impl ThreadMarker>) {
-                #[cfg(debug_assertions)] {
-                    if !allow_nested {
-                        debug_assert_eq!(s.owner.debug_info.applying_transaction.borrow().len(), 0, "Fatal: store \
-                            changed as a result of the change of another state variable. \
-                            Stores, by default, are to be independent of other stores. \
-                            Depending on the circumstance you may instead need DerivedStore, \
-                            Buffer, CoupledStore, or in the worse case, apply_nested.");
-                    }
-                        s.owner.debug_info.applying_transaction.borrow_mut().push(Arc::as_ptr(arc) as usize);
+            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<S::Action, S>, is_inverse: bool, s: Slock<impl ThreadMarker>) {
+                if EXECUTING_INVERSE.get() {
+                    // do not execute while inverse is acting
+                    return;
                 }
+                else if is_inverse {
+                    EXECUTING_INVERSE.set(true);
+                }
+
                 let mut borrow = arc.borrow_mut(s);
                 let inner = borrow.deref_mut();
 
                 inner.dispatcher.apply(alt_action, |action| {
                     Box::new(ActionInverter::new(action, Arc::downgrade(&arc)))
-                }, skip_filters, s);
+                }, is_inverse, s);
 
-                #[cfg(debug_assertions)]
-                {
-                    s.owner.debug_info.applying_transaction.borrow_mut().pop();
+                if is_inverse {
+                    EXECUTING_INVERSE.set(false);
                 }
             }
         }
@@ -1872,6 +1714,7 @@ mod store {
         use crate::state::store::store_dispatcher::StoreDispatcher;
         use crate::state::InverseListener;
         use crate::state::slock_cell::SlockCell;
+        use crate::state::store::EXECUTING_INVERSE;
         use crate::state::store::general_binding::{GeneralBinding, GeneralWeakBinding};
         use crate::state::store::raw_store::RawStore;
         use crate::state::store::raw_store_shared_owner::RawStoreSharedOwner;
@@ -1895,17 +1738,16 @@ mod store {
                 &mut self.dispatcher
             }
 
-            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<S::Action, S>, allow_nested: bool, skip_filters: bool, s: Slock<impl ThreadMarker>) {
-                #[cfg(debug_assertions)] {
-                    if !allow_nested {
-                        debug_assert_eq!(s.owner.debug_info.applying_transaction.borrow().len(), 0, "Fatal: store \
-                            changed as a result of the change of another state variable. \
-                            Stores, by default, are to be independent of other stores. \
-                            Depending on the circumstance you may instead need DerivedStore, \
-                            Buffer, CoupledStore, or in the worse case, apply_nested.");
-                    }
-                    s.owner.debug_info.applying_transaction.borrow_mut().push(Arc::as_ptr(arc) as usize);
+            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<S::Action, S>, is_inverse: bool, s: Slock<impl ThreadMarker>) {
+                if EXECUTING_INVERSE.get() {
+                    // do not execute while inverse is acting
+                    return;
                 }
+                else if is_inverse {
+                    EXECUTING_INVERSE.set(true);
+                }
+
+
                 let mut borrow = arc.borrow_mut(s);
                 let inner = borrow.deref_mut();
 
@@ -1913,7 +1755,7 @@ mod store {
 
                 inner.dispatcher.apply(alt_action, |action| {
                     Box::new(ActionInverter::new(action, Arc::downgrade(&arc)))
-                }, skip_filters, s);
+                }, is_inverse, s);
 
                 // relevant equal listeners (old and new)
                 let new = *inner.dispatcher.data();
@@ -1927,10 +1769,8 @@ mod store {
                     }
                 }
 
-
-                #[cfg(debug_assertions)]
-                {
-                    s.owner.debug_info.applying_transaction.borrow_mut().pop();
+                if is_inverse {
+                    EXECUTING_INVERSE.set(false);
                 }
             }
         }
@@ -2074,24 +1914,14 @@ mod store {
                 &mut self.dispatcher
             }
 
-            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<S::Action, S>, _allow_nested: bool, skip_filters: bool, s: Slock<impl ThreadMarker>) {
-                #[cfg(debug_assertions)] {
-                    // Theoretically, someone may want to do an "async" derived store so this is left as an option
-                    // debug_assert_ne!(s.owner.debug_info.applying_transaction.borrow().len(), 0, "Fatal: derived store \
-                    // changed in a context that was NOT initiated by the change of another store. \
-                    // Derived store, being 'derived', must only be a function of other state variables. ");
-                    s.owner.debug_info.applying_transaction.borrow_mut().push(Arc::as_ptr(arc) as usize);
-                }
+            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<S::Action, S>, is_inverse: bool, s: Slock<impl ThreadMarker>) {
+                // note that derived store does not care whether or not the action is inverse or not
+                // (except in the case of filters)
 
                 let mut borrow = arc.borrow_mut(s);
                 let inner = borrow.deref_mut();
 
-                inner.dispatcher.apply(alt_action, |_| unreachable!(), skip_filters, s);
-
-                #[cfg(debug_assertions)]
-                {
-                    s.owner.debug_info.applying_transaction.borrow_mut().pop();
-                }
+                inner.dispatcher.apply(alt_action, |_| unreachable!(), is_inverse, s);
             }
         }
 
@@ -2187,292 +2017,6 @@ mod store {
         }
     }
     pub use derived_store::*;
-
-    mod coupled_store {
-        use std::marker::PhantomData;
-        use std::ops::{Deref, DerefMut};
-        use std::sync::{Arc, Mutex};
-        use std::sync::atomic::AtomicUsize;
-        use std::sync::atomic::Ordering::Release;
-        use crate::state::store::state_ref::StateRef;
-        use crate::state::{StateListener, GeneralSignal, Bindable};
-        use crate::state::{GeneralListener, InverseListener, Filterless};
-        use crate::{
-            state::{
-                StateFilter, IntoAction, Signal, Stateful, StoreContainer,
-            },
-            core::Slock,
-        };
-        use crate::state::{Binding};
-        use crate::state::coupler::Coupler;
-        use crate::state::slock_cell::SlockCell;
-        use crate::state::store::general_binding::{GeneralBinding, GeneralWeakBinding};
-        use crate::state::store::inverse_listener_holder::NullInverseListenerHolder;
-        use crate::state::store::macros::{impl_adhoc_inner, impl_bindable_inner, impl_signal_inner, impl_store_container_inner};
-        use crate::state::store::raw_store::RawStore;
-        use crate::state::store::raw_store_shared_owner::RawStoreSharedOwner;
-        use crate::state::store::store_dispatcher::StoreDispatcher;
-        use crate::util::marker::ThreadMarker;
-
-        // note that IB is purposefully filterless
-        // The reference counting of this is particularly tricky
-        // But the premise is that both each other until the couple
-        // has a ref count of 1, at which point the couple removes ownership
-        // of the intrinsic, to avoid cycles
-        pub(super) struct InnerCoupledStore<I, IB, M, F, C>
-            where I: Stateful, IB: Binding<Filterless<I>>, M: Stateful, F: StateFilter<Target=M>, C: Coupler<I, M, F> {
-            dispatcher: StoreDispatcher<M, F, NullInverseListenerHolder>,
-            coupler: C,
-            // intrinsic maintains a weak ownership of us
-            // we maintain strong ownership of intrinsic
-            // this may seem a bit backwards, but if you think about it
-            // it's okay if intrinsic outlives us, but not ok if
-            // we outlive intrinsic
-            phantom_intrinsic: PhantomData<I>,
-            // set to None once we have a ref count of 1
-            // therefore, we need a mutex since we may not have state lock
-            intrinsic: Mutex<Option<IB>>,
-            strong_count: AtomicUsize,
-            intrinsic_performing_transaction: bool,
-            performing_transaction: bool
-        }
-
-        impl<I, IB, M, F, C> InnerCoupledStore<I, IB, M, F, C>
-            where I: Stateful, IB: Binding<Filterless<I>>, M: Stateful, F: StateFilter<Target=M>, C: Coupler<I, M, F>
-        {
-            // logic for this is somewhat convoluted
-            // in large part due to the awkwardness of this
-            // and the borrow rules
-            fn fully_apply(arc: &Arc<SlockCell<Self>>, intrinsic: Option<&I>, alt_action: impl IntoAction<M::Action, M>, s: Slock<impl ThreadMarker>) {
-                /* must only be changed by itself, or by the parent */
-                #[cfg(debug_assertions)] {
-                    // no need for self checks since if someone other than the parent initiates a transaction
-                    // this will be caught by the parent anyways
-                    s.owner.debug_info.applying_transaction.borrow_mut().push(Arc::as_ptr(arc) as usize);
-                }
-
-                arc.borrow_mut(s).performing_transaction = true;
-
-                // do have to be a bit careful with the reentry on the intrinsic action listener
-                // hence the many borrows
-                let mut borrow = arc.borrow_mut(s);
-                let inner = borrow.deref_mut();
-
-                /* this is a bit awkward, but it's easiest way to get around borrowing errors */
-                let mut intrinsic_action = None;
-
-                inner.dispatcher.apply_post_filter(alt_action, |_| unreachable!(), |data, action| {
-                    let (intrinsic_transaction, action) = {
-                        if inner.intrinsic_performing_transaction {
-                            inner.coupler.filter_mapped_and_mirror_to_intrinsic(
-                                data,
-                                intrinsic.unwrap(),
-                                action
-                            )
-                        } else {
-                            // if we are originating the transaction
-                            // then surely the strong count > 1 so intrinsic
-                            // exists
-                            inner.coupler.filter_mapped_and_mirror_to_intrinsic(
-                                data,
-                                inner.intrinsic.lock().unwrap()
-                                    .as_ref().unwrap()
-                                    .borrow(s).deref(),
-                                action
-                            )
-                        }
-                    };
-
-                    intrinsic_action = Some(intrinsic_transaction);
-
-                    action
-                }, false, s);
-
-
-                /* in this case, it's fine that it's being changed due to another store */
-                // yeah the order of operations is a bit weird
-                // i think it would be easier in oop
-                // but not sure what's the rust way to do something like this?
-                #[cfg(debug_assertions)]
-                {
-                    s.owner.debug_info.applying_transaction.borrow_mut().pop();
-                }
-
-                // convert borrow to immutable
-                drop(borrow);
-                let borrow_immut = arc.borrow(s);
-                let inner_immut = borrow_immut.deref();
-
-                // tell intrinsic if it didn't originate (it's filterless so doesn't matter about filters)
-                if !inner_immut.intrinsic_performing_transaction {
-
-                    if let Some(intr_ref) = inner_immut.intrinsic.lock().unwrap().as_ref() {
-                        intr_ref.apply(intrinsic_action.unwrap(), s.to_general_slock());
-                    };
-                }
-
-                drop(borrow_immut);
-                arc.borrow_mut(s).performing_transaction = false;
-            }
-        }
-
-        impl<I, IB, M, F, C> RawStore<F> for InnerCoupledStore<I, IB, M, F, C>
-            where I: Stateful, IB: Binding<Filterless<I>>, M: Stateful, F: StateFilter<Target=M>, C: Coupler<I, M, F>
-        {
-            type InverseListenerHolder = NullInverseListenerHolder;
-
-            fn dispatcher(&self) -> &StoreDispatcher<M, F, Self::InverseListenerHolder> {
-                &self.dispatcher
-            }
-
-            fn dispatcher_mut(&mut self) -> &mut StoreDispatcher<M, F, Self::InverseListenerHolder> {
-                &mut self.dispatcher
-            }
-
-            fn apply(arc: &Arc<SlockCell<Self>>, alt_action: impl IntoAction<M::Action, M>, _allow_nested: bool, _skip_filters: bool, s: Slock<impl ThreadMarker>) {
-                InnerCoupledStore::fully_apply(arc, None, alt_action, s);
-            }
-
-            fn strong_count_decrement(this: &Arc<SlockCell<Self>>) {
-                // safety: the only part we are touching
-                // are already covered by a mutex (or atomic) and hence will not
-                // be an issue in terms of multiple access
-                // this is true even if slockcell is being borrowed mutably
-                unsafe {
-                    let ptr = (*this).as_ptr();
-
-                    // calling thread is owner and intrinsic is owner
-                    // after this point, only intrinsic is owner
-                    // and we must delete backref
-                    // (possibly this can be invoked twice, that's not an issue)
-                    if (*ptr).strong_count.fetch_sub(1, Release) == 2 {
-                        // in some testing code validating should_panic
-                        // we want to avoid non-unwinding panic
-                        // in production, this will not be an issue however
-                        if let Ok(mut res) = (*ptr).intrinsic.lock() {
-                            *res = None;
-                        }
-                    }
-                }
-            }
-
-            fn strong_count_increment(this: &Arc<SlockCell<Self>>) {
-                // safety
-                // same reasons as strong_count_decrement
-                unsafe {
-                    let ptr = (*this).as_ptr();
-                    (*ptr).strong_count.fetch_add(1, Release);
-                }
-            }
-        }
-
-        // IB purposefully filterless
-        pub struct CoupledStore<I, IB, M, F, C>
-            where I: Stateful, IB: Binding<Filterless<I>>, M: Stateful, F: StateFilter<Target=M>, C: Coupler<I, M, F> {
-            inner: Arc<SlockCell<InnerCoupledStore<I, IB, M, F, C>>>
-        }
-
-        impl<I, IB, M, F, C> CoupledStore<I, IB, M, F, C>
-            where I: Stateful, IB: Binding<Filterless<I>>, M: Stateful, F: StateFilter<Target=M>, C: Coupler<I, M, F>
-        {
-            pub fn new(intrinsic: IB, coupler: C, s: Slock<impl ThreadMarker>) -> Self {
-                let data = coupler.initial_mapped(intrinsic.borrow(s).deref());
-                let ret = CoupledStore {
-                    inner: Arc::new(SlockCell::new(InnerCoupledStore {
-                        dispatcher: StoreDispatcher::new(data),
-                        coupler,
-                        phantom_intrinsic: PhantomData,
-                        intrinsic: Mutex::new(Some(intrinsic)),
-                        // trivial owner, and a clone is done shortly
-                        strong_count: AtomicUsize::new(2),
-                        intrinsic_performing_transaction: false,
-                        performing_transaction: false,
-                    }))
-                };
-
-                // intrinsic listener
-                // (our listener is handled manually in apply)
-                let strong = ret.inner.clone();
-                ret.inner.borrow(s)
-                    .intrinsic.lock().unwrap()
-                    .as_ref().unwrap()
-                    .action_listener(move |intrinsic, a, s| {
-                        let this = strong.borrow(s);
-                        // if we didn't originate, then mirror the action
-                        if !this.performing_transaction {
-                            let coupler = &this.coupler;
-                            let our_action = coupler.mirror_intrinsic_to_mapped(this.dispatcher.data(), intrinsic, a);
-
-                            drop(this);
-                            strong.borrow_mut(s).intrinsic_performing_transaction = true;
-                            InnerCoupledStore::fully_apply(&strong, Some(intrinsic), our_action, s);
-                            strong.borrow_mut(s).intrinsic_performing_transaction = false;
-                        }
-
-                        true
-                    }, s);
-
-                ret
-            }
-        }
-
-        impl<I, IB, M, F, C> Drop for CoupledStore<I, IB, M, F, C>
-            where I: Stateful, IB: Binding<Filterless<I>>, M: Stateful, F: StateFilter<Target=M>, C: Coupler<I, M, F> {
-            fn drop(&mut self) {
-                InnerCoupledStore::strong_count_decrement(&self.inner);
-            }
-        }
-
-        // In this case, inverse is a no op
-        // since the respective action should've been handled
-        // by the source store
-        impl<I, IB, M, F, C> StoreContainer for CoupledStore<I, IB, M, F, C>
-            where I: Stateful, IB: Binding<Filterless<I>>, M: Stateful, F: StateFilter<Target=M>, C: Coupler<I, M, F>
-        {
-            impl_store_container_inner!();
-        }
-
-        impl<I, IB, M, F, C> Bindable<F> for CoupledStore<I, IB, M, F, C>
-            where I: Stateful, IB: Binding<Filterless<I>>, M: Stateful, F: StateFilter<Target=M>, C: Coupler<I, M, F>
-        {
-            impl_bindable_inner!(M, F);
-        }
-
-        impl<I, IB, M, F, C> CoupledStore<I, IB, M, F, C>
-            where I: Stateful, IB: Binding<Filterless<I>>, M: Stateful, F: StateFilter<Target=M>, C: Coupler<I, M, F>
-        {
-            impl_adhoc_inner!(M, F);
-        }
-
-        impl<I, IB, M, F, C> Signal for CoupledStore<I, IB, M, F, C>
-            where I: Stateful, IB: Binding<Filterless<I>>, M: Stateful, F: StateFilter<Target=M>, C: Coupler<I, M, F>
-        {
-            impl_signal_inner!(M);
-        }
-
-        impl<I, IB, M, F, C> RawStoreSharedOwner<F> for CoupledStore<I, IB, M, F, C>
-            where I: Stateful, IB: Binding<Filterless<I>>, M: Stateful, F: StateFilter<Target=M>, C: Coupler<I, M, F>
-        {
-            type Inner = InnerCoupledStore<I, IB, M, F, C>;
-
-            fn from_ref(arc: Arc<SlockCell<Self::Inner>>) -> Self {
-                CoupledStore {
-                    inner: arc,
-                }
-            }
-
-            fn inner_ref(&self) -> &Arc<SlockCell<Self::Inner>> {
-                &self.inner
-            }
-
-            fn arc_clone(&self) -> Self {
-                CoupledStore {
-                    inner: Arc::clone(&self.inner)
-                }
-            }
-        }
-    }
-    pub use coupled_store::*;
 
     mod general_binding {
         use std::marker::PhantomData;
@@ -2636,7 +2180,7 @@ mod store {
                 unreachable!()
             }
 
-            fn apply(_inner: &Arc<SlockCell<Self>>, _action: impl IntoAction<<F::Target as Stateful>::Action, F::Target>, _allow_nested: bool, _skip_filters: bool, _s: Slock<impl ThreadMarker>) {
+            fn apply(_inner: &Arc<SlockCell<Self>>, _action: impl IntoAction<<F::Target as Stateful>::Action, F::Target>, _is_inverse: bool, _s: Slock<impl ThreadMarker>) {
                 unreachable!()
             }
         }
@@ -3441,9 +2985,8 @@ mod test {
     use std::time::Duration;
     use rand::Rng;
     use crate::core::{clock_signal, setup_timing_thread, slock_owner, timed_worker};
-    use crate::state::{Store, Signal, TokenStore, Binding, StoreContainer, NumericAction, DirectlyInvertible, Filterable, DerivedStore, Stateful, CoupledStore, StringActionBasis, Buffer, Word, GroupAction, WithCapacitor, JoinedSignal, FixedSignal, EditingString};
+    use crate::state::{Store, Signal, TokenStore, Binding, StoreContainer, NumericAction, DirectlyInvertible, Filterable, DerivedStore, StringActionBasis, Buffer, Word, GroupAction, WithCapacitor, JoinedSignal, FixedSignal, EditingString, Bindable};
     use crate::state::capacitor::{ConstantSpeedCapacitor, ConstantTimeCapacitor, SmoothCapacitor};
-    use crate::state::coupler::{FilterlessCoupler, NumericStringCoupler};
     use crate::state::SetAction::{Identity, Set};
     use crate::state::VecActionBasis::{Insert, Remove, Swap};
     use crate::util::numeric::Norm;
@@ -3743,20 +3286,6 @@ mod test {
     }
 
     #[test]
-    #[should_panic]
-    fn test_not_marked_derived_causes_panic() {
-        let s = slock_owner();
-        let state1 = Store::new(0);
-        let state2 = Store::new(1);
-        let b = state2.binding();
-        state1.action_listener(move |_, _a, s| {
-            b.apply(Set(1), s);
-            true
-        }, s.marker());
-        state1.apply(Set(0), s.marker());
-    }
-
-    #[test]
     fn test_properly_marked_derived_no_panic() {
         let s = slock_owner();
         let state = Store::new(0);
@@ -3767,120 +3296,6 @@ mod test {
             true
         }, s.marker());
         state.apply(Set(1), s.marker());
-    }
-
-    struct NegatedCoupler {
-
-    }
-
-    impl FilterlessCoupler for NegatedCoupler {
-        type Intrinsic = f32;
-        type Mapped = f32;
-
-        fn initial_mapped(&self, initial_intrinsic: &Self::Intrinsic) -> Self::Mapped {
-            -*initial_intrinsic
-        }
-
-        fn mirror_intrinsic_to_mapped(&self, _mapped: &Self::Mapped, _intrinsic: &Self::Intrinsic, intrinsic_transaction: &<Self::Intrinsic as Stateful>::Action) -> <Self::Mapped as Stateful>::Action {
-            match *intrinsic_transaction {
-                Set(s) => Set(-s),
-                Identity => Identity
-            }
-        }
-
-        fn mirror_mapped_to_intrinsic(&self, _mapped: &Self::Mapped, _intrinsic: &Self::Intrinsic, mapped_transaction: &<Self::Mapped as Stateful>::Action) -> <Self::Intrinsic as Stateful>::Action {
-            match *mapped_transaction {
-                Set(s) => Set(-s),
-                Identity => Identity
-            }
-        }
-    }
-
-    #[test]
-    fn test_negated_coupler() {
-        let _h = HeapChecker::new();
-        let s = slock_owner();
-        let intrinsic = Store::new(-1.0);
-        let coupled = CoupledStore::new(intrinsic.binding(), NegatedCoupler {}, s.marker());
-
-        assert_eq!(*coupled.borrow(s.marker()), 1.0);
-
-        coupled.apply(Set(-3.0), s.marker());
-
-        assert_eq!(*coupled.borrow(s.marker()), -3.0);
-        assert_eq!(*intrinsic.borrow(s.marker()), 3.0);
-
-        intrinsic.apply(Set(2.0), s.marker());
-
-        assert_eq!(*coupled.borrow(s.marker()), -2.0);
-    }
-
-    #[test]
-    fn test_string_number_coupler() {
-        let _h = HeapChecker::new();
-        let s = slock_owner();
-        let intrinsic = Store::new(1);
-        let mapped = CoupledStore::new(intrinsic.binding(), NumericStringCoupler::new(), s.marker());
-
-        assert_eq!(*mapped.borrow(s.marker()), EditingString("1".to_string()));
-        intrinsic.apply(NumericAction::Incr(5), s.marker());
-
-        assert_eq!(*mapped.borrow(s.marker()), EditingString("6".to_string()));
-
-        intrinsic.apply(NumericAction::Decr(10), s.marker());
-
-        assert_eq!(*mapped.borrow(s.marker()), EditingString("-4".to_string()));
-
-        mapped.apply(StringActionBasis::ReplaceSubrange(0..1, "1".to_string()), s.marker());
-
-        assert_eq!(*mapped.borrow(s.marker()), EditingString("14".to_string()));
-        assert_eq!(*intrinsic.borrow(s.marker()), 14);
-
-        mapped.apply(StringActionBasis::ReplaceSubrange(0..1, "a".to_string()), s.marker());
-
-        assert_eq!(*mapped.borrow(s.marker()), EditingString("14".to_string()));
-        assert_eq!(*intrinsic.borrow(s.marker()), 14);
-
-        mapped.apply(StringActionBasis::ReplaceSubrange(0..2, "-11231".to_string()), s.marker());
-        assert_eq!(*mapped.borrow(s.marker()), EditingString("-11231".to_string()));
-        assert_eq!(*intrinsic.borrow(s.marker()), -11231);
-
-        drop(intrinsic);
-
-        mapped.apply(StringActionBasis::ReplaceSubrange(0..1, "+".to_string()), s.marker());
-
-        assert_eq!(*mapped.borrow(s.marker()), EditingString("+11231".to_owned()));
-    }
-
-    #[test]
-    #[should_panic]
-    fn test_faulty_coupler_access() {
-        let s = slock_owner();
-        let intrinsic = Store::new(0.0);
-        let random = Store::new(0.0);
-        let coupler = CoupledStore::new(intrinsic.binding(), NegatedCoupler {}, s.marker());
-        random.listen(move |_n, s| {
-            coupler.apply(Set(-1.0), s);
-
-            true
-        }, s.marker());
-        random.apply(Set(-3.0), s.marker());
-    }
-
-    #[test]
-    #[should_panic]
-    fn test_faulty_coupler_dispatch() {
-        let _h = HeapChecker::new();
-        let s = slock_owner();
-        let intrinsic = Store::new(0.0);
-        let random = Store::new(0.0);
-        let coupler = CoupledStore::new(intrinsic.binding(), NegatedCoupler {}, s.marker());
-        coupler.listen(move |_n, s| {
-            random.apply(Set(-1.0), s);
-
-            true
-        }, s.marker());
-        coupler.apply(Set(-3.0), s.marker());
     }
 
     #[test]
@@ -3972,51 +3387,6 @@ mod test {
         right.apply(Set(1), s.marker());
         // right no longer sees middle + middle dropped
         h.assert_diff(2);
-    }
-
-    #[test]
-    fn test_couple_early_free() {
-        let s = slock_owner();
-
-        {
-            let _h = HeapChecker::new();
-            let store = Store::new(0.0);
-            let _coupled = CoupledStore::new(store.binding(), NegatedCoupler {}, s.marker());
-        }
-
-        {
-            let _h = HeapChecker::new();
-            let store = Store::new(0.0);
-            let coupled = CoupledStore::new(store.binding(), NegatedCoupler {}, s.marker());
-            store.listen(|_a, _s| true, s.marker());
-            coupled.listen(|_a, _s| true, s.marker());
-        }
-
-        {
-            let _h = HeapChecker::new();
-            let store = Store::new(0.0);
-            let coupled = CoupledStore::new(store.binding(), NegatedCoupler {}, s.marker());
-            let s_bind = store.binding();
-            let _c_bind = coupled.binding();
-            let c_bind2 = coupled.binding();
-            let c_bind2_copy = c_bind2.clone();
-            let _c_bind2_copy2 = c_bind2.clone();
-            let _c_bind2_copy_copy = c_bind2_copy.clone();
-            drop(store);
-            drop(s_bind);
-        }
-
-        {
-            let _h = HeapChecker::new();
-            let store = Store::new(0.0);
-            let coupled = CoupledStore::new(store.binding(), NegatedCoupler {}, s.marker());
-            let _coupled2 = CoupledStore::new(store.binding(), NegatedCoupler {}, s.marker());
-            let _coupled_coupled = CoupledStore::new(coupled.binding(), NegatedCoupler {}, s.marker());
-            let s_bind = store.binding();
-            let _c_bind = coupled.binding();
-            drop(store);
-            drop(s_bind);
-        }
     }
 
     #[test]
