@@ -2238,8 +2238,13 @@ mod buffer {
 
     pub struct Buffer<T>(Arc<(SlockCell<T>, QuarveAllocTag)>) where T: Send;
 
-    #[derive(Clone)]
     pub struct WeakBuffer<T>(Weak<(SlockCell<T>, QuarveAllocTag)>) where T: Send;
+
+    impl<T> Clone for WeakBuffer<T> where T: Send {
+        fn clone(&self) -> Self {
+            WeakBuffer(self.0.clone())
+        }
+    }
 
     impl<T> Buffer<T>
         where T: Send
@@ -2985,7 +2990,7 @@ mod test {
     use std::time::Duration;
     use rand::Rng;
     use crate::core::{clock_signal, setup_timing_thread, slock_owner, timed_worker};
-    use crate::state::{Store, Signal, TokenStore, Binding, StoreContainer, NumericAction, DirectlyInvertible, Filterable, DerivedStore, StringActionBasis, Buffer, Word, GroupAction, WithCapacitor, JoinedSignal, FixedSignal, EditingString, Bindable};
+    use crate::state::{Store, Signal, TokenStore, Binding, StoreContainer, NumericAction, DirectlyInvertible, Filterable, DerivedStore, StringActionBasis, Buffer, Word, GroupAction, WithCapacitor, JoinedSignal, FixedSignal, EditingString, Bindable, SetAction, WeakBinding};
     use crate::state::capacitor::{ConstantSpeedCapacitor, ConstantTimeCapacitor, SmoothCapacitor};
     use crate::state::SetAction::{Identity, Set};
     use crate::state::VecActionBasis::{Insert, Remove, Swap};
@@ -4014,5 +4019,98 @@ mod test {
         let state2 = Store::new(EditingString("asfasdf".to_string()));
         state2.apply(buffer.replace(Word::identity(), s.marker()), s.marker());
         assert_eq!(*state2.borrow(s.marker()), *state.borrow(s.marker()));
+    }
+
+    #[test]
+    fn test_nested_undo() {
+        let _h = HeapChecker::new();
+        let slock = slock_owner();
+        let s = slock.marker();
+
+        let action: Buffer<Vec<Box<dyn DirectlyInvertible>>> = Buffer::new(Vec::new());
+        let weak1 = action.downgrade();
+        let weak2 = action.downgrade();
+        let weak3= action.downgrade();
+        let s1 = Store::new(1);
+        let s2 = Store::new(2);
+        let d1 = DerivedStore::new(-1);
+        s1.subtree_inverse_listener(move |inv, s| {
+            let action = weak1.upgrade().unwrap();
+            action.borrow_mut(s).push(inv);
+            true
+        }, s);
+        s2.subtree_inverse_listener(move |inv, s| {
+            let action = weak2.upgrade().unwrap();
+            action.borrow_mut(s).push(inv);
+            true
+        }, s);
+        d1.subtree_inverse_listener(move |inv, s| {
+            let action = weak3.upgrade().unwrap();
+            action.borrow_mut(s).push(inv);
+            true
+        }, s);
+
+        let binding = s2.binding();
+        let d_binding = d1.binding();
+        s1.listen(move |val, s| {
+            binding.apply(NumericAction::Incr(3), s);
+            d_binding.apply(Set(-val), s);
+            true
+        }, s);
+        s1.apply(Set(4), s);
+        assert_eq!(*s1.borrow(s), 4);
+        assert_eq!(*s2.borrow(s), 5);
+        assert_eq!(*d1.borrow(s), -4);
+
+        assert_eq!(action.borrow(s).len(), 2);
+        let mut act1 = action.borrow_mut(s).remove(0);
+        let mut act2 = action.borrow_mut(s).remove(0);
+        act2.invert(s);
+        assert_eq!(*s1.borrow(s), 1);
+        assert_eq!(*s2.borrow(s), 5);
+        assert_eq!(*d1.borrow(s), -1);
+        assert_eq!(action.borrow(s).len(), 1);
+        act1.invert(s);
+        assert_eq!(*s1.borrow(s), 1);
+        assert_eq!(*s2.borrow(s), 2);
+        assert_eq!(*d1.borrow(s), -1);
+        assert_eq!(action.borrow(s).len(), 2);
+    }
+
+    #[test]
+    fn test_basic_coupler() {
+        let _h = HeapChecker::new();
+        let slock = slock_owner();
+        let s = slock.marker();
+
+        let s1 = Store::new(1);
+        let s2 = Store::new(-1);
+        let b1 = s1.binding();
+        let b2 = s2.weak_binding();
+        s1.action_listener(move |a, v: &SetAction<i32>, s| {
+            let Set(v) = v else {
+                return true;
+            };
+            let b2 = b2.upgrade().unwrap();
+            b2.apply_coupled(Set(-*v), s);
+            true
+        }, s);
+        s2.action_listener(move |a, v: &SetAction<i32>, s| {
+            let Set(v) = v else {
+                return true;
+            };
+            b1.apply_coupled(Set(-*v), s);
+            true
+        }, s);
+        assert_eq!(*s1.borrow(s), 1);
+        assert_eq!(*s2.borrow(s), -1);
+
+        s1.apply(Set(-1), s);
+        assert_eq!(*s1.borrow(s), -1);
+        assert_eq!(*s2.borrow(s), 1);
+
+        s2.apply(Set(4), s);
+        assert_eq!(*s1.borrow(s), -4);
+        assert_eq!(*s2.borrow(s), 4);
     }
 }
