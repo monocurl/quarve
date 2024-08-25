@@ -1,11 +1,41 @@
 pub(crate) mod rust_util {
     use std::marker::PhantomData;
+    use std::ops::Deref;
 
     #[allow(unused)]
     pub trait Captures<'a> {
 
     }
     impl<'a, T: ?Sized> Captures<'a> for T { }
+
+    pub struct DerefMap<U, V, D, F>
+        where D: Deref<Target=U>, F: Fn(&U) -> &V, V: ?Sized {
+        source: D,
+        map: F,
+        phantom: PhantomData<fn(&U) -> &V>
+    }
+
+    impl<U, V, D, F> DerefMap<U, V, D, F>
+        where D: Deref<Target=U>, F: Fn(&U) -> &V, V: ?Sized
+    {
+        pub fn new(source: D, map: F) -> Self {
+            DerefMap {
+                source,
+                map,
+                phantom: Default::default(),
+            }
+        }
+    }
+
+    impl<U, V, D, F> Deref for DerefMap<U, V, D, F>
+        where D: Deref<Target=U>, F: Fn(&U) -> &V, V: ?Sized
+    {
+        type Target = V;
+
+        fn deref(&self) -> &Self::Target {
+            (self.map)(self.source.deref())
+        }
+    }
 
 
     #[allow(unused)]
@@ -349,6 +379,9 @@ pub mod geo {
 
     pub type ScreenUnit = f64;
     pub const UNBOUNDED: f64 = 1e7;
+    // if a ui element is this large, in some cases
+    // it will deduce there must have been a rendering error
+    pub const EFFECTIVELY_UNBOUNDED: f64 = 1e5;
 
     #[derive(Copy, Clone, Default, Debug, PartialEq)]
     #[repr(C)]

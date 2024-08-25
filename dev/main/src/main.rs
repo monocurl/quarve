@@ -1,5 +1,6 @@
 use quarve::core::{Application, Environment, launch, MSlock, run_main_async, StandardConstEnv, StandardVarEnv};
 use quarve::event::EventModifiers;
+use quarve::prelude::rgb;
 use quarve::resource::local_storage;
 use quarve::state::{Bindable, FixedSignal, SetAction, Signal, Store, TokenStore};
 use quarve::util::geo::{Alignment, HorizontalAlignment, Size};
@@ -152,7 +153,12 @@ impl quarve::core::WindowProvider for WindowProvider {
                         })
                         .padding(10)
                         .border(Color::black(), 1)
-                ),
+                )
+                .push(
+                    Text::new(format!("Item {:?}", 1))
+                        .intrinsic(100, 100)
+                        .bg_color(rgb(0, 0, 0))
+                )
             // offset_y.binding()
         )
             .frame(Frame::default()

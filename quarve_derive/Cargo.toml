@@ -10,3 +10,4 @@ proc-macro = true
 quote = "1"
 proc-macro2 = "1.0"
 syn = "2.0"
+proc-macro-crate = "3.1.0"

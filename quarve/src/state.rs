@@ -501,7 +501,7 @@ mod group {
             use crate::state::{GroupBasis,  Stateful, Word};
             use crate::util::marker::FalseMarker;
 
-            #[derive(Clone, Debug, PartialEq, Eq)]
+            #[derive(Clone, Debug, PartialEq, Eq, Default)]
             pub struct EditingString(pub String);
 
             #[derive(Clone)]
@@ -1105,7 +1105,7 @@ mod store {
             }
         }
 
-        fn action_listener<G>(&self, listener: G, s: Slock<impl ThreadMarker>)
+        fn action_listen<G>(&self, listener: G, s: Slock<impl ThreadMarker>)
             where G: Send + FnMut(&F::Target, &<<F as StateFilter>::Target as Stateful>::Action, Slock) -> bool + 'static;
 
         type WeakBinding: WeakBinding<F>;
@@ -1199,7 +1199,7 @@ mod store {
                 R::Inner::apply(self.inner_ref(), action, false, s)
             }
 
-            fn action_listener<G>(&self, listener: G, s: Slock<impl ThreadMarker>) where G: Send + FnMut(&F::Target, &<<F as StateFilter>::Target as Stateful>::Action, Slock) -> bool + 'static {
+            fn action_listen<G>(&self, listener: G, s: Slock<impl ThreadMarker>) where G: Send + FnMut(&F::Target, &<<F as StateFilter>::Target as Stateful>::Action, Slock) -> bool + 'static {
                 self.inner_ref().borrow_mut(s).dispatcher_mut().add_listener(StateListener::ActionListener(Box::new(listener)));
             }
             type WeakBinding = GeneralWeakBinding<F, R>;
@@ -3152,7 +3152,7 @@ mod test {
         let set_counter = Buffer::new(0);
         let scb = set_counter.downgrade();
         let icb = identity_counter.downgrade();
-        state.action_listener( move |_, action, s| {
+        state.action_listen(move |_, action, s| {
             let Some(icb) = icb.upgrade() else {
                 return false;
             };
@@ -3168,7 +3168,7 @@ mod test {
             *old += 1;
             true
         }, s.marker());
-        state.action_listener( move |_, action, s| {
+        state.action_listen(move |_, action, s| {
             let Some(scb) = scb.upgrade() else {
                 return false;
             };
@@ -3296,7 +3296,7 @@ mod test {
         let state = Store::new(0);
         let derived = DerivedStore::new(0);
         let b = derived.binding();
-        state.action_listener(move |_, _, s| {
+        state.action_listen(move |_, _, s| {
             b.apply(NumericAction::Incr(1), s);
             true
         }, s.marker());
@@ -3998,7 +3998,7 @@ mod test {
         let state = Store::new(EditingString("asfasdf".to_string()));
         let buffer = Buffer::new(Word::identity());
         let buffer_writer = buffer.downgrade();
-        state.action_listener(move |_, action, s| {
+        state.action_listen(move |_, action, s| {
             let Some(buffer_writer) = buffer_writer.upgrade() else {
                 return false;
             };
@@ -4087,7 +4087,7 @@ mod test {
         let s2 = Store::new(-1);
         let b1 = s1.binding();
         let b2 = s2.weak_binding();
-        s1.action_listener(move |a, v: &SetAction<i32>, s| {
+        s1.action_listen(move |_a, v: &SetAction<i32>, s| {
             let Set(v) = v else {
                 return true;
             };
@@ -4095,7 +4095,7 @@ mod test {
             b2.apply_coupled(Set(-*v), s);
             true
         }, s);
-        s2.action_listener(move |a, v: &SetAction<i32>, s| {
+        s2.action_listen(move |_a, v: &SetAction<i32>, s| {
             let Set(v) = v else {
                 return true;
             };

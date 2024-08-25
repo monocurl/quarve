@@ -5,15 +5,19 @@ mod attribute {
         use crate::resource::Resource;
         use crate::util::geo::ScreenUnit;
         use crate::view::util::Color;
-        pub enum CharacterAttribute {
-            Bold,
-            Italic,
-            Underline,
-            Strikethrough,
-            BackColor(Color),
-            ForeColor(Color),
-            FontSize(ScreenUnit),
-            Font(Option<Resource>),
+
+        // For all attributes, a value of None
+        // implies to leave it to the default
+        #[derive(Default, Clone, Debug, PartialEq)]
+        pub struct CharAttribute {
+            bold: Option<bool>,
+            italic: Option<bool>,
+            underline: Option<bool>,
+            strikethrough: Option<bool>,
+            back_color: Option<Color>,
+            fore_color: Option<Color>,
+            size: Option<ScreenUnit>,
+            font: Option<Resource>,
         }
     }
     pub use character::*;
@@ -21,32 +25,35 @@ mod attribute {
     mod run {
         use crate::util::geo::ScreenUnit;
 
-        #[derive(Copy, Clone)]
+        #[derive(Copy, Clone, Debug, PartialEq)]
         pub enum Justification {
             Leading,
             Center,
             Trailing
         }
 
-        #[derive(Copy, Clone)]
+        #[derive(Copy, Clone, Debug, PartialEq)]
         pub struct Indentation {
             leading: ScreenUnit,
             trailing: ScreenUnit
         }
 
-        pub enum RunAttribute {
-            Justification(Justification),
-            Indentation(Indentation)
+        #[derive(Default, Copy, Clone, Debug, PartialEq)]
+        pub struct RunAttribute {
+            justification: Option<Justification>,
+            indentation: Option<Indentation>,
         }
     }
     pub use run::*;
 
-    mod document {
-        pub enum DocumentAttribute {
+    mod page {
+        /// Currently, no page attributes
+        #[derive(Default, Clone, Eq, PartialEq)]
+        pub struct PageAttribute {
 
         }
     }
-    pub use document::*;
+    pub use page::*;
 }
 pub use attribute::*;
 
@@ -176,8 +183,9 @@ mod text {
             true
         }
 
-        fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, _layout_context: &Self::DownContext, _env: &mut EnvRef<E>, _s: MSlock) -> (Rect, Rect) {
-            (frame.full_rect(), frame.full_rect())
+        fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, _layout_context: &Self::DownContext, _env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
+            let used = text_size(self.backing, frame, s);
+            (used.full_rect(), used.full_rect())
         }
     }
 }
@@ -430,6 +438,11 @@ mod text_field {
             // always use fully given width
             size.w = frame.w;
             self.last_size = size;
+
+            assert!(size.w <= geo::EFFECTIVELY_UNBOUNDED,
+                    "Suggested width is too large for this textfield; \
+                     help: set the intrinsic size manually of this textfield");
+
             (size.full_rect(), size.full_rect())
         }
 
@@ -499,6 +512,936 @@ mod text_field {
     }
 }
 pub use text_field::*;
+
+mod text_view {
+    mod state {
+        mod attribute_set {
+            use crate::view::text::{CharAttribute, PageAttribute, RunAttribute};
+
+            pub trait ToCharAttribute: Default + Send + PartialEq + Clone + 'static {
+                fn to_char_attribute(&self) -> impl AsRef<CharAttribute>;
+            }
+
+            impl AsRef<CharAttribute> for CharAttribute {
+                fn as_ref(&self) -> &CharAttribute {
+                    self
+                }
+            }
+
+            impl ToCharAttribute for CharAttribute {
+                fn to_char_attribute(&self) -> impl AsRef<CharAttribute> {
+                    self
+                }
+            }
+
+            pub trait ToRunAttribute: Default + Send + PartialEq + Clone + 'static {
+                fn to_run_attribute(&self) -> impl AsRef<RunAttribute>;
+            }
+
+            impl AsRef<RunAttribute> for RunAttribute {
+                fn as_ref(&self) -> &RunAttribute {
+                    self
+                }
+            }
+
+            impl ToRunAttribute for RunAttribute {
+                fn to_run_attribute(&self) -> impl AsRef<RunAttribute> {
+                    self
+                }
+            }
+
+            pub trait ToPageAttribute: Default + Send + PartialEq + Clone + 'static {
+                fn to_page_attribute(&self) -> impl AsRef<PageAttribute>;
+            }
+
+            impl AsRef<PageAttribute> for PageAttribute {
+                fn as_ref(&self) -> &PageAttribute {
+                    self
+                }
+            }
+
+            impl ToPageAttribute for PageAttribute {
+                fn to_page_attribute(&self) -> impl AsRef<PageAttribute> {
+                    self
+                }
+            }
+
+            // AttributeSet is just a collection of associated types
+            // Send + 'static requirement should be automatically fulfilled
+            pub trait AttributeSet: Send + 'static {
+                type CharAttribute: ToCharAttribute;
+                type RunAttribute: ToRunAttribute;
+                type PageAttribute: ToPageAttribute;
+            }
+        }
+        pub use attribute_set::*;
+
+        mod attribute_holder {
+            use std::ops::{Mul};
+            use crate::state::{GroupAction, GroupBasis, SetAction, Stateful};
+            use crate::util::marker::FalseMarker;
+            use crate::view::text::text_view::state::ToCharAttribute;
+
+            #[derive(Default)]
+            pub struct AttributeHolder<A> {
+                pub attribute: A
+            }
+
+            impl<A> Stateful for AttributeHolder<A> where A: Send + 'static {
+                type Action = SetAction<Self>;
+                type HasInnerStores = FalseMarker;
+            }
+
+            pub struct RangedAttributeHolder<A> where A: ToCharAttribute {
+                // A and its length
+                pub attributes: Vec<(A, usize)>
+            }
+
+            impl<A> RangedAttributeHolder<A> where A: ToCharAttribute {
+                pub fn attribute_at(&self, mut at: usize) -> &A {
+                    // FIXME maybe bin search this if size is greater than threshold
+                    self.attributes.iter()
+                        .find_map(|(a, len)| {
+                            if at < *len {
+                                Some(a)
+                            }
+                            else {
+                                at -= len;
+                                None
+                            }
+                        }).expect("Invalid Index")
+                }
+            }
+            
+            impl<A> Default for RangedAttributeHolder<A> where A: ToCharAttribute {
+                fn default() -> Self {
+                    RangedAttributeHolder {
+                        attributes: vec![],
+                    }
+                }
+            }
+
+            // cant exactly use a word since a single modification doesnt always have a single inverse
+            pub enum RangedBasis<A> where A: ToCharAttribute {
+                Insert {
+                    at: usize,
+                    len: usize,
+                    attribute: A
+                },
+                Delete {
+                    at: usize,
+                    len: usize,
+                }
+            }
+
+            impl<A> RangedBasis<A> where A: ToCharAttribute {
+                fn apply(self, to: &mut RangedAttributeHolder<A>, inverse: &mut Vec<RangedBasis<A>>) {
+                    // note that an insert-delete inverse pair may not lead to an identical state
+                    // since we do not recombine
+                    match self {
+                        RangedBasis::Insert { at, len, attribute } => {
+                            if len == 0 {
+                                return;
+                            }
+
+                            let mut start = 0;
+                            let mut i = 0;
+                            while i < to.attributes.len() && start + to.attributes[i].1 <= at {
+                                start += to.attributes[i].1;
+                                i += 1
+                            }
+
+                            // by this time at is contained in the i'th interval's range
+                            // start is the start position of the ith interval
+                            assert!(start <= at, "Invalid index");
+
+                            if at == start {
+                                // insert normally
+                                to.attributes.insert(i, (attribute, len));
+                            }
+                            else {
+                                // if in the middle of a current one, split
+                                let right = to.attributes[i].1 - (at - start);
+                                to.attributes[i].1 = at - start;
+                                to.attributes.insert(i + 1, (to.attributes[i].0.clone(), right));
+
+                                to.attributes.insert(i + 1, (attribute, len));
+                            }
+
+                            // inverse action
+                            inverse.push(RangedBasis::Delete {
+                                at, len
+                            })
+                        }
+                        RangedBasis::Delete { at, len } => {
+                            if len == 0 {
+                                return;
+                            }
+
+                            // half open interval denoting regions that are subsets of this range
+                            let mut start = 0;
+                            let mut i = 0;
+                            while i < to.attributes.len() && at > start {
+                                start += to.attributes[i].1;
+                                i += 1
+                            }
+
+                            assert!(at <= start, "Invalid index");
+
+                            let mut j = i;
+                            let mut end = start;
+                            while j < to.attributes.len() && end + to.attributes[j].1 <= at + len {
+                                end += to.attributes[j].1;
+                                j += 1;
+                            }
+
+                            assert!(at + len <= end, "Invalid length");
+
+                            // (we go right to left to avoid index issues)
+                            if start > at + len {
+                                // delete was entirely within a given range
+                                debug_assert!(i > 0 && i == j);
+
+                                // decrease previous (which is effectively a split)
+                                to.attributes[i - 1].1 -= len;
+                                inverse.push(RangedBasis::Insert {
+                                    at,
+                                    len,
+                                    attribute: to.attributes[i - 1].0.clone(),
+                                });
+                                // fully handled
+                                return;
+                            }
+
+                            // possibly clip next
+                            if j < to.attributes.len() && at + len != end {
+                                to.attributes[j].1 -= at + len - end;
+
+                                inverse.push(RangedBasis::Insert {
+                                    at: end,
+                                    len: at + len - end,
+                                    attribute: to.attributes[j].0.clone(),
+                                })
+                            }
+
+                            // cut the main section
+                            let mut delete_loc = end;
+                            inverse.extend(
+                                to.attributes.splice(i .. j, std::iter::empty())
+                                    .rev()
+                                    .map(|(a, l)| {
+                                        delete_loc -= l;
+                                        RangedBasis::Insert {
+                                            at: delete_loc,
+                                            len: l,
+                                            attribute: a,
+                                        }
+                                    })
+                            );
+
+                            // possibly clip previous
+                            if i > 0 && at != start{
+                                // clip prev
+                                to.attributes[i - 1].1 -= start - at;
+
+                                inverse.push(RangedBasis::Insert {
+                                    at,
+                                    len: start - at,
+                                    attribute: to.attributes[i - 1].0.clone(),
+                                })
+                            }
+
+                            // possibly rejoin i - 1 with j (which has now become i) if the attributes are now equal
+                            if i > 0 && i < to.attributes.len() && to.attributes[i - 1] == to.attributes[i] {
+                                to.attributes[i - 1].1 += to.attributes[i].1;
+                                to.attributes.remove(j);
+                            }
+                        }
+                    }
+                }
+            }
+
+            pub struct RangedAttributeAction<A> where A: ToCharAttribute {
+                pub actions: Vec<RangedBasis<A>>
+            }
+
+            impl<A> GroupBasis<RangedAttributeHolder<A>> for RangedAttributeAction<A> where A: ToCharAttribute {
+                fn apply(self, to: &mut RangedAttributeHolder<A>) -> Self {
+                    let mut inverse = vec![];
+                    for action in self.actions {
+                        action.apply(to, &mut inverse);
+                    }
+
+                    inverse.reverse();
+                    RangedAttributeAction {
+                        actions: inverse,
+                    }
+                }
+
+                fn forward_description(&self) -> impl Into<String> {
+                    "Change"
+                }
+
+                fn backward_description(&self) -> impl Into<String> {
+                    "Change"
+                }
+            }
+
+            impl<A> Mul for RangedAttributeAction<A> where A: ToCharAttribute {
+                type Output = Self;
+
+                fn mul(mut self, rhs: Self) -> Self::Output {
+                    self.actions.extend(rhs.actions);
+                    self
+                }
+            }
+
+            impl<A> GroupAction<RangedAttributeHolder<A>> for RangedAttributeAction<A> where A: ToCharAttribute {
+                fn identity() -> Self {
+                    RangedAttributeAction {
+                        actions: vec![],
+                    }
+                }
+            }
+
+            impl<A> Stateful for RangedAttributeHolder<A> where A: ToCharAttribute {
+                type Action = RangedAttributeAction<A>;
+                type HasInnerStores = FalseMarker;
+            }
+        }
+        pub use attribute_holder::*;
+
+
+        mod run_gui_info {
+            use crate::state::{SetAction, Stateful};
+            use crate::util::geo::ScreenUnit;
+            use crate::util::marker::FalseMarker;
+
+            #[derive(Default)]
+            pub struct RunGUIInfo {
+                pub height: ScreenUnit,
+                pub start_char: usize,
+                pub page_position: ScreenUnit
+            }
+
+            impl Stateful for RunGUIInfo {
+                type Action = SetAction<Self>;
+                type HasInnerStores = FalseMarker;
+            }
+        }
+
+        mod run {
+            use std::ops::{Deref, Range};
+            use quarve_derive::StoreContainer;
+            use crate::core::Slock;
+            use crate::state::{Binding, DerivedStore, EditingString, SetAction, Signal, Store, StringActionBasis, Word};
+            use crate::state::SetAction::Set;
+            use crate::util::marker::ThreadMarker;
+            use crate::util::rust_util::DerefMap;
+            use crate::view::text::text_view::state::{AttributeSet};
+            use crate::view::text::text_view::state::attribute_holder::{AttributeHolder, RangedAttributeAction, RangedAttributeHolder, RangedBasis};
+            use crate::view::text::text_view::state::run_gui_info::RunGUIInfo;
+
+            #[derive(StoreContainer)]
+            pub struct Run<I, D> where I: AttributeSet, D: AttributeSet {
+                content: Store<EditingString>,
+                gui_info: DerivedStore<RunGUIInfo>,
+
+                char_intrinsic_attribute: Store<RangedAttributeHolder<I::CharAttribute>>,
+                char_derived_attribute: DerivedStore<RangedAttributeHolder<D::CharAttribute>>,
+
+                intrinsic_attribute: Store<AttributeHolder<I::RunAttribute>>,
+                derived_attribute: DerivedStore<AttributeHolder<D::RunAttribute>>,
+            }
+
+            impl<I, D> Run<I, D> where I: AttributeSet, D: AttributeSet {
+                pub(super) fn new() -> Self {
+                    Run {
+                        content: Store::default(),
+                        gui_info: DerivedStore::default(),
+                        char_intrinsic_attribute: Store::default(),
+                        char_derived_attribute: DerivedStore::default(),
+                        intrinsic_attribute: Store::default(),
+                        derived_attribute: DerivedStore::default(),
+                    }
+                }
+
+                pub fn content<'a>(&'a self, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=str> + 'a {
+                    DerefMap::new(
+                        self.content.borrow(s),
+                        |e| e.0.deref()
+                    )
+                }
+
+                pub fn len(&self, s: Slock<impl ThreadMarker>) -> usize {
+                    self.content.borrow(s).0.len()
+                }
+
+                pub fn intrinsic<'a>(&'a self, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=I::RunAttribute> + 'a {
+                    DerefMap::new(
+                        self.intrinsic_attribute.borrow(s),
+                        |i| &i.attribute
+                    )
+                }
+
+                pub fn derived<'a>(&'a self, s: Slock<'a, impl ThreadMarker> ) -> impl Deref<Target=D::RunAttribute> + 'a {
+                    DerefMap::new(
+                        self.derived_attribute.borrow(s),
+                        |i| &i.attribute
+                    )
+                }
+
+                pub fn char_intrinsic<'a>(&'a self, at: usize, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=I::CharAttribute> + 'a {
+                    DerefMap::new(
+                        self.char_intrinsic_attribute.borrow(s),
+                        move |c| c.attribute_at(at)
+                    )
+                }
+
+                pub fn char_derived<'a>(&'a self, at: usize, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=D::CharAttribute> +'a {
+                    DerefMap::new(
+                        self.char_derived_attribute.borrow(s),
+                        move |c| c.attribute_at(at)
+                    )
+                }
+
+                pub fn set_intrinsic(&self, intrinsic: I::RunAttribute, s: Slock<impl ThreadMarker>) {
+                    self.intrinsic_attribute.apply(Set(AttributeHolder {
+                        attribute: intrinsic
+                    }), s);
+                }
+
+                pub fn set_derived(&self, derived: D::RunAttribute, s: Slock<impl ThreadMarker>) {
+                    self.derived_attribute.apply(Set(AttributeHolder {
+                        attribute: derived
+                    }), s);
+                }
+
+                pub fn replace(&self, range: Range<usize>, with: impl Into<String>, s: Slock<impl ThreadMarker>) {
+                    self.replace_with_attributes(
+                        range, with,
+                        Default::default(), Default::default(),
+                        s
+                    );
+                }
+
+                pub fn replace_with_attributes(
+                    &self,
+                    range: Range<usize>,
+                    with: impl Into<String>,
+                    intrinsic: I::CharAttribute,
+                    derived: D::CharAttribute,
+                    s: Slock<impl ThreadMarker>
+                ) {
+                    // delete old attrs
+                    self.char_derived_attribute.apply(RangedAttributeAction {
+                        actions: vec![RangedBasis::Delete {
+                            at: range.start,
+                            len: range.len(),
+                        }],
+                    }, s);
+
+                    self.char_intrinsic_attribute.apply(RangedAttributeAction {
+                        actions: vec![RangedBasis::Delete {
+                            at: range.start,
+                            len: range.len(),
+                        }],
+                    }, s);
+
+                    // modify content
+                    self.content.apply(
+                        StringActionBasis::ReplaceSubrange(range.clone(), with.into()), s
+                    );
+
+                    // insert new attrs
+                    self.char_derived_attribute.apply(RangedAttributeAction {
+                        actions: vec![RangedBasis::Insert {
+                            at: range.start,
+                            len: range.len(),
+                            attribute: derived
+                        }],
+                    }, s);
+
+                    self.char_intrinsic_attribute.apply(RangedAttributeAction {
+                        actions: vec![RangedBasis::Insert {
+                            at: range.start,
+                            len: range.len(),
+                            attribute: intrinsic
+                        }],
+                    }, s);
+                }
+
+                pub fn set_char_intrinsic(&self, attribute: I::CharAttribute, for_range: Range<usize>, s: Slock<impl ThreadMarker>) {
+                    self.char_intrinsic_attribute.apply(RangedAttributeAction {
+                        actions: vec![
+                            RangedBasis::Delete {
+                                at: for_range.start,
+                                len: for_range.len(),
+                            },
+                            RangedBasis::Insert {
+                                at: for_range.start,
+                                len: for_range.len(),
+                                attribute
+                            }
+                        ],
+                    }, s);
+                }
+
+                pub fn set_char_derived(&self, attribute: D::CharAttribute, for_range: Range<usize>, s: Slock<impl ThreadMarker>) {
+                    self.char_derived_attribute.apply(RangedAttributeAction {
+                        actions: vec![
+                            RangedBasis::Delete {
+                                at: for_range.start,
+                                len: for_range.len(),
+                            },
+                            RangedBasis::Insert {
+                                at: for_range.start,
+                                len: for_range.len(),
+                                attribute
+                            }
+                        ],
+                    }, s);
+                }
+
+                pub fn content_action_listen(
+                    &self,
+                    f: impl FnMut(&EditingString, &Word<StringActionBasis>, Slock) -> bool + Send + 'static,
+                    s: Slock<impl ThreadMarker>
+                ) {
+                    self.content.action_listen(f, s)
+                }
+
+                pub fn content_listen(
+                    &self,
+                    f: impl FnMut(&EditingString, Slock) -> bool + Send + 'static,
+                    s: Slock<impl ThreadMarker>
+                ) {
+                    self.content.listen(f, s)
+                }
+
+                pub fn derived_action_listen(
+                    &self,
+                    f: impl FnMut(&AttributeHolder<D::RunAttribute>, &SetAction<AttributeHolder<D::RunAttribute>>, Slock) -> bool + Send + 'static,
+                    s: Slock<impl ThreadMarker>
+                ) {
+                    self.derived_attribute.action_listen(f, s)
+                }
+
+                pub fn derived_listen(
+                    &self,
+                    f: impl FnMut(&AttributeHolder<D::RunAttribute>, Slock) -> bool + Send + 'static,
+                    s: Slock<impl ThreadMarker>
+                ) {
+                    self.derived_attribute.listen(f, s)
+                }
+
+                pub fn intrinsic_action_listen(
+                    &self,
+                    f: impl FnMut(&AttributeHolder<I::RunAttribute>, &SetAction<AttributeHolder<I::RunAttribute>>, Slock) -> bool + Send + 'static,
+                    s: Slock<impl ThreadMarker>
+                ) {
+                    self.intrinsic_attribute.action_listen(f, s)
+                }
+
+                pub fn intrinsic_listen(
+                    &self,
+                    f: impl FnMut(&AttributeHolder<I::RunAttribute>, Slock) -> bool + Send + 'static,
+                    s: Slock<impl ThreadMarker>
+                ) {
+                    self.intrinsic_attribute.listen(f, s)
+                }
+
+                pub fn char_derived_action_listen(
+                    &self,
+                    f: impl FnMut(&RangedAttributeHolder<D::CharAttribute>, &RangedAttributeAction<D::CharAttribute>, Slock) -> bool + Send + 'static,
+                    s: Slock
+                ) {
+                    self.char_derived_attribute.action_listen(f, s);
+                }
+
+                pub fn char_derived_listen(
+                    &self,
+                    f: impl FnMut(&RangedAttributeHolder<D::CharAttribute>, Slock) -> bool + Send + 'static,
+                    s: Slock
+                ) {
+                    self.char_derived_attribute.listen(f, s);
+                }
+
+                pub fn char_intrinsic_action_listen(
+                    &self,
+                    f: impl FnMut(&RangedAttributeHolder<I::CharAttribute>, &RangedAttributeAction<I::CharAttribute>, Slock) -> bool + Send + 'static,
+                    s: Slock
+                ) {
+                    self.char_intrinsic_attribute.action_listen(f, s);
+                }
+
+                pub fn char_intrinsic_listen(
+                    &self,
+                    f: impl FnMut(&RangedAttributeHolder<I::CharAttribute>, Slock) -> bool + Send + 'static,
+                    s: Slock
+                ) {
+                    self.char_intrinsic_attribute.listen(f, s);
+                }
+            }
+        }
+        pub use run::*;
+
+        mod runs {
+            // The type that stores a list of runs
+            pub type RunsContainer<T> = Vec<T>;
+        }
+        pub use runs::*;
+
+        mod page {
+            use std::ops::Deref;
+            use quarve_derive::StoreContainer;
+            use crate::core::Slock;
+            use crate::state::{Binding, DerivedStore, SetAction, Signal, Store, VecActionBasis, Word};
+            use crate::state::SetAction::Set;
+            use crate::util::marker::ThreadMarker;
+            use crate::util::rust_util::DerefMap;
+            use crate::view::text::text_view::state::{AttributeSet, Run, RunsContainer};
+            use crate::view::text::text_view::state::attribute_holder::{AttributeHolder};
+
+            #[derive(StoreContainer)]
+            pub struct Page<I, D> where I: AttributeSet, D: AttributeSet {
+                pub(crate) runs: Store<Vec<Run<I, D>>>,
+
+                pub(crate) page_intrinsic_attribute: Store<AttributeHolder<I::PageAttribute>>,
+                pub(crate) page_derived_attribute: DerivedStore<AttributeHolder<D::PageAttribute>>
+            }
+
+            impl<I, D> Page<I, D> where I: AttributeSet, D: AttributeSet {
+                pub fn new() -> Self {
+                    Page {
+                        runs: Store::new(vec![]),
+                        page_intrinsic_attribute: Store::default(),
+                        page_derived_attribute: DerivedStore::default(),
+                    }
+                }
+
+                pub fn num_runs(&self, s: Slock<impl ThreadMarker>) -> usize {
+                    self.runs.borrow(s).len()
+                }
+
+                pub fn runs<'a>(&'a mut self, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=RunsContainer<Run<I, D>>> + 'a {
+                    self.runs.borrow(s)
+                }
+
+                pub fn run<'a>(&'a self, index: usize, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=Run<I, D>> + 'a {
+                    DerefMap::new(
+                        self.runs.borrow(s),
+                        move |runs| &runs[index]
+                    )
+                }
+
+                pub fn insert_run<'a>(&'a self, at: usize, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=Run<I, D>> + 'a {
+                    self.runs.apply(VecActionBasis::Insert(Run::new(), at), s);
+                    self.run(at, s)
+                }
+
+                pub fn remove_run(&self, at: usize, s: Slock<impl ThreadMarker>) {
+                    self.runs.apply(VecActionBasis::Remove(at), s);
+                }
+
+                pub fn intrinsic<'a>(&'a self, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=I::PageAttribute> + 'a {
+                    DerefMap::new(
+                        self.page_intrinsic_attribute.borrow(s),
+                        |p| &p.attribute
+                    )
+                }
+
+                pub fn derived<'a>(&'a self, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=D::PageAttribute> + 'a {
+                    DerefMap::new(
+                        self.page_derived_attribute.borrow(s),
+                        |d| &d.attribute
+                    )
+                }
+
+                pub fn set_intrinsic(&self, attribute: I::PageAttribute, s: Slock<impl ThreadMarker>) {
+                    self.page_intrinsic_attribute.apply(Set(AttributeHolder {
+                        attribute
+                    }), s);
+                }
+
+                pub fn set_derived(&self, attribute: D::PageAttribute, s: Slock<impl ThreadMarker>) {
+                    self.page_derived_attribute.apply(Set(AttributeHolder {
+                        attribute
+                    }), s);
+                }
+
+                pub fn build_full_content(&mut self, s: Slock<impl ThreadMarker>) -> String {
+                    let runs = self.runs(s);
+                    let contents = runs.iter()
+                            .map(|run| run.content(s));
+                    let mut ret = String::new();
+
+                    for line in contents {
+                        ret.push_str(line.deref());
+                        ret.push('\n');
+                    }
+
+                    if !ret.is_empty() {
+                        // remove trailing new line
+                        ret.pop();
+                    }
+
+                    ret
+                }
+
+                // NOTE, currently a vector is used
+                // but this is planned to be changed
+                pub fn runs_action_listen(
+                    &self,
+                    f: impl FnMut(&RunsContainer<Run<I, D>>, &Word<VecActionBasis<Run<I, D>>>, Slock) -> bool + Send + 'static,
+                    s: Slock<impl ThreadMarker>
+                ) {
+                    self.runs.action_listen(f, s);
+                }
+
+                // listens whenever a run is inserted or removed
+                // DOES not get called whenever a run is modified
+                pub fn runs_listen(
+                    &self,
+                    f: impl FnMut(&RunsContainer<Run<I, D>>, Slock) -> bool + Send + 'static,
+                    s: Slock<impl ThreadMarker>
+                ) {
+                    self.runs.listen(f, s);
+                }
+
+                pub fn intrinsic_action_listen(
+                    &self,
+                    f: impl FnMut(&AttributeHolder<I::PageAttribute>,  &SetAction<AttributeHolder<I::PageAttribute>>, Slock) -> bool + Send + 'static,
+                    s: Slock<impl ThreadMarker>
+                ) {
+                    self.page_intrinsic_attribute.action_listen(f, s);
+                }
+
+                pub fn intrinsic_listen(
+                    &self,
+                    f: impl FnMut(&AttributeHolder<I::PageAttribute>, Slock) -> bool + Send + 'static,
+                    s: Slock<impl ThreadMarker>
+                ) {
+                    self.page_intrinsic_attribute.listen(f, s);
+                }
+
+                pub fn derived_action_listen(
+                    &self,
+                    f: impl FnMut(&AttributeHolder<D::PageAttribute>, &SetAction<AttributeHolder<D::PageAttribute>>, Slock) -> bool + Send + 'static,
+                    s: Slock<impl ThreadMarker>
+                ) {
+                    self.page_derived_attribute.action_listen(f, s);
+                }
+
+                pub fn derived_listen(
+                    &self,
+                    f: impl FnMut(&AttributeHolder<D::PageAttribute>, Slock) -> bool + Send + 'static + 'static,
+                    s: Slock<impl ThreadMarker>
+                ) {
+                    self.page_derived_attribute.listen(f, s);
+                }
+            }
+        }
+        pub use page::*;
+
+        mod cursor_state {
+            use quarve_derive::StoreContainer;
+            use crate::core::Slock;
+            use crate::state::{Binding, Buffer, Signal, Store};
+            use crate::state::SetAction::Set;
+            use crate::util::marker::ThreadMarker;
+
+            #[derive(StoreContainer)]
+            pub struct CursorState {
+                page_num: Store<usize>,
+
+                start_run: Store<usize>,
+                start_char: Store<usize>,
+
+                end_run: Store<usize>,
+                end_char: Store<usize>,
+            }
+
+            impl CursorState {
+                pub fn new() -> Self {
+                    CursorState {
+                        page_num: Store::default(),
+                        start_run: Store::default(),
+                        start_char: Store::default(),
+                        end_run: Store::default(),
+                        end_char: Store::default(),
+                    }
+                }
+
+                pub fn page(&self, s: Slock<impl ThreadMarker>) -> usize {
+                    *self.page_num.borrow(s)
+                }
+
+                pub fn start_run(&self, s: Slock<impl ThreadMarker>) -> usize {
+                    *self.start_run.borrow(s)
+                }
+
+                pub fn end_run(&self, s: Slock<impl ThreadMarker>) -> usize {
+                    *self.end_run.borrow(s)
+                }
+
+                pub fn start_char(&self, s: Slock<impl ThreadMarker>) -> usize {
+                    *self.start_char.borrow(s)
+                }
+
+                pub fn end_char(&self, s: Slock<impl ThreadMarker>) -> usize {
+                    *self.end_char.borrow(s)
+                }
+
+                pub fn set_range(
+                    &self,
+                    start_run: usize,
+                    start_char: usize,
+                    end_run: usize,
+                    end_char: usize,
+                    s: Slock<impl ThreadMarker>
+                ) {
+                    self.start_run.apply(Set(start_run), s);
+                    self.start_char.apply(Set(start_char), s);
+                    self.end_run.apply(Set(end_run), s);
+                    self.end_char.apply(Set(end_char), s);
+                }
+
+                pub fn set_page(&self, page: usize, s: Slock<impl ThreadMarker>) {
+                    self.page_num.apply(Set(page), s);
+                }
+
+                // Function is called with page, start_run, start_char, end_run, end_char
+                pub fn listen(
+                    &self,
+                    f: impl FnMut(usize, usize, usize, usize, usize, Slock) -> bool + Send + 'static,
+                    s: Slock<impl ThreadMarker>
+                ) {
+                    let stores = [&self.page_num, &self.start_run, &self.start_char, &self.end_run, &self.end_char];
+                    // (alive, function, current args)
+                    let state = Buffer::new(
+                        (true, f, stores.map(|store| *store.borrow(s)))
+                    );
+
+                    for (i, store) in stores.into_iter().enumerate() {
+                        // basically a clone
+                        // we use the function to determine when to return false
+                        // rather than weak/strong (we also dont need to worry about cycles)
+                        let my_state = state.downgrade().upgrade().unwrap();
+                        store.listen(move |val, s| {
+                            let mut state = my_state.borrow_mut(s);
+                            if !state.0 {
+                                return false;
+                            }
+
+                            // update appropriate argument
+                            state.2[i] = *val;
+                            let args = state.2;
+                            state.0 = (state.1)(args[0], args[1], args[2], args[3], args[4], s);
+
+                            state.0
+                        }, s)
+                    }
+                }
+            }
+        }
+        pub use cursor_state::*;
+
+        mod text_view_state {
+            use std::ops::Deref;
+            use crate::core::Slock;
+            use crate::state::{Signal, Binding, GeneralListener, InverseListener, Store, StoreContainer, VecActionBasis, Word};
+            use crate::util::marker::ThreadMarker;
+            use crate::util::rust_util::DerefMap;
+            use crate::view::text::text_view::state::{AttributeSet, CursorState, Page};
+
+            pub struct TextViewState<I, D> where I: AttributeSet, D: AttributeSet {
+                pages: Store<Vec<Page<I, D>>>,
+                cursor: CursorState,
+            }
+
+            // Do not include cursor in the undo history
+            impl<I, D> StoreContainer for TextViewState<I, D> where I: AttributeSet, D: AttributeSet {
+                fn subtree_general_listener<F: GeneralListener + Clone>(&self, f: F, s: Slock<impl ThreadMarker>) {
+                    self.pages.subtree_general_listener(f, s);
+                }
+
+                fn subtree_inverse_listener<F: InverseListener + Clone>(&self, f: F, s: Slock<impl ThreadMarker>) {
+                    self.pages.subtree_inverse_listener(f, s);
+                }
+            }
+
+            impl<I, D> TextViewState<I, D> where I: AttributeSet, D: AttributeSet {
+                pub fn new() -> Self {
+                    TextViewState {
+                        pages: Store::new(vec![]),
+                        cursor: CursorState::new(),
+                    }
+                }
+
+                pub fn pages<'a>(&'a self, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=Vec<Page<I, D>>> + 'a {
+                    self.pages.borrow(s)
+                }
+
+                pub fn page<'a>(&'a self, at: usize, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=Page<I, D>> + 'a {
+                    DerefMap::new(
+                        self.pages.borrow(s),
+                        move |p| &p[at]
+                    )
+                }
+
+                pub fn insert_page(&self, page: Page<I, D>, at: usize, s: Slock) {
+                    self.pages.apply(
+                        VecActionBasis::Insert(page, at), s
+                    )
+                }
+
+                pub fn remove_page(&self, at: usize, s: Slock<impl ThreadMarker>) {
+                    self.pages.apply(
+                        VecActionBasis::Remove(at), s
+                    )
+                }
+
+                pub fn action_listen(
+                    &self,
+                    f: impl FnMut(&Vec<Page<I, D>>, &Word<VecActionBasis<Page<I, D>>>, Slock) -> bool + Send + 'static,
+                    s: Slock<impl ThreadMarker>
+                ) {
+                    self.pages.action_listen(f, s);
+                }
+
+                pub fn listen(
+                    &self,
+                    f: impl FnMut(&Vec<Page<I, D>>, Slock) -> bool + Send + 'static,
+                    s: Slock<impl ThreadMarker>
+                ) {
+                    self.pages.listen(f, s);
+                }
+            }
+        }
+        pub use text_view_state::*;
+    }
+    pub use state::*;
+
+    trait TextViewProvider {
+        type IntrinsicAttribute: AttributeSet;
+        type DerivedAttribute: AttributeSet;
+
+        //
+        fn run_decoration(number: i32, run: i32);
+        fn tab();
+        fn untab();
+        fn newline();
+        fn alt_newline();
+    }
+
+    // Composed as a series of pages
+    // We handle the scrollview stuff ourselves then
+    pub struct TextView {
+
+    }
+}
+pub use text_view::*;
 
 mod env {
     use std::ops::Deref;
@@ -620,16 +1563,3 @@ mod env {
     }
 }
 pub use env::*;
-
-struct TextView {
-
-}
-
-struct TextViewState {
-
-}
-
-trait TextViewProvider {
-    type IntrinsicAttribute;
-    type DerivedAttributes;
-}

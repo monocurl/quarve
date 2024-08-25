@@ -880,7 +880,7 @@ mod vec_layout {
 
                 // register invalidator for binding
                 let buffer = self.action_buffer.downgrade();
-                self.binding.action_listener(move |_, a, s| {
+                self.binding.action_listen(move |_, a, s| {
                     let (Some(invalidator), Some(buffer)) = (invalidator.upgrade(), buffer.upgrade()) else {
                         return false;
                     };

@@ -1,5 +1,6 @@
 use proc_macro::TokenStream;
-use syn::{parse_macro_input, DeriveInput, Data, Meta, Token, DataStruct};
+use proc_macro_crate::{crate_name, FoundCrate};
+use syn::{parse_macro_input, DeriveInput, Data, Meta, Token, DataStruct, Path};
 use syn::punctuated::Punctuated;
 use quote::quote;
 
@@ -27,14 +28,19 @@ pub fn store_container_derive(input: TokenStream) -> TokenStream {
 
         let sub_stores_clone = sub_stores.clone();
 
+        let quarve_path: Path = match crate_name("quarve").expect("Error finding crate name") {
+            FoundCrate::Itself => syn::parse_quote!(crate),
+            FoundCrate::Name(_) => syn::parse_quote!(::quarve),
+        };
+
         quote! {
             #[doc = #doc_str]
-            impl #impl_generics ::quarve::state::StoreContainer for #ident #ty_generics #where_clause {
-                fn subtree_general_listener<__F_SC_FUNC: ::quarve::state::GeneralListener + Clone>(&self, f: __F_SC_FUNC, s: ::quarve::core::Slock<impl ::quarve::util::marker::ThreadMarker>) {
+            impl #impl_generics #quarve_path::state::StoreContainer for #ident #ty_generics #where_clause {
+                fn subtree_general_listener<__F_SC_FUNC: #quarve_path::state::GeneralListener + Clone>(&self, f: __F_SC_FUNC, s: #quarve_path::core::Slock<impl #quarve_path::util::marker::ThreadMarker>) {
                     #(self.#sub_stores.subtree_general_listener(f.clone(), s);)*
                 }
 
-                fn subtree_inverse_listener<__F_SC_FUNC: ::quarve::state::InverseListener + Clone>(&self, f: __F_SC_FUNC, s: ::quarve::core::Slock<impl ::quarve::util::marker::ThreadMarker>) {
+                fn subtree_inverse_listener<__F_SC_FUNC: #quarve_path::state::InverseListener + Clone>(&self, f: __F_SC_FUNC, s: #quarve_path::core::Slock<impl #quarve_path::util::marker::ThreadMarker>) {
                     #(self.#sub_stores_clone.subtree_inverse_listener(f.clone(), s);)*
                 }
             }

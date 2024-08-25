@@ -10,13 +10,10 @@ thread_local! {
 }
 
 mod debug_stats {
-    use std::cell::RefCell;
     use std::time::{Duration, Instant};
 
     #[cfg(debug_assertions)]
     pub(crate) struct DebugInfo {
-        // addresses of applied states
-        pub applying_transaction: RefCell<Vec<usize>>,
         start_time: Instant
     }
 
@@ -29,7 +26,6 @@ mod debug_stats {
     impl DebugInfo {
         pub fn new() -> Self {
             DebugInfo {
-                applying_transaction: RefCell::new(Vec::new()),
                 start_time: Instant::now()
             }
         }
@@ -168,6 +164,8 @@ mod environment {
         }
     }
 
+    // Basically the same as char attribute but
+    // no optionals in some fields
     #[derive(Clone, Debug)]
     pub struct TextEnv {
         pub bold: bool,
