@@ -132,7 +132,7 @@ mod listener {
     use crate::view::undo_manager::UndoBucket;
 
     #[derive(Copy, Clone, Debug)]
-    pub enum UndoBarrierType {
+    pub enum UndoBarrier {
         Weak, Strong
     }
 
@@ -164,7 +164,7 @@ mod listener {
     pub trait InverseListener: Send + 'static {
         fn handle_inverse(&mut self, inverse_action: Box<dyn DirectlyInvertible>, bucket: UndoBucket, s: Slock) -> bool;
 
-        fn undo_barrier(&mut self, undo_barrier_type: UndoBarrierType, s: Slock);
+        fn undo_barrier(&mut self, undo_barrier_type: UndoBarrier, s: Slock);
     }
 
     pub(super) enum StateListener<S: Stateful> {
@@ -1082,11 +1082,14 @@ pub mod capacitor {
 
 mod store {
     use std::cell::Cell;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use crate::core::{Slock};
-    use crate::state::{StateFilter, IntoAction, Signal, Stateful, UndoBarrierType};
+    use crate::state::{StateFilter, IntoAction, Signal, Stateful, UndoBarrier};
     use crate::state::listener::{GeneralListener, InverseListener};
     use crate::util::marker::ThreadMarker;
     use crate::view::undo_manager::UndoBucket;
+
+    static UNDO_BUCKET_COUNTER: AtomicUsize = AtomicUsize::new(1);
 
     thread_local! {
         static EXECUTING_INVERSE: Cell<bool> = Cell::new(false);
@@ -1102,7 +1105,8 @@ mod store {
         fn subtree_undo_bucket(&self, bucket: UndoBucket, s: Slock<impl ThreadMarker>);
 
         fn group_undos(&self, s: Slock<impl ThreadMarker>) {
-            self.subtree_undo_bucket(UndoBucket::new(todo!()), s);
+            let random_tag = UNDO_BUCKET_COUNTER.fetch_add(1, Ordering::SeqCst);
+            self.subtree_undo_bucket(UndoBucket::new(random_tag), s);
         }
     }
 
@@ -1124,7 +1128,7 @@ mod store {
             }
         }
 
-        fn undo_barrier(&self, undo_barrier_type: UndoBarrierType, s: Slock<impl ThreadMarker>);
+        fn undo_barrier(&self, undo_barrier_type: UndoBarrier, s: Slock<impl ThreadMarker>);
 
         fn action_listen<G>(&self, listener: G, s: Slock<impl ThreadMarker>)
             where G: Send + FnMut(&F::Target, &<<F as StateFilter>::Target as Stateful>::Action, Slock) -> bool + 'static;
@@ -1250,7 +1254,7 @@ mod store {
         use std::marker::PhantomData;
         use std::sync::Arc;
         use crate::core::{Slock};
-        use crate::state::{StateFilter, Filter, Filterable, Stateful, Signal, Binding, IntoAction, UndoBarrierType};
+        use crate::state::{StateFilter, Filter, Filterable, Stateful, Signal, Binding, IntoAction, UndoBarrier};
         use crate::state::listener::StateListener;
         use crate::state::slock_cell::SlockCell;
         use crate::state::store::general_binding::GeneralWeakBinding;
@@ -1290,7 +1294,7 @@ mod store {
                 R::Inner::apply(self.inner_ref(), action, false, s)
             }
 
-            fn undo_barrier(&self, undo_barrier_type: UndoBarrierType, s: Slock<impl ThreadMarker>) {
+            fn undo_barrier(&self, undo_barrier_type: UndoBarrier, s: Slock<impl ThreadMarker>) {
                 self.inner_ref().borrow_mut(s)
                     .dispatcher_mut()
                     .undo_barrier(undo_barrier_type, s.to_general_slock());
@@ -1392,7 +1396,7 @@ mod store {
 
     mod inverse_listener_holder {
         use crate::core::Slock;
-        use crate::state::{DirectlyInvertible, InverseListener, UndoBarrierType};
+        use crate::state::{DirectlyInvertible, InverseListener, UndoBarrier};
         use crate::view::undo_manager::UndoBucket;
 
         pub(super) trait InverseListenerHolder {
@@ -1403,7 +1407,7 @@ mod store {
 
             fn invoke_listener(&mut self, action: impl FnOnce() -> Box<dyn DirectlyInvertible>, s: Slock);
 
-            fn undo_barrier(&mut self, ubt: UndoBarrierType, s: Slock);
+            fn undo_barrier(&mut self, ubt: UndoBarrier, s: Slock);
         }
 
         pub(super) struct NullInverseListenerHolder;
@@ -1425,7 +1429,7 @@ mod store {
 
             }
 
-            fn undo_barrier(&mut self, _ubt: UndoBarrierType, _s: Slock) {
+            fn undo_barrier(&mut self, _ubt: UndoBarrier, _s: Slock) {
 
             }
         }
@@ -1453,7 +1457,7 @@ mod store {
                 }
             }
 
-            fn undo_barrier(&mut self, ubt: UndoBarrierType, s: Slock) {
+            fn undo_barrier(&mut self, ubt: UndoBarrier, s: Slock) {
                 if let Some(ref mut func) = self.0 {
                     func.undo_barrier(ubt, s);
                 }
@@ -1463,7 +1467,7 @@ mod store {
 
     mod store_dispatcher {
         use crate::core::Slock;
-        use crate::state::{StateFilter, DirectlyInvertible, GeneralListener, GroupBasis, IntoAction, InverseListener, Stateful, UndoBarrierType};
+        use crate::state::{StateFilter, DirectlyInvertible, GeneralListener, GroupBasis, IntoAction, InverseListener, Stateful, UndoBarrier};
         use crate::state::listener::{ StateListener};
         use crate::state::store::inverse_listener_holder::InverseListenerHolder;
         use crate::util::marker::ThreadMarker;
@@ -1593,7 +1597,7 @@ mod store {
                 }
             }
 
-            pub fn undo_barrier(&mut self, ubt: UndoBarrierType, s: Slock) {
+            pub fn undo_barrier(&mut self, ubt: UndoBarrier, s: Slock) {
                 self.inverse_listener.undo_barrier(ubt, s);
             }
         }
@@ -3129,7 +3133,7 @@ mod test {
     use std::time::Duration;
     use rand::Rng;
     use crate::core::{clock_signal, setup_timing_thread, Slock, slock_owner, timed_worker};
-    use crate::state::{Store, Signal, TokenStore, Binding, StoreContainer, NumericAction, DirectlyInvertible, Filterable, DerivedStore, StringActionBasis, Buffer, Word, GroupAction, WithCapacitor, JoinedSignal, FixedSignal, EditingString, Bindable, SetAction, WeakBinding, InverseListener, UndoBarrierType};
+    use crate::state::{Store, Signal, TokenStore, Binding, StoreContainer, NumericAction, DirectlyInvertible, Filterable, DerivedStore, StringActionBasis, Buffer, Word, GroupAction, WithCapacitor, JoinedSignal, FixedSignal, EditingString, Bindable, SetAction, WeakBinding, InverseListener, UndoBarrier};
     use crate::state::capacitor::{ConstantSpeedCapacitor, ConstantTimeCapacitor, SmoothCapacitor};
     use crate::state::SetAction::{Identity, Set};
     use crate::state::VecActionBasis::{Insert, Remove, Swap};
@@ -3146,7 +3150,7 @@ mod test {
             (self.0)(inverse_action, s)
         }
 
-        fn undo_barrier(&mut self, _undo_barrier_type: UndoBarrierType, _s: Slock) {
+        fn undo_barrier(&mut self, _undo_barrier_type: UndoBarrier, _s: Slock) {
             unreachable!()
         }
     }

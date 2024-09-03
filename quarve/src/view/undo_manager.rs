@@ -2,24 +2,29 @@ use std::cell::Cell;
 use std::collections::{VecDeque};
 use std::marker::PhantomData;
 use std::sync::{Arc, Weak};
-use crate::core::{Environment, MSlock, run_main_async, Slock, StandardConstEnv, StandardVarEnv};
+use crate::core::{Environment, MSlock, run_main_async, Slock, slock_drop_listener, StandardConstEnv, StandardVarEnv};
 use crate::event::{Event, EventResult};
-use crate::state::{DirectlyInvertible, InverseListener, StoreContainer, UndoBarrierType};
+use crate::state::{DirectlyInvertible, InverseListener, StoreContainer, UndoBarrier};
 use crate::state::slock_cell::SlockCell;
 use crate::util::geo::{Rect, Size};
-use crate::util::marker::ThreadMarker;
 use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, ViewProvider, WeakInvalidator};
 use crate::view::menu::MenuChannel;
+use crate::view::undo_manager::GroupState::Closed;
 
-#[derive(Default)]
+#[derive(PartialEq, Eq)]
+enum GroupState {
+    // after slock closes open -> open_prev_it, partially_closed -> closed
+    Open,
+    OpenPreviousIteration,
+    PartiallyClosed,
+    Closed,
+}
+
 struct History {
     menu: Option<MenuChannel>,
     callbacks: VecDeque<Box<dyn DirectlyInvertible>>,
     grouped_actions: VecDeque<(UndoBucket, usize)>, // number of events in each undo group, as well as bucket
-    // 0 denotes global bucket
-    current_bucket: UndoBucket,
-    // if the last group cannot add anymore events
-    last_closed: bool,
+    last_group_state: GroupState,
     mem_limit: usize,
 }
 
@@ -29,28 +34,36 @@ impl History {
             menu: None,
             callbacks: VecDeque::new(),
             grouped_actions: VecDeque::new(),
-            current_bucket: UndoBucket(0),
-            last_closed: true,
+            last_group_state: Closed,
             mem_limit: limit,
         }
     }
 
-    fn register(&mut self, action: Box<dyn DirectlyInvertible>) {
+    fn register(&mut self, action: Box<dyn DirectlyInvertible>, bucket: UndoBucket) {
         self.callbacks.push_back(action);
 
-        let current_bucket = self.current_bucket.0;
         let needs_new = self.grouped_actions.is_empty() ||
-            self.last_closed ||
-            self.grouped_actions.back().unwrap().0.0 == current_bucket;
+            self.last_group_state == Closed ||
+            // if it's different group numbers but same slock, keep them in same transaction
+            // likewise, if they're different and opened previous iteration, we'll need a new one
+            (self.grouped_actions.back().unwrap().0 != bucket &&
+                self.last_group_state == GroupState::OpenPreviousIteration);
 
         if needs_new {
             // push new group
-            self.grouped_actions.push_back((self.current_bucket, 1));
-            self.last_closed = true;
+            self.grouped_actions.push_back((bucket, 1));
         }
         else {
-            self.grouped_actions.back_mut().unwrap().1 += 1;
+            // max might not be the best function
+            // but realistically if you have different groups in same transaction
+            // it's likely you just want them to be merged
+            // max is nice since it's path independent
+            let back = self.grouped_actions.back_mut().unwrap();
+            back.0 = UndoBucket(back.0.0.max(bucket.0));
+            back.1 += 1;
         }
+
+        self.last_group_state = GroupState::Open;
 
         while self.grouped_actions.len() > self.mem_limit {
             let (_, drop_amount) = self.grouped_actions.pop_front().unwrap();
@@ -59,11 +72,17 @@ impl History {
             }
         }
     }
+
+    fn clear(&mut self) {
+        self.last_group_state = Closed;
+        self.callbacks.clear();
+        self.grouped_actions.clear();
+    }
 }
 
 struct UndoManagerInner {
     is_undoing: Cell<bool>,
-    bucket_count: usize,
+    is_redoing: Cell<bool>,
     undo: SlockCell<History>,
     redo: SlockCell<History>,
 }
@@ -72,15 +91,10 @@ impl UndoManagerInner {
     fn new(undo_limit: usize) -> Self {
         Self {
             is_undoing: Cell::new(false),
-            bucket_count: 0,
+            is_redoing: Cell::new(false),
             undo: SlockCell::new(History::new(undo_limit)),
             redo: SlockCell::new(History::new(undo_limit))
         }
-    }
-
-    fn query_bucket(&mut self) -> UndoBucket{
-        self.bucket_count += 1;
-        UndoBucket(self.bucket_count)
     }
 
     fn disable_menus(&mut self, s: MSlock) {
@@ -143,8 +157,8 @@ impl UndoManagerInner {
         let expected_redo_count = current_redo_count + multiplicity;
 
         // ensure new events do not accidentally end up grouped together
-        undo.last_closed = true;
-        self.redo.borrow_mut(s).last_closed = true;
+        undo.last_group_state = Closed;
+        self.redo.borrow_mut(s).last_group_state = Closed;
 
         self.is_undoing.set(true);
         for _ in 0..multiplicity {
@@ -167,47 +181,35 @@ impl UndoManagerInner {
         let expected_undo_count = current_undo_count + multiplicity;
 
         // ensure new events do not accidentally end up grouped together
-        self.undo.borrow_mut(s).last_closed = true;
-        redo.last_closed = true;
+        self.undo.borrow_mut(s).last_group_state = Closed;
+        redo.last_group_state = Closed;
 
+        self.is_redoing.set(true);
         for _ in 0..multiplicity {
             let mut action = redo.callbacks.pop_back().unwrap();
             action.invert(s.to_general_slock());
         }
+        self.is_redoing.set(false);
 
         assert_eq!(expected_undo_count, self.undo.borrow(s).callbacks.len());
     }
 
-    fn register_undo(&self, action: Box<dyn DirectlyInvertible>, s: Slock) {
-        self.undo.borrow_mut(s)
-            .register(action);
-    }
-
-    fn register_redo(&self, action: Box<dyn DirectlyInvertible>, s: Slock) {
-        self.redo.borrow_mut(s)
-            .register(action);
-    }
-
-    fn register_inverter(&self, action: Box<dyn DirectlyInvertible>, s: Slock) {
+    fn register_inverter(&self, action: Box<dyn DirectlyInvertible>, bucket: UndoBucket, s: Slock) {
         if self.is_undoing.get() {
-            self.register_redo(action, s);
+            self.redo.borrow_mut(s)
+                .register(action, bucket);
+        }
+        else if self.is_redoing.get() {
+            self.undo.borrow_mut(s)
+                .register(action, bucket);
         }
         else {
-            self.register_undo(action, s);
+            self.redo.borrow_mut(s)
+                .clear();
+
+            self.undo.borrow_mut(s)
+                .register(action, bucket);
         }
-    }
-
-    fn active_bucket(&self, s: Slock) -> UndoBucket {
-        self.undo.borrow(s).current_bucket
-    }
-
-    fn set_active_bucket(&self, bucket: UndoBucket, s: Slock) {
-        // redo doesn't really care about bucket
-        let mut undo = self.undo.borrow_mut(s);
-        // if the current bucket is already this
-        // we still want to create a new group
-        undo.last_closed = true;
-        undo.current_bucket = bucket;
     }
 }
 
@@ -221,6 +223,8 @@ pub struct UndoManager {
 pub struct UndoBucket(usize);
 
 impl UndoBucket {
+    pub const GLOBAL: UndoBucket = UndoBucket(0);
+
     pub(crate) fn new(tag: usize) -> Self {
         Self(tag)
     }
@@ -238,7 +242,7 @@ impl InverseListener for UMListener {
         };
 
         strong.borrow(s)
-            .register_inverter(inverse_action, s);
+            .register_inverter(inverse_action, bucket, s);
 
         // FIXME Would be nice to elide most async_main calls
         // OTOH, it may be more efficient than an invalidator call?
@@ -253,8 +257,36 @@ impl InverseListener for UMListener {
         true
     }
 
-    fn undo_barrier(&mut self, undo_barrier_type: UndoBarrierType, s: Slock) {
-        todo!()
+    fn undo_barrier(&mut self, undo_barrier_type: UndoBarrier, s: Slock) {
+        let Some(strong) = self.weak.upgrade() else {
+            return;
+        };
+
+        match undo_barrier_type {
+            UndoBarrier::Weak => {
+                let borrow = strong.borrow(s);
+                let mut undo = borrow.undo.borrow_mut(s);
+                undo.last_group_state = match undo.last_group_state {
+                    GroupState::Open => {
+                        GroupState::PartiallyClosed
+                    }
+                    GroupState::OpenPreviousIteration => {
+                        Closed
+                    }
+                    GroupState::PartiallyClosed => {
+                        GroupState::PartiallyClosed
+                    }
+                    Closed => {
+                        Closed
+                    }
+                }
+            }
+            UndoBarrier::Strong => {
+                // easy: just mark undo as closed
+                strong.borrow(s).undo.borrow_mut(s)
+                    .last_group_state = Closed;
+            }
+        }
     }
 }
 
@@ -272,41 +304,43 @@ impl UndoManager {
             weak
         }, s);
 
+        // close undo groups after the slock is dropped
+        let weak = Arc::downgrade(&inner);
+        slock_drop_listener(move |s| {
+            let Some(strong) = weak.upgrade() else {
+                return false;
+            };
+
+            let borrow = strong.borrow(s);
+
+            // if open
+            // if the last group was the global group, then
+            // close it no matter what
+            let mut undo = borrow.undo.borrow_mut(s);
+            if undo.grouped_actions.back_mut().is_some_and(|v| v.0 == UndoBucket::GLOBAL) {
+                undo.last_group_state = Closed;
+            }
+            else {
+                // standard downgrade
+                undo.last_group_state = match undo.last_group_state {
+                    GroupState::Open | GroupState::OpenPreviousIteration => {
+                        GroupState::OpenPreviousIteration
+                    }
+                    GroupState::PartiallyClosed | Closed => {
+                        Closed
+                    }
+                }
+            }
+
+            // redo can just be closed fully no matter what
+            borrow.redo.borrow_mut(s)
+                .last_group_state = Closed;
+
+            true
+        });
+
         UndoManager {
             inner,
-        }
-    }
-
-    pub fn query_bucket(&self, s: Slock<impl ThreadMarker>) -> UndoBucket {
-        self.inner.borrow_mut(s).query_bucket()
-    }
-
-    pub fn start_in_bucket(&self, f: impl FnOnce(), bucket: UndoBucket, s: Slock<impl ThreadMarker>) {
-        let old = self.inner.borrow(s).active_bucket(s.to_general_slock());
-
-        self.inner.borrow(s).set_active_bucket(bucket, s.to_general_slock());
-        f();
-        self.inner.borrow(s).set_active_bucket(old, s.to_general_slock());
-    }
-
-    pub fn perform_in_bucket(&self, f: impl FnOnce(), bucket: UndoBucket, s: Slock<impl ThreadMarker>) {
-        // if top isn't bucket, set it to that
-        let old = self.inner.borrow(s).active_bucket(s.to_general_slock());
-
-        if old != bucket {
-            self.inner.borrow(s).set_active_bucket(bucket, s.to_general_slock());
-        }
-
-        f();
-        self.inner.borrow(s).set_active_bucket(old, s.to_general_slock());
-    }
-
-    pub fn close_bucket(&self, bucket: UndoBucket, s: Slock<impl ThreadMarker>) {
-        let old = self.inner.borrow(s).active_bucket(s.to_general_slock());
-
-        if old == bucket {
-            // any event from now on would be in a new bucket
-            self.inner.borrow(s).set_active_bucket(old, s.to_general_slock());
         }
     }
 

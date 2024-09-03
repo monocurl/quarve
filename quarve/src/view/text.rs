@@ -1502,7 +1502,6 @@ mod text_view {
 
             const PAGE_INSET: Size;
 
-
             fn init(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock);
 
             fn tab(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock);
