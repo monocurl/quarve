@@ -536,6 +536,7 @@ mod text_view {
 
             pub trait ToRunAttribute: Default + Send + PartialEq + Clone + 'static {
                 fn to_run_attribute(&self) -> impl AsRef<RunAttribute>;
+                fn merge(first: &Self, second: &Self) -> Self;
             }
 
             impl AsRef<RunAttribute> for RunAttribute {
@@ -547,6 +548,10 @@ mod text_view {
             impl ToRunAttribute for RunAttribute {
                 fn to_run_attribute(&self) -> impl AsRef<RunAttribute> {
                     self
+                }
+
+                fn merge(first: &Self, _second: &Self) -> Self {
+                    *first
                 }
             }
 
@@ -820,6 +825,7 @@ mod text_view {
             #[derive(Default)]
             pub struct RunGUIInfo {
                 pub height: ScreenUnit,
+                pub line: usize,
                 pub start_char: usize,
                 pub page_position: ScreenUnit
             }
@@ -1170,6 +1176,42 @@ mod text_view {
                     }), s);
                 }
 
+                pub fn replace_range(
+                    &self,
+                    start_run: usize,
+                    start_char: usize,
+                    end_run: usize,
+                    end_char: usize,
+                    with: impl Into<String>,
+                    s: Slock<impl ThreadMarker>
+                ) {
+                    // if start_run == end_run {
+                    //     let range = start_char .. end_char;
+                    //     self.run(start_run, s)
+                    //         .replace(range, with, s);
+                    // }
+                    // else {
+                    //     // delete all intermediate runs
+                    //     if end_run > start_run + 1 {
+                    //         self.runs.apply(VecActionBasis::RemoveMany(start_run + 1 .. end_run), s);
+                    //     }
+                    //
+                    //     let new_run_attribute =
+                    //         I::RunAttribute::merge(self.run(start_run, s).deref(), self.run(start_run + 1, s).deref());
+                    //
+                    //     let next_run = self.run(start_run + 1, s);
+                    //     self.run(start_run, s)
+                    //         .replace(start_char);
+                    //
+                    //     hello
+                    //     // elide old run
+                    //     self.remove_run(start_run + 1, s);
+                    //
+                    // }
+
+                    // insert
+                }
+
                 pub fn build_full_content(&mut self, s: Slock<impl ThreadMarker>) -> String {
                     let runs = self.runs(s);
                     let contents = runs.iter()
@@ -1247,7 +1289,7 @@ mod text_view {
         mod cursor_state {
             use quarve_derive::StoreContainer;
             use crate::core::Slock;
-            use crate::state::{Binding, Buffer, Signal, Store};
+            use crate::state::{Bindable, Binding, Buffer, Filterless, Signal, Store};
             use crate::state::SetAction::Set;
             use crate::util::marker::ThreadMarker;
 
@@ -1271,6 +1313,26 @@ mod text_view {
                         end_run: Store::default(),
                         end_char: Store::default(),
                     }
+                }
+
+                pub fn page_binding(&self) -> impl Binding<Filterless<usize>> {
+                    self.page_num.binding()
+                }
+
+                pub fn start_run_binding(&self) -> impl Binding<Filterless<usize>> {
+                    self.start_run.binding()
+                }
+
+                pub fn end_run_binding(&self) -> impl Binding<Filterless<usize>> {
+                    self.end_run.binding()
+                }
+
+                pub fn start_char_binding(&self) -> impl Binding<Filterless<usize>> {
+                    self.start_char.binding()
+                }
+
+                pub fn end_char_binding(&self) -> impl Binding<Filterless<usize>> {
+                    self.end_char.binding()
                 }
 
                 pub fn page(&self, s: Slock<impl ThreadMarker>) -> usize {
@@ -1349,26 +1411,17 @@ mod text_view {
 
         mod text_view_state {
             use std::ops::Deref;
+            use quarve_derive::StoreContainer;
             use crate::core::Slock;
-            use crate::state::{Signal, Binding, GeneralListener, InverseListener, Store, StoreContainer, VecActionBasis, Word};
+            use crate::state::{Signal, Binding, Store, VecActionBasis, Word};
             use crate::util::marker::ThreadMarker;
             use crate::util::rust_util::DerefMap;
             use crate::view::text::text_view::state::{AttributeSet, CursorState, Page};
 
+            #[derive(StoreContainer)]
             pub struct TextViewState<I, D> where I: AttributeSet, D: AttributeSet {
                 pages: Store<Vec<Page<I, D>>>,
                 cursor: CursorState,
-            }
-
-            // Do not include cursor in the undo history
-            impl<I, D> StoreContainer for TextViewState<I, D> where I: AttributeSet, D: AttributeSet {
-                fn subtree_general_listener<F: GeneralListener + Clone>(&self, f: F, s: Slock<impl ThreadMarker>) {
-                    self.pages.subtree_general_listener(f, s);
-                }
-
-                fn subtree_inverse_listener<F: InverseListener + Clone>(&self, f: F, s: Slock<impl ThreadMarker>) {
-                    self.pages.subtree_inverse_listener(f, s);
-                }
             }
 
             impl<I, D> TextViewState<I, D> where I: AttributeSet, D: AttributeSet {
@@ -1402,6 +1455,18 @@ mod text_view {
                     )
                 }
 
+
+                pub fn replace_selection(&self, with: impl Into<String>, s: Slock<impl ThreadMarker>) {
+                    self.page(self.cursor.page(s), s)
+                        .replace_range(
+                            self.cursor.start_run(s),
+                            self.cursor.start_char(s),
+                            self.cursor.end_run(s),
+                            self.cursor.end_char(s),
+                            with, s
+                        );
+                }
+
                 pub fn action_listen(
                     &self,
                     f: impl FnMut(&Vec<Page<I, D>>, &Word<VecActionBasis<Page<I, D>>>, Slock) -> bool + Send + 'static,
@@ -1423,23 +1488,75 @@ mod text_view {
     }
     pub use state::*;
 
-    trait TextViewProvider {
-        type IntrinsicAttribute: AttributeSet;
-        type DerivedAttribute: AttributeSet;
+    mod text_view {
+        use std::ffi::c_void;
+        use crate::core::{Environment, MSlock};
+        use crate::state::{Signal, StoreContainerView};
+        use crate::util::geo::Size;
+        use crate::view::{IntoViewProvider};
+        use crate::view::text::{AttributeSet, Run, TextViewState};
 
-        //
-        fn run_decoration(number: i32, run: i32);
-        fn tab();
-        fn untab();
-        fn newline();
-        fn alt_newline();
+        trait TextViewProvider<E> where E: Environment {
+            type IntrinsicAttribute: AttributeSet;
+            type DerivedAttribute: AttributeSet;
+
+            const PAGE_INSET: Size;
+
+
+            fn init(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock);
+
+            fn tab(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock);
+            fn untab(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock);
+            fn newline(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock);
+            fn alt_newline(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock);
+
+            fn run_decoration(
+                &mut self,
+                number: impl Signal<Target=usize>,
+                run: &Run<Self::IntrinsicAttribute, Self::DerivedAttribute>
+            ) -> impl IntoViewProvider<E>;
+
+            fn page_background(
+                &self,
+            ) -> impl IntoViewProvider<E>;
+        }
+
+        // Composed as a series of pages
+        // We handle the scrollview stuff ourselves then
+        pub struct TextView<E, P>
+            where P: TextViewProvider<E>,
+                  E: Environment
+        {
+            provider: P,
+            state: StoreContainerView<TextViewState<P::IntrinsicAttribute, P::DerivedAttribute>>,
+        }
+
+        impl<E, P> TextView<E, P>
+            where P: TextViewProvider<E>,
+                  E: Environment
+        {
+            pub fn new(state: StoreContainerView<TextViewState<P::IntrinsicAttribute, P::DerivedAttribute>>) -> Self {
+                todo!()
+            }
+        }
+
+        // struct PageVP {
+        //     backing: *mut c_void,
+        //     decoration: P
+        // }
+
+        struct TextViewVP<E, P>
+            where P: TextViewProvider<E>,
+                  E: Environment
+        {
+            provider: P,
+            state: StoreContainerView<TextViewState<P::IntrinsicAttribute, P::DerivedAttribute>>,
+
+            scroll_view: *mut c_void,
+            // pages: Vec<View<E, PageVP<>>>
+        }
     }
-
-    // Composed as a series of pages
-    // We handle the scrollview stuff ourselves then
-    pub struct TextView {
-
-    }
+    pub use text_view::*;
 }
 pub use text_view::*;
 

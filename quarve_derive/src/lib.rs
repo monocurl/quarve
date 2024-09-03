@@ -43,6 +43,10 @@ pub fn store_container_derive(input: TokenStream) -> TokenStream {
                 fn subtree_inverse_listener<__F_SC_FUNC: #quarve_path::state::InverseListener + Clone>(&self, f: __F_SC_FUNC, s: #quarve_path::core::Slock<impl #quarve_path::util::marker::ThreadMarker>) {
                     #(self.#sub_stores_clone.subtree_inverse_listener(f.clone(), s);)*
                 }
+
+                fn subtree_undo_bucket(&self, ub: #quarve_path::view::undo_manager::UndoBucket, s: #quarve_path::core::Slock<impl #quarve_path::util::marker::ThreadMarker>) {
+                    #(self.#sub_stores_clone.subtree_undo_bucket(ub, s);)*
+                }
             }
         }
     } else {

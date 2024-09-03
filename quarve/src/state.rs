@@ -129,6 +129,12 @@ pub mod slock_cell {
 mod listener {
     use crate::core::Slock;
     use crate::state::Stateful;
+    use crate::view::undo_manager::UndoBucket;
+
+    #[derive(Copy, Clone, Debug)]
+    pub enum UndoBarrierType {
+        Weak, Strong
+    }
 
     #[allow(private_bounds)]
     pub trait DirectlyInvertible: Send {
@@ -147,19 +153,19 @@ mod listener {
 
         // forgets the reference action without dropping it
         unsafe fn forget_action(&mut self, s: Slock);
+
         fn id(&self) -> usize;
     }
 
-
     /* trait aliases */
     pub trait GeneralListener : FnMut(Slock) -> bool + Send + 'static {}
-    pub trait InverseListener : FnMut(Box<dyn DirectlyInvertible>, Slock) -> bool + Send + 'static {}
     impl<T> GeneralListener for T where T: FnMut(Slock) -> bool + Send + 'static {}
-    impl<T> InverseListener for T where T: FnMut(Box<dyn DirectlyInvertible>, Slock) -> bool + Send + 'static {}
 
-    pub(super) type BoxInverseListener = Box<
-        dyn FnMut(Box<dyn DirectlyInvertible>, Slock) -> bool + Send
-    >;
+    pub trait InverseListener: Send + 'static {
+        fn handle_inverse(&mut self, inverse_action: Box<dyn DirectlyInvertible>, bucket: UndoBucket, s: Slock) -> bool;
+
+        fn undo_barrier(&mut self, undo_barrier_type: UndoBarrierType, s: Slock);
+    }
 
     pub(super) enum StateListener<S: Stateful> {
         ActionListener(Box<dyn (FnMut(&S, &S::Action, Slock) -> bool) + Send>),
@@ -171,6 +177,7 @@ pub use listener::*;
 
 mod group {
     use std::ops::Mul;
+    use crate::view::undo_manager::UndoBucket;
     use crate::state::{GeneralListener, InverseListener};
     use crate::core::{Slock};
     use crate::util::marker::{BoolMarker, ThreadMarker};
@@ -197,12 +204,20 @@ mod group {
             where F: InverseListener + Clone {
             None::<fn(&Self, &Self::Action, Slock) -> bool>
         }
+
+        #[allow(unused_variables)]
+        fn subtree_undo_bucket(&self, bucket: UndoBucket, s: Slock<impl ThreadMarker>)
+                               -> Option<impl Send + FnMut(&Self, &Self::Action, Slock) -> bool + 'static> {
+            None::<fn(&Self, &Self::Action, Slock) -> bool>
+        }
     }
 
     pub trait GroupBasis<T>: Send + Sized + 'static {
         // returns inverse action
         fn apply(self, to: &mut T) -> Self;
 
+        // FIXME In the future, this might be moved towards apply in Binding
+        // I feel that makes more sense....
         fn forward_description(&self) -> impl Into<String>;
         fn backward_description(&self) -> impl Into<String>;
 
@@ -1068,9 +1083,10 @@ pub mod capacitor {
 mod store {
     use std::cell::Cell;
     use crate::core::{Slock};
-    use crate::state::{StateFilter, IntoAction, Signal, Stateful};
+    use crate::state::{StateFilter, IntoAction, Signal, Stateful, UndoBarrierType};
     use crate::state::listener::{GeneralListener, InverseListener};
     use crate::util::marker::ThreadMarker;
+    use crate::view::undo_manager::UndoBucket;
 
     thread_local! {
         static EXECUTING_INVERSE: Cell<bool> = Cell::new(false);
@@ -1078,14 +1094,16 @@ mod store {
 
     /// It is the implementors job to guarantee that subtree_listener
     /// and relatives do not get into call cycles
-    pub trait StoreContainer: Send + Sized + 'static {
-        // Only ONE general listener
-        // can ever be present for a subtree
+    pub trait StoreContainer: Send + Sync + Sized + 'static {
         fn subtree_general_listener<F: GeneralListener + Clone>(&self, f: F, s: Slock<impl ThreadMarker>);
 
-        // Only ONE active general listener
-        // can ever be present for a subtree
         fn subtree_inverse_listener<F: InverseListener + Clone>(&self, f: F, s: Slock<impl ThreadMarker>);
+
+        fn subtree_undo_bucket(&self, bucket: UndoBucket, s: Slock<impl ThreadMarker>);
+
+        fn group_undos(&self, s: Slock<impl ThreadMarker>) {
+            self.subtree_undo_bucket(UndoBucket::new(todo!()), s);
+        }
     }
 
     // FIXME at some point, this and RawStore[SharedOwner] should
@@ -1094,6 +1112,7 @@ mod store {
         fn action_filter<G>(&self, filter: G, s: Slock<impl ThreadMarker>)
             where G: Send + Fn(&S, S::Action, Slock) -> S::Action + 'static;
     }
+
 
     // Like with signal, I believe it makes more sense for
     pub trait Binding<F>: Signal<Target=F::Target> + Sized + Send + 'static where F: StateFilter {
@@ -1104,6 +1123,8 @@ mod store {
                 self.apply(action, s);
             }
         }
+
+        fn undo_barrier(&self, undo_barrier_type: UndoBarrierType, s: Slock<impl ThreadMarker>);
 
         fn action_listen<G>(&self, listener: G, s: Slock<impl ThreadMarker>)
             where G: Send + FnMut(&F::Target, &<<F as StateFilter>::Target as Stateful>::Action, Slock) -> bool + 'static;
@@ -1124,6 +1145,76 @@ mod store {
         fn binding(&self) -> Self::Binding;
         fn weak_binding(&self) -> Self::WeakBinding;
     }
+
+    mod shared_store_container {
+        use std::ops::Deref;
+        use std::sync::Arc;
+        use crate::core::Slock;
+        use crate::state::{GeneralListener, InverseListener, StoreContainer};
+        use crate::util::marker::ThreadMarker;
+        use crate::view::undo_manager::UndoBucket;
+
+        pub struct StoreContainerSource<S> where S: StoreContainer {
+            source: Arc<S>
+        }
+
+        impl<S> StoreContainerSource<S> where S: StoreContainer {
+            pub fn new(source: S) -> Self {
+                Self {
+                    source: Arc::new(source),
+                }
+            }
+
+            pub fn view(&self) -> StoreContainerView<S> {
+                StoreContainerView {
+                    source: self.source.clone()
+                }
+            }
+        }
+
+        impl<S> StoreContainer for StoreContainerSource<S> where S: StoreContainer {
+            fn subtree_general_listener<F: GeneralListener + Clone>(&self, f: F, s: Slock<impl ThreadMarker>) {
+                self.source.subtree_general_listener(f, s);
+            }
+
+            fn subtree_inverse_listener<F: InverseListener + Clone>(&self, f: F, s: Slock<impl ThreadMarker>) {
+                self.source.subtree_inverse_listener(f, s);
+            }
+
+            fn subtree_undo_bucket(&self, bucket: UndoBucket, s: Slock<impl ThreadMarker>) {
+                self.source.subtree_undo_bucket(bucket, s);
+            }
+        }
+
+        impl<S> Deref for StoreContainerSource<S> where S: StoreContainer {
+            type Target = S;
+
+            fn deref(&self) -> &Self::Target {
+                self.source.deref()
+            }
+        }
+
+        pub struct StoreContainerView<S> where S: StoreContainer {
+            source: Arc<S>
+        }
+
+        impl<S> Clone for StoreContainerView<S> where S: StoreContainer {
+            fn clone(&self) -> Self {
+                Self {
+                    source: self.source.clone(),
+                }
+            }
+        }
+
+        impl<S> Deref for StoreContainerView<S> where S: StoreContainer {
+            type Target = S;
+
+            fn deref(&self) -> &Self::Target {
+                self.source.deref()
+            }
+        }
+    }
+    pub use shared_store_container::*;
 
     mod raw_store {
         use std::sync::Arc;
@@ -1159,7 +1250,7 @@ mod store {
         use std::marker::PhantomData;
         use std::sync::Arc;
         use crate::core::{Slock};
-        use crate::state::{StateFilter, Filter, Filterable, Stateful, Signal, Binding, IntoAction};
+        use crate::state::{StateFilter, Filter, Filterable, Stateful, Signal, Binding, IntoAction, UndoBarrierType};
         use crate::state::listener::StateListener;
         use crate::state::slock_cell::SlockCell;
         use crate::state::store::general_binding::GeneralWeakBinding;
@@ -1197,6 +1288,12 @@ mod store {
 
             fn apply(&self, action: impl IntoAction<<<F as StateFilter>::Target as Stateful>::Action, <F as StateFilter>::Target>, s: Slock<impl ThreadMarker>) {
                 R::Inner::apply(self.inner_ref(), action, false, s)
+            }
+
+            fn undo_barrier(&self, undo_barrier_type: UndoBarrierType, s: Slock<impl ThreadMarker>) {
+                self.inner_ref().borrow_mut(s)
+                    .dispatcher_mut()
+                    .undo_barrier(undo_barrier_type, s.to_general_slock());
             }
 
             fn action_listen<G>(&self, listener: G, s: Slock<impl ThreadMarker>) where G: Send + FnMut(&F::Target, &<<F as StateFilter>::Target as Stateful>::Action, Slock) -> bool + 'static {
@@ -1295,14 +1392,18 @@ mod store {
 
     mod inverse_listener_holder {
         use crate::core::Slock;
-        use crate::state::{DirectlyInvertible};
-        use crate::state::listener::BoxInverseListener;
+        use crate::state::{DirectlyInvertible, InverseListener, UndoBarrierType};
+        use crate::view::undo_manager::UndoBucket;
 
         pub(super) trait InverseListenerHolder {
             fn new() -> Self;
-            fn set_listener(&mut self, listener: BoxInverseListener);
+            fn set_listener(&mut self, listener: Box<dyn InverseListener>);
+
+            fn set_undo_bucket(&mut self, ub: UndoBucket);
 
             fn invoke_listener(&mut self, action: impl FnOnce() -> Box<dyn DirectlyInvertible>, s: Slock);
+
+            fn undo_barrier(&mut self, ubt: UndoBarrierType, s: Slock);
         }
 
         pub(super) struct NullInverseListenerHolder;
@@ -1312,31 +1413,49 @@ mod store {
                 NullInverseListenerHolder
             }
 
-            fn set_listener(&mut self, _listener: BoxInverseListener) {
+            fn set_listener(&mut self, _listener: Box<dyn InverseListener>) {
+
+            }
+
+            fn set_undo_bucket(&mut self, _ub: UndoBucket) {
 
             }
 
             fn invoke_listener(&mut self, _action: impl FnOnce() -> Box<dyn DirectlyInvertible>, _s: Slock) {
 
             }
+
+            fn undo_barrier(&mut self, _ubt: UndoBarrierType, _s: Slock) {
+
+            }
         }
 
-        pub(super) struct InverseListenerHolderImpl(Option<BoxInverseListener>);
+        pub(super) struct InverseListenerHolderImpl(Option<Box<dyn InverseListener>>, UndoBucket);
 
         impl InverseListenerHolder for InverseListenerHolderImpl {
             fn new() -> Self {
-                InverseListenerHolderImpl(None)
+                InverseListenerHolderImpl(None, UndoBucket::default())
             }
 
-            fn set_listener(&mut self, listener: BoxInverseListener) {
+            fn set_listener(&mut self, listener: Box<dyn InverseListener>) {
                 self.0 = Some(listener);
+            }
+
+            fn set_undo_bucket(&mut self, ub: UndoBucket) {
+                self.1 = ub;
             }
 
             fn invoke_listener(&mut self, action: impl FnOnce() -> Box<dyn DirectlyInvertible>, s: Slock) {
                 if let Some(ref mut func) = self.0 {
-                    if !func(action(), s) {
+                    if !func.handle_inverse(action(), self.1, s) {
                         self.0 = None;
                     }
+                }
+            }
+
+            fn undo_barrier(&mut self, ubt: UndoBarrierType, s: Slock) {
+                if let Some(ref mut func) = self.0 {
+                    func.undo_barrier(ubt, s);
                 }
             }
         }
@@ -1344,11 +1463,12 @@ mod store {
 
     mod store_dispatcher {
         use crate::core::Slock;
-        use crate::state::{StateFilter, DirectlyInvertible, GeneralListener, GroupBasis, IntoAction, InverseListener, Stateful};
+        use crate::state::{StateFilter, DirectlyInvertible, GeneralListener, GroupBasis, IntoAction, InverseListener, Stateful, UndoBarrierType};
         use crate::state::listener::{ StateListener};
         use crate::state::store::inverse_listener_holder::InverseListenerHolder;
         use crate::util::marker::ThreadMarker;
         use crate::util::test_util::QuarveAllocTag;
+        use crate::view::undo_manager::UndoBucket;
 
         pub(crate) struct StoreDispatcher<S, F, I>
             where S: Stateful, F: StateFilter, I: InverseListenerHolder
@@ -1449,7 +1569,7 @@ mod store {
             }
 
             pub fn set_general_listener(&mut self, f: impl GeneralListener + Clone, s: Slock) {
-                self.listeners.retain(|x| !matches!(x, StateListener::GeneralListener(_)));
+                self.listeners.retain_mut(|l| !matches!(l, StateListener::GeneralListener(_)));
                 self.listeners.push(StateListener::GeneralListener(Box::new(f.clone())));
 
                 if let Some(action) = self.data.subtree_general_listener(f, s) {
@@ -1463,6 +1583,18 @@ mod store {
                 if let Some(action) = self.data.subtree_inverse_listener(f, s) {
                     self.listeners.push(StateListener::ActionListener(Box::new(action)));
                 }
+            }
+
+            pub fn set_undo_bucket(&mut self, ub: UndoBucket, s: Slock) {
+                self.inverse_listener.set_undo_bucket(ub);
+
+                if let Some(action) = self.data.subtree_undo_bucket(ub, s) {
+                    self.listeners.push(StateListener::ActionListener(Box::new(action)));
+                }
+            }
+
+            pub fn undo_barrier(&mut self, ubt: UndoBarrierType, s: Slock) {
+                self.inverse_listener.undo_barrier(ubt, s);
             }
         }
     }
@@ -1478,6 +1610,10 @@ mod store {
                 fn subtree_inverse_listener<Q>(&self, f: Q, s: Slock<impl ThreadMarker>)
                     where Q: InverseListener + Clone {
                     self.inner.borrow_mut(s).dispatcher_mut().set_inverse_listener(f, s.to_general_slock());
+                }
+
+                fn subtree_undo_bucket(&self, ub: UndoBucket, s: Slock<impl ThreadMarker>) {
+                    self.inner.borrow_mut(s).dispatcher_mut().set_undo_bucket(ub, s.to_general_slock());
                 }
             }
         }
@@ -1555,6 +1691,7 @@ mod store {
         use std::marker::PhantomData;
         use std::ops::{Deref, DerefMut};
         use std::sync::Arc;
+        use crate::view::undo_manager::UndoBucket;
         use crate::state::{Bindable, StateListener};
         use crate::state::store::state_ref::StateRef;
         use crate::{
@@ -1719,6 +1856,7 @@ mod store {
         use crate::state::store::raw_store::RawStore;
         use crate::state::store::raw_store_shared_owner::RawStoreSharedOwner;
         use crate::util::marker::ThreadMarker;
+        use crate::view::undo_manager::UndoBucket;
 
         pub(super) struct InnerTokenStore<S: Stateful + Copy + Hash + Eq, F: StateFilter<Target=S>> {
             dispatcher: StoreDispatcher<S, F, InverseListenerHolderImpl>,
@@ -1875,6 +2013,7 @@ mod store {
     pub use token_store::*;
 
     mod derived_store {
+        use crate::view::undo_manager::UndoBucket;
         use std::marker::PhantomData;
         use std::ops::{Deref, DerefMut};
         use std::sync::Arc;
@@ -2989,14 +3128,32 @@ mod test {
     use std::thread::sleep;
     use std::time::Duration;
     use rand::Rng;
-    use crate::core::{clock_signal, setup_timing_thread, slock_owner, timed_worker};
-    use crate::state::{Store, Signal, TokenStore, Binding, StoreContainer, NumericAction, DirectlyInvertible, Filterable, DerivedStore, StringActionBasis, Buffer, Word, GroupAction, WithCapacitor, JoinedSignal, FixedSignal, EditingString, Bindable, SetAction, WeakBinding};
+    use crate::core::{clock_signal, setup_timing_thread, Slock, slock_owner, timed_worker};
+    use crate::state::{Store, Signal, TokenStore, Binding, StoreContainer, NumericAction, DirectlyInvertible, Filterable, DerivedStore, StringActionBasis, Buffer, Word, GroupAction, WithCapacitor, JoinedSignal, FixedSignal, EditingString, Bindable, SetAction, WeakBinding, InverseListener, UndoBarrierType};
     use crate::state::capacitor::{ConstantSpeedCapacitor, ConstantTimeCapacitor, SmoothCapacitor};
     use crate::state::SetAction::{Identity, Set};
     use crate::state::VecActionBasis::{Insert, Remove, Swap};
     use crate::util::numeric::Norm;
     use crate::util::test_util::HeapChecker;
     use crate::util::Vector;
+    use crate::view::undo_manager::UndoBucket;
+
+    // basic Undo Manager
+    #[derive(Clone)]
+    struct BUM<F>(F) where F: FnMut(Box<dyn DirectlyInvertible>, Slock) -> bool + Send + 'static;
+    impl<F> InverseListener for BUM<F> where F: Clone + FnMut(Box<dyn DirectlyInvertible>, Slock) -> bool + Send + 'static {
+        fn handle_inverse(&mut self, inverse_action: Box<dyn DirectlyInvertible>, bucket: UndoBucket, s: Slock) -> bool {
+            (self.0)(inverse_action, s)
+        }
+
+        fn undo_barrier(&mut self, _undo_barrier_type: UndoBarrierType, _s: Slock) {
+            unreachable!()
+        }
+    }
+
+    fn um<F: FnMut(Box<dyn DirectlyInvertible>, Slock) -> bool + Send + 'static>(f: F) -> BUM<F> {
+        BUM(f)
+    }
 
     #[test]
     fn test_numeric() {
@@ -3212,14 +3369,14 @@ mod test {
         let vec: Vec<Box<dyn DirectlyInvertible>> = Vec::new();
         let vectors = Arc::new(Mutex::new(Some(vec)));
         let c = vectors.clone();
-        state.subtree_inverse_listener(move |inv, _s| {
+        state.subtree_inverse_listener(um(move |inv, _s| {
             let mut l1 = c.lock().unwrap();
             let Some(l) = l1.as_mut() else {
                 return false;
             };
             l.push(inv);
             true
-        }, s.marker());
+        }), s.marker());
         for i in 0.. 100 {
             state.apply(Set(i * i), s.marker());
         }
@@ -3242,7 +3399,7 @@ mod test {
         let vec: Option<Box<dyn DirectlyInvertible>> = None;
         let vectors = Arc::new(Mutex::new(Some(vec)));
         let c = vectors.clone();
-        state.subtree_inverse_listener(move |inv, s| {
+        state.subtree_inverse_listener(um(move |inv, s| {
             let mut l1 = c.lock().unwrap();
             let Some(l) = l1.as_mut() else {
                 return false;
@@ -3256,7 +3413,7 @@ mod test {
                 }
             }
             true
-        }, s.marker());
+        }), s.marker());
         for i in 0.. 100 {
             state.apply(Set(i * i), s.marker());
         }
@@ -3402,10 +3559,10 @@ mod test {
         let store = Store::new(EditingString("asdfasdf".to_string()));
         let mut strings: Vec<String> = Vec::new();
         let a = actions.clone();
-        store.subtree_inverse_listener(move |invertible, _s| {
+        store.subtree_inverse_listener(um(move |invertible, _s| {
             a.lock().unwrap().push(invertible);
             true
-        }, s.marker());
+        }), s.marker());
         for _i in 0 .. 127 {
             let curr = store.borrow(s.marker()).clone();
             let i = rand::thread_rng().gen_range(0 .. std::cmp::max(1, curr.0.len()));
@@ -3433,7 +3590,7 @@ mod test {
         let vec: Option<Box<dyn DirectlyInvertible>> = None;
         let vectors = Arc::new(Mutex::new(Some(vec)));
         let c = vectors.clone();
-        state.subtree_inverse_listener(move |inv, s| {
+        state.subtree_inverse_listener(um(move |inv, s| {
             let mut l1 = c.lock().unwrap();
             let Some(l) = l1.as_mut() else {
                 return false;
@@ -3447,7 +3604,7 @@ mod test {
                 }
             }
             true
-        }, s.marker());
+        }), s.marker());
 
         for _i in 0 .. 100 {
             let curr = state.borrow(s.marker()).clone();
@@ -3472,14 +3629,14 @@ mod test {
         let store: Store<Vec<Store<i32>>> = Store::new(vec![Store::new(2), Store::new(3)]);
         let mut items: Vec<Vec<i32>> = Vec::new();
         let a = Arc::downgrade(&actions);
-        store.subtree_inverse_listener(move |invertible, _s| {
+        store.subtree_inverse_listener(um(move |invertible, _s| {
             let Some(a) = a.upgrade() else {
                 return false;
             };
             a.lock().unwrap().push(invertible);
 
             true
-        }, s.marker());
+        }), s.marker());
         for _i in 0..127 {
             let curr: Vec<_> = store.borrow(s.marker())
                 .iter()
@@ -3545,7 +3702,7 @@ mod test {
         let vec: Option<Box<dyn DirectlyInvertible>> = None;
         let vectors = Arc::new(Mutex::new(Some(vec)));
         let c = vectors.clone();
-        store.subtree_inverse_listener(move |inv, s| {
+        store.subtree_inverse_listener(um(move |inv, s| {
             let mut l1 = c.lock().unwrap();
             let Some(l) = l1.as_mut() else {
                 return false;
@@ -3559,7 +3716,7 @@ mod test {
                 }
             }
             true
-        }, s.marker());
+        }), s.marker());
         for _i in 0 .. 127 {
             let curr: Vec<_> = store.borrow(s.marker())
                 .iter()
@@ -3845,13 +4002,13 @@ mod test {
         let actions: Arc<Mutex<Vec<Box<dyn DirectlyInvertible>>>> = Arc::new(Mutex::new(Vec::new()));
         let store = Store::new(Vector([1, 2]));
         let weak = Arc::downgrade(&actions);
-        store.subtree_inverse_listener(move |invertible, _s| {
+        store.subtree_inverse_listener(um(move |invertible, _s| {
             let Some(strong) = weak.upgrade() else {
                 return false;
             };
             strong.lock().unwrap().push(invertible);
             true
-        }, s.marker());
+        }), s.marker());
         store.apply([Set(2), Identity], s.marker());
         assert_eq!(*store.borrow(s.marker()).x(), 2);
         assert_eq!(*store.borrow(s.marker()).y(), 2);
@@ -3879,10 +4036,10 @@ mod test {
         let store = Store::new(Vector([EditingString("asdfasdf".to_string())]));
         let mut strings: Vec<String> = Vec::new();
         let a = actions.clone();
-        store.subtree_inverse_listener(move |invertible, _s| {
+        store.subtree_inverse_listener(um(move |invertible, _s| {
             a.lock().unwrap().push(invertible);
             true
-        }, s.marker());
+        }), s.marker());
         for _i in 0 .. 127 {
             let curr = store.borrow(s.marker()).x().clone();
             let i = rand::thread_rng().gen_range(0 .. std::cmp::max(1, curr.0.len()));
@@ -3910,7 +4067,7 @@ mod test {
         let vec: Option<Box<dyn DirectlyInvertible>> = None;
         let vectors = Arc::new(Mutex::new(Some(vec)));
         let c = vectors.clone();
-        state.subtree_inverse_listener(move |inv, s| {
+        state.subtree_inverse_listener(um(move |inv, s| {
             let mut l1 = c.lock().unwrap();
             let Some(l) = l1.as_mut() else {
                 return false;
@@ -3924,7 +4081,7 @@ mod test {
                 }
             }
             true
-        }, s.marker());
+        }), s.marker());
 
         for _i in 0 .. 100 {
             let curr = state.borrow(s.marker()).x().clone();
@@ -3965,7 +4122,7 @@ mod test {
         let vec: Option<Box<dyn DirectlyInvertible>> = None;
         let vectors = Arc::new(Mutex::new(Some(vec)));
         let c = vectors.clone();
-        state.subtree_inverse_listener(move |inv, s| {
+        state.subtree_inverse_listener(um(move |inv, s| {
             let mut l1 = c.lock().unwrap();
             let Some(l) = l1.as_mut() else {
                 return false;
@@ -3979,7 +4136,7 @@ mod test {
                 }
             }
             true
-        }, s.marker());
+        }), s.marker());
         for i in 0.. 100 {
             state.apply(Set(i * i), s.marker());
             assert_eq!(*state.borrow(s.marker()) % 2, 0)
@@ -4034,21 +4191,21 @@ mod test {
         let s1 = Store::new(1);
         let s2 = Store::new(2);
         let d1 = DerivedStore::new(-1);
-        s1.subtree_inverse_listener(move |inv, s| {
+        s1.subtree_inverse_listener(um(move |inv, s| {
             let action = weak1.upgrade().unwrap();
             action.borrow_mut(s).push(inv);
             true
-        }, s);
-        s2.subtree_inverse_listener(move |inv, s| {
+        }), s);
+        s2.subtree_inverse_listener(um(move |inv, s| {
             let action = weak2.upgrade().unwrap();
             action.borrow_mut(s).push(inv);
             true
-        }, s);
-        d1.subtree_inverse_listener(move |inv, s| {
+        }), s);
+        d1.subtree_inverse_listener(um(move |inv, s| {
             let action = weak3.upgrade().unwrap();
             action.borrow_mut(s).push(inv);
             true
-        }, s);
+        }), s);
 
         let binding = s2.binding();
         let d_binding = d1.binding();

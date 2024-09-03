@@ -117,6 +117,7 @@ mod environment {
     use crate::resource::Resource;
     use crate::util::geo::ScreenUnit;
     use crate::view::menu::MenuChannel;
+    use crate::view::undo_manager::UndoManager;
     use crate::view::util::Color;
 
     pub trait Environment: 'static {
@@ -178,9 +179,11 @@ mod environment {
         pub size: ScreenUnit,
     }
 
-    #[derive(Clone, Debug)]
+    #[derive(Clone)]
     pub struct StandardVarEnv {
-        pub text: TextEnv
+        pub text: TextEnv,
+        // undo manager stack
+        pub undo_manager: Vec<UndoManager>
     }
 
     impl StandardVarEnv {
@@ -195,7 +198,8 @@ mod environment {
                     backcolor: Color::clear(),
                     font: None,
                     size: 14.0,
-                }
+                },
+                undo_manager: vec![],
             }
         }
     }

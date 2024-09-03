@@ -2,11 +2,12 @@ use std::cell::Cell;
 use std::collections::{VecDeque};
 use std::marker::PhantomData;
 use std::sync::{Arc, Weak};
-use crate::core::{Environment, MSlock, run_main_async, Slock, slock_drop_listener, slock_init_listener, StandardConstEnv};
+use crate::core::{Environment, MSlock, run_main_async, Slock, StandardConstEnv, StandardVarEnv};
 use crate::event::{Event, EventResult};
-use crate::state::{DirectlyInvertible, StoreContainer};
+use crate::state::{DirectlyInvertible, InverseListener, StoreContainer, UndoBarrierType};
 use crate::state::slock_cell::SlockCell;
 use crate::util::geo::{Rect, Size};
+use crate::util::marker::ThreadMarker;
 use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, ViewProvider, WeakInvalidator};
 use crate::view::menu::MenuChannel;
 
@@ -14,8 +15,11 @@ use crate::view::menu::MenuChannel;
 struct History {
     menu: Option<MenuChannel>,
     callbacks: VecDeque<Box<dyn DirectlyInvertible>>,
-    multiplicity: VecDeque<usize>, // number of events in each undo group
-    current_group: usize, // number of elements in current group
+    grouped_actions: VecDeque<(UndoBucket, usize)>, // number of events in each undo group, as well as bucket
+    // 0 denotes global bucket
+    current_bucket: UndoBucket,
+    // if the last group cannot add anymore events
+    last_closed: bool,
     mem_limit: usize,
 }
 
@@ -24,8 +28,9 @@ impl History {
         History {
             menu: None,
             callbacks: VecDeque::new(),
-            multiplicity: VecDeque::new(),
-            current_group: 0,
+            grouped_actions: VecDeque::new(),
+            current_bucket: UndoBucket(0),
+            last_closed: true,
             mem_limit: limit,
         }
     }
@@ -33,17 +38,22 @@ impl History {
     fn register(&mut self, action: Box<dyn DirectlyInvertible>) {
         self.callbacks.push_back(action);
 
-        if self.current_group == 0 {
+        let current_bucket = self.current_bucket.0;
+        let needs_new = self.grouped_actions.is_empty() ||
+            self.last_closed ||
+            self.grouped_actions.back().unwrap().0.0 == current_bucket;
+
+        if needs_new {
             // push new group
-            self.multiplicity.push_back(1);
+            self.grouped_actions.push_back((self.current_bucket, 1));
+            self.last_closed = true;
         }
         else {
-            *self.multiplicity.back_mut().unwrap() += 1;
+            self.grouped_actions.back_mut().unwrap().1 += 1;
         }
-        self.current_group += 1;
 
-        while self.multiplicity.len() > self.mem_limit {
-            let drop_amount = self.multiplicity.pop_front().unwrap();
+        while self.grouped_actions.len() > self.mem_limit {
+            let (_, drop_amount) = self.grouped_actions.pop_front().unwrap();
             for _ in 0..drop_amount {
                 self.callbacks.pop_front();
             }
@@ -53,6 +63,7 @@ impl History {
 
 struct UndoManagerInner {
     is_undoing: Cell<bool>,
+    bucket_count: usize,
     undo: SlockCell<History>,
     redo: SlockCell<History>,
 }
@@ -61,9 +72,15 @@ impl UndoManagerInner {
     fn new(undo_limit: usize) -> Self {
         Self {
             is_undoing: Cell::new(false),
+            bucket_count: 0,
             undo: SlockCell::new(History::new(undo_limit)),
             redo: SlockCell::new(History::new(undo_limit))
         }
+    }
+
+    fn query_bucket(&mut self) -> UndoBucket{
+        self.bucket_count += 1;
+        UndoBucket(self.bucket_count)
     }
 
     fn disable_menus(&mut self, s: MSlock) {
@@ -85,7 +102,7 @@ impl UndoManagerInner {
                 undo.menu.as_mut().unwrap().unset(s);
             }
 
-            if !undo.multiplicity.is_empty() {
+            if !undo.grouped_actions.is_empty() {
                 let weak = weak.clone();
                 undo.menu.as_mut().unwrap().set(Box::new(move |s| {
                     if let Some(strong) = weak.upgrade() {
@@ -102,7 +119,7 @@ impl UndoManagerInner {
                 redo.menu.as_mut().unwrap().unset(s);
             }
 
-            if !redo.multiplicity.is_empty() {
+            if !redo.grouped_actions.is_empty() {
                 let weak = weak.clone();
                 redo.menu.as_mut().unwrap().set(Box::new(move |s| {
                     if let Some(strong) = weak.upgrade() {
@@ -118,12 +135,16 @@ impl UndoManagerInner {
     fn undo(&self, s: MSlock) {
         let mut undo = self.undo.borrow_mut(s);
 
-        let multiplicity = undo.multiplicity.pop_back()
+        let (_, multiplicity) = undo.grouped_actions.pop_back()
             .expect("No actions to undo");
 
         let current_redo_count = self.redo.borrow(s)
             .callbacks.len();
         let expected_redo_count = current_redo_count + multiplicity;
+
+        // ensure new events do not accidentally end up grouped together
+        undo.last_closed = true;
+        self.redo.borrow_mut(s).last_closed = true;
 
         self.is_undoing.set(true);
         for _ in 0..multiplicity {
@@ -138,12 +159,16 @@ impl UndoManagerInner {
     fn redo(&self, s: MSlock) {
         let mut redo = self.redo.borrow_mut(s);
 
-        let multiplicity = redo.multiplicity.pop_back()
+        let (_, multiplicity) = redo.grouped_actions.pop_back()
             .expect("No actions to redo");
 
         let current_undo_count = self.undo.borrow(s)
             .callbacks.len();
         let expected_undo_count = current_undo_count + multiplicity;
+
+        // ensure new events do not accidentally end up grouped together
+        self.undo.borrow_mut(s).last_closed = true;
+        redo.last_closed = true;
 
         for _ in 0..multiplicity {
             let mut action = redo.callbacks.pop_back().unwrap();
@@ -172,21 +197,65 @@ impl UndoManagerInner {
         }
     }
 
-    fn start_group(&self, _s: Slock) {
-        // no op
+    fn active_bucket(&self, s: Slock) -> UndoBucket {
+        self.undo.borrow(s).current_bucket
     }
 
-    fn end_group(&self, s: Slock) {
-        self.undo.borrow_mut(s)
-            .current_group = 0;
-        self.redo.borrow_mut(s)
-            .current_group = 0;
+    fn set_active_bucket(&self, bucket: UndoBucket, s: Slock) {
+        // redo doesn't really care about bucket
+        let mut undo = self.undo.borrow_mut(s);
+        // if the current bucket is already this
+        // we still want to create a new group
+        undo.last_closed = true;
+        undo.current_bucket = bucket;
     }
 }
+
 
 #[derive(Clone)]
 pub struct UndoManager {
     inner: Arc<SlockCell<UndoManagerInner>>
+}
+
+#[derive(Default, Copy, Clone, PartialEq, Eq)]
+pub struct UndoBucket(usize);
+
+impl UndoBucket {
+    pub(crate) fn new(tag: usize) -> Self {
+        Self(tag)
+    }
+}
+
+#[derive(Clone)]
+struct UMListener {
+    weak: Weak<SlockCell<UndoManagerInner>>
+}
+
+impl InverseListener for UMListener {
+    fn handle_inverse(&mut self, inverse_action: Box<dyn DirectlyInvertible>, bucket: UndoBucket, s: Slock) -> bool {
+        let Some(strong) = self.weak.upgrade() else {
+            return false;
+        };
+
+        strong.borrow(s)
+            .register_inverter(inverse_action, s);
+
+        // FIXME Would be nice to elide most async_main calls
+        // OTOH, it may be more efficient than an invalidator call?
+        // (which is also tricky to position here given the short lifetime of stores)
+        let weak = self.weak.clone();
+        run_main_async(move |s| {
+            if let Some(strong) = weak.upgrade() {
+                let borrow = strong.borrow(s);
+                borrow.update_menus(weak.clone(), s)
+            }
+        });
+        true
+    }
+
+    fn undo_barrier(&mut self, undo_barrier_type: UndoBarrierType, s: Slock) {
+        todo!()
+    }
 }
 
 impl UndoManager {
@@ -199,49 +268,45 @@ impl UndoManager {
             Arc::new(SlockCell::new(UndoManagerInner::new(undo_limit)));
 
         let weak = Arc::downgrade(&inner);
-        stores.subtree_inverse_listener(move |action, s| {
-            let Some(strong) = weak.upgrade() else {
-                return false;
-            };
-
-            strong.borrow(s)
-                .register_inverter(action, s);
-
-            // FIXME Would be nice to elide most async_main calls
-            // OTOH, it may be more efficient than an invalidator call?
-            // (which is also tricky to position here given the short lifetime of stores)
-            let weak = weak.clone();
-            run_main_async(move |s| {
-                if let Some(strong) = weak.upgrade() {
-                    let borrow = strong.borrow(s);
-                    borrow.update_menus(weak.clone(), s)
-                }
-            });
-            true
+        stores.subtree_inverse_listener(UMListener {
+            weak
         }, s);
-
-        let weak = Arc::downgrade(&inner);
-        slock_init_listener(move |s| {
-            let Some(strong) = weak.upgrade() else {
-                return false;
-            };
-
-            strong.borrow(s).start_group(s);
-            true
-        });
-
-        let weak = Arc::downgrade(&inner);
-        slock_drop_listener(move |s| {
-            let Some(strong) = weak.upgrade() else {
-                return false;
-            };
-
-            strong.borrow(s).end_group(s);
-            true
-        });
 
         UndoManager {
             inner,
+        }
+    }
+
+    pub fn query_bucket(&self, s: Slock<impl ThreadMarker>) -> UndoBucket {
+        self.inner.borrow_mut(s).query_bucket()
+    }
+
+    pub fn start_in_bucket(&self, f: impl FnOnce(), bucket: UndoBucket, s: Slock<impl ThreadMarker>) {
+        let old = self.inner.borrow(s).active_bucket(s.to_general_slock());
+
+        self.inner.borrow(s).set_active_bucket(bucket, s.to_general_slock());
+        f();
+        self.inner.borrow(s).set_active_bucket(old, s.to_general_slock());
+    }
+
+    pub fn perform_in_bucket(&self, f: impl FnOnce(), bucket: UndoBucket, s: Slock<impl ThreadMarker>) {
+        // if top isn't bucket, set it to that
+        let old = self.inner.borrow(s).active_bucket(s.to_general_slock());
+
+        if old != bucket {
+            self.inner.borrow(s).set_active_bucket(bucket, s.to_general_slock());
+        }
+
+        f();
+        self.inner.borrow(s).set_active_bucket(old, s.to_general_slock());
+    }
+
+    pub fn close_bucket(&self, bucket: UndoBucket, s: Slock<impl ThreadMarker>) {
+        let old = self.inner.borrow(s).active_bucket(s.to_general_slock());
+
+        if old == bucket {
+            // any event from now on would be in a new bucket
+            self.inner.borrow(s).set_active_bucket(old, s.to_general_slock());
         }
     }
 
@@ -256,42 +321,46 @@ impl UndoManager {
     }
 }
 
-pub trait UndoManagerExt<E>: IntoViewProvider<E> where E: Environment, E::Const: AsRef<StandardConstEnv>, {
+pub trait UndoManagerExt<E>: IntoViewProvider<E>
+    where E: Environment,
+          E::Const: AsRef<StandardConstEnv>,
+          E::Variable: AsMut<StandardVarEnv>
+{
     fn mount_undo_manager(self, undo_manager: UndoManager)
         -> impl IntoViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext>;
-
-    fn mount_focused_undo_manager(self, undo_manager: UndoManager)
-                    -> impl IntoViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext>;
 }
 
-impl<E, I> UndoManagerExt<E> for I where E: Environment, E::Const: AsRef<StandardConstEnv>, I: IntoViewProvider<E> {
+impl<E, I> UndoManagerExt<E> for I
+    where E: Environment,
+          E::Const: AsRef<StandardConstEnv>,
+          E::Variable: AsMut<StandardVarEnv>,
+          I: IntoViewProvider<E> {
     fn mount_undo_manager(self, undo_manager: UndoManager) -> impl IntoViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
         UndoManagerIVP {
             source: self,
             undo_manager,
-            focused_only: false,
-            phantom: Default::default(),
-        }
-    }
-
-    fn mount_focused_undo_manager(self, undo_manager: UndoManager) -> impl IntoViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
-        UndoManagerIVP {
-            source: self,
-            undo_manager,
-            focused_only: true,
             phantom: Default::default(),
         }
     }
 }
 
-struct UndoManagerIVP<E, I> where E: Environment, E::Const: AsRef<StandardConstEnv>, I: IntoViewProvider<E> {
+struct UndoManagerIVP<E, I>
+    where E: Environment,
+          E::Const: AsRef<StandardConstEnv>,
+          E::Variable: AsMut<StandardVarEnv>,
+          I: IntoViewProvider<E>
+{
     source: I,
     undo_manager: UndoManager,
-    focused_only: bool,
     phantom: PhantomData<E>
 }
 
-impl<E, I> IntoViewProvider<E> for UndoManagerIVP<E, I> where E: Environment, E::Const: AsRef<StandardConstEnv>, I: IntoViewProvider<E> {
+impl<E, I> IntoViewProvider<E> for UndoManagerIVP<E, I>
+    where E: Environment,
+          E::Const: AsRef<StandardConstEnv>,
+          E::Variable: AsMut<StandardVarEnv>,
+          I: IntoViewProvider<E>
+{
     type UpContext = I::UpContext;
     type DownContext = I::DownContext;
 
@@ -310,7 +379,6 @@ impl<E, I> IntoViewProvider<E> for UndoManagerIVP<E, I> where E: Environment, E:
         UndoManagerVP {
             source: self.source.into_view_provider(env, s),
             undo_manager: self.undo_manager,
-            focused_only: self.focused_only,
             phantom: Default::default(),
         }
     }
@@ -319,11 +387,14 @@ impl<E, I> IntoViewProvider<E> for UndoManagerIVP<E, I> where E: Environment, E:
 struct UndoManagerVP<E, P> where E: Environment, E::Const: AsRef<StandardConstEnv>, P: ViewProvider<E> {
     source: P,
     undo_manager: UndoManager,
-    focused_only: bool,
     phantom: PhantomData<E>
 }
 
-impl<E, P> ViewProvider<E> for UndoManagerVP<E, P> where E: Environment, E::Const: AsRef<StandardConstEnv>, P: ViewProvider<E> {
+impl<E, P> ViewProvider<E> for UndoManagerVP<E, P>
+    where E: Environment,
+          E::Const: AsRef<StandardConstEnv>,
+          E::Variable: AsMut<StandardVarEnv>,
+          P: ViewProvider<E> {
     type UpContext = P::UpContext;
     type DownContext = P::DownContext;
 
@@ -388,24 +459,20 @@ impl<E, P> ViewProvider<E> for UndoManagerVP<E, P> where E: Environment, E::Cons
 
     fn focused(&self, rel_depth: u32, s: MSlock) {
         self.source.focused(rel_depth, s);
-        if self.focused_only {
-            self.undo_manager.disable_menus(s);
-        }
     }
 
     fn unfocused(&self, rel_depth: u32, s: MSlock) {
         self.source.unfocused(rel_depth, s);
-        if self.focused_only {
-            self.undo_manager.disable_menus(s);
-        }
     }
 
     fn push_environment(&mut self, env: &mut E::Variable, s: MSlock) {
+        env.as_mut().undo_manager.push(self.undo_manager.clone());
         self.source.push_environment(env, s)
     }
 
     fn pop_environment(&mut self, env: &mut E::Variable, s: MSlock) {
-        self.source.pop_environment(env, s)
+        self.source.pop_environment(env, s);
+        env.as_mut().undo_manager.pop();
     }
 
     fn handle_event(&self, e: &Event, s: MSlock) -> EventResult {
