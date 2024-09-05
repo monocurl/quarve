@@ -536,7 +536,6 @@ mod text_view {
 
             pub trait ToRunAttribute: Default + Send + PartialEq + Clone + 'static {
                 fn to_run_attribute(&self) -> impl AsRef<RunAttribute>;
-                fn merge(first: &Self, second: &Self) -> Self;
             }
 
             impl AsRef<RunAttribute> for RunAttribute {
@@ -582,7 +581,7 @@ mod text_view {
         pub use attribute_set::*;
 
         mod attribute_holder {
-            use std::ops::{Mul};
+            use std::ops::{Mul, Range};
             use crate::state::{GroupAction, GroupBasis, SetAction, Stateful};
             use crate::util::marker::FalseMarker;
             use crate::view::text::text_view::state::ToCharAttribute;
@@ -615,6 +614,29 @@ mod text_view {
                                 None
                             }
                         }).expect("Invalid Index")
+                }
+
+                pub fn subrange(&self, range: Range<usize>) -> Self {
+                    let mut attributes = Vec::new();
+
+                    // scroll to initial position
+                    let mut ind = 0;
+                    // range position
+                    let mut i = 0;
+                    while ind < self.attributes.len() && i + self.attributes[ind].1 <= range.start {
+                        i += self.attributes[ind].1;
+                        ind += 1;
+                    }
+
+                    while i < range.end {
+                        let next = (i + self.attributes[ind].1).min(range.end);
+                        attributes.push((self.attributes[ind].0.clone(), next - i));
+                        i = next;
+                    }
+
+                    RangedAttributeHolder {
+                        attributes,
+                    }
                 }
             }
             
@@ -872,6 +894,60 @@ mod text_view {
                     }
                 }
 
+                pub(super) fn split_trail(&self, at: usize, s: Slock<impl ThreadMarker>) -> Run<I, D> {
+                    let len = self.len(s);
+                    let content = self.content.borrow(s).0[at..len].to_string();
+                    let derived = self.char_derived_attribute.borrow(s)
+                        .subrange(at..len);
+                    let intrinsic = self.char_derived_attribute.borrow(s)
+                        .subrange(at..len);
+
+                    let ret = Run {
+                        content: Store::new(EditingString(content)),
+                        gui_info: Default::default(),
+                        char_intrinsic_attribute: Store::new(intrinsic),
+                        char_derived_attribute: DerivedStore::new(derived),
+                        // use new run attributes
+                        intrinsic_attribute: Store::default(),
+                        derived_attribute: DerivedStore::default(),
+                    };
+                    self.replace(at..len, "", s);
+                    ret
+                }
+
+                pub(super) fn merge_from(&self, run: &Run<I, D>, s: Slock<impl ThreadMarker>) {
+                    // append content normally
+                    let len = self.len(s);
+                    self.content.apply(StringActionBasis::ReplaceSubrange(len..len, run.content.borrow(s).0.clone()), s);
+
+                    // attributes aren't too bad either
+                    let mut pos = len;
+                    for (attr, len) in run.char_derived_attribute.borrow(s).attributes.iter() {
+                        self.char_derived_attribute.apply(
+                            RangedBasis::Insert {
+                                at: pos,
+                                len: *len,
+                                attribute: attr.clone(),
+                            }, s
+                        );
+
+                        pos += *len;
+                    }
+
+                    let mut pos = len;
+                    for (attr, len) in run.char_intrinsic_attribute.borrow(s).attributes.iter() {
+                        self.char_intrinsic_attribute.apply(
+                            RangedBasis::Insert {
+                                at: pos,
+                                len: *len,
+                                attribute: attr.clone(),
+                            }, s
+                        );
+
+                        pos += *len;
+                    }
+                }
+
                 pub fn content<'a>(&'a self, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=str> + 'a {
                     DerefMap::new(
                         self.content.borrow(s),
@@ -940,41 +1016,47 @@ mod text_view {
                     s: Slock<impl ThreadMarker>
                 ) {
                     // delete old attrs
-                    self.char_derived_attribute.apply(RangedAttributeAction {
-                        actions: vec![RangedBasis::Delete {
-                            at: range.start,
-                            len: range.len(),
-                        }],
-                    }, s);
+                    if !range.is_empty() {
+                        self.char_derived_attribute.apply(RangedAttributeAction {
+                            actions: vec![RangedBasis::Delete {
+                                at: range.start,
+                                len: range.len(),
+                            }],
+                        }, s);
 
-                    self.char_intrinsic_attribute.apply(RangedAttributeAction {
-                        actions: vec![RangedBasis::Delete {
-                            at: range.start,
-                            len: range.len(),
-                        }],
-                    }, s);
+                        self.char_intrinsic_attribute.apply(RangedAttributeAction {
+                            actions: vec![RangedBasis::Delete {
+                                at: range.start,
+                                len: range.len(),
+                            }],
+                        }, s);
+                    }
 
                     // modify content
+                    let replacement = with.into();
+                    let replacement_len = replacement.len();
                     self.content.apply(
-                        StringActionBasis::ReplaceSubrange(range.clone(), with.into()), s
+                        StringActionBasis::ReplaceSubrange(range.clone(), replacement), s
                     );
 
                     // insert new attrs
-                    self.char_derived_attribute.apply(RangedAttributeAction {
-                        actions: vec![RangedBasis::Insert {
-                            at: range.start,
-                            len: range.len(),
-                            attribute: derived
-                        }],
-                    }, s);
+                    if replacement_len > 0 {
+                        self.char_derived_attribute.apply(RangedAttributeAction {
+                            actions: vec![RangedBasis::Insert {
+                                at: range.start,
+                                len: replacement_len,
+                                attribute: derived
+                            }],
+                        }, s);
 
-                    self.char_intrinsic_attribute.apply(RangedAttributeAction {
-                        actions: vec![RangedBasis::Insert {
-                            at: range.start,
-                            len: range.len(),
-                            attribute: intrinsic
-                        }],
-                    }, s);
+                        self.char_intrinsic_attribute.apply(RangedAttributeAction {
+                            actions: vec![RangedBasis::Insert {
+                                at: range.start,
+                                len: replacement_len,
+                                attribute: intrinsic
+                            }],
+                        }, s);
+                    }
                 }
 
                 pub fn set_char_intrinsic(&self, attribute: I::CharAttribute, for_range: Range<usize>, s: Slock<impl ThreadMarker>) {
@@ -1120,7 +1202,9 @@ mod text_view {
             impl<I, D> Page<I, D> where I: AttributeSet, D: AttributeSet {
                 pub fn new() -> Self {
                     Page {
-                        runs: Store::new(vec![]),
+                        runs: Store::new(vec![
+                            Run::new()
+                        ]),
                         page_intrinsic_attribute: Store::default(),
                         page_derived_attribute: DerivedStore::default(),
                     }
@@ -1147,6 +1231,7 @@ mod text_view {
                 }
 
                 pub fn remove_run(&self, at: usize, s: Slock<impl ThreadMarker>) {
+                    assert!(self.runs.borrow(s).len() > 1);
                     self.runs.apply(VecActionBasis::Remove(at), s);
                 }
 
@@ -1185,6 +1270,72 @@ mod text_view {
                     with: impl Into<String>,
                     s: Slock<impl ThreadMarker>
                 ) {
+                    let with = with.into();
+                    let segments: Vec<_> = with
+                        .split('\n')
+                        .collect();
+
+                    // strategy:
+                    // 1) delete intermediate runs + tips
+                    if end_run > start_run + 1 {
+                        self.runs.apply(VecActionBasis::RemoveMany(start_run + 1 .. end_run), s);
+                    }
+
+                    if start_run == end_run {
+                        let range = start_char .. end_char;
+                        self.run(start_run, s)
+                            .replace(range, with, s);
+                    }
+                    else {
+                        let start = self.run(start_run, s);
+                        start.replace(start_char..start.len(s), "", s);
+
+                        self.run(end_run, s)
+                            .replace(0..start_char, "", s);
+                    }
+
+                    // 2) if there was only one line and there's multiple segments, split this one run
+                    if start_run == end_run && segments.len() > 1 {
+                        let next = self.run(start_run, s).split_trail(start_char, s);
+                        self.runs.apply(VecActionBasis::Insert(next, start_run + 1), s);
+                    }
+
+                    // 3) if there were multiple lines and there's only one segment, merge the first and last
+                    if start_run < end_run && segments.len() == 1 {
+                        {
+                            let curr = self.run(start_run, s);
+                            let next = self.run(start_run + 1, s);
+                            curr.merge_from(next, s);
+                        }
+                        self.remove_run(start_run + 1, s);
+                    }
+
+                    // 4) handle insertion end points
+                    if segments.len() == 1 {
+                        self.run(start_run, s)
+                            .replace(start_char..start_char, segments[0], s);
+                    }
+                    else {
+                        self.run(start_run, s)
+                            .replace(start_char..start_char, segments[0], s);
+
+                        self.run(start_run + 1, s)
+                            .replace(0..0, segments[segments.len() - 1], s);
+                    }
+
+                    // 5) handle intermediate runs relatively normally
+                    let intermediate_runs: Vec<Run<I, D>> = &segments[1.. (segments.len() - 1).max(1)].iter()
+                        .map(|run| {
+                            let run = Run::new();
+                            run.replace(0..0, *run, s);
+                            run
+                        })
+                        .collect();
+                    if !intermediate_runs.is_empty() {
+                        self.runs.apply(VecActionBasis::InsertMany(intermediate_runs, start_run + 1), s);
+                    }
+
+
                     // if start_run == end_run {
                     //     let range = start_char .. end_char;
                     //     self.run(start_run, s)
@@ -1491,9 +1642,9 @@ mod text_view {
     mod text_view {
         use std::ffi::c_void;
         use crate::core::{Environment, MSlock};
-        use crate::state::{Signal, StoreContainerView};
+        use crate::state::{Signal, StoreContainer, StoreContainerView};
         use crate::util::geo::Size;
-        use crate::view::{IntoViewProvider};
+        use crate::view::{IntoViewProvider, ViewProvider};
         use crate::view::text::{AttributeSet, Run, TextViewState};
 
         trait TextViewProvider<E> where E: Environment {
@@ -1536,6 +1687,22 @@ mod text_view {
         {
             pub fn new(state: StoreContainerView<TextViewState<P::IntrinsicAttribute, P::DerivedAttribute>>) -> Self {
                 todo!()
+            }
+        }
+
+        impl<E, P> IntoViewProvider<E> for TextView<E, P> where E: Environment, P: TextViewProvider<E> {
+            type UpContext = ();
+            type DownContext = ();
+
+            fn into_view_provider(self, _env: &E::Const, s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
+                // merge them in undo history
+                self.state.group_undos(s);
+
+                TextViewVP {
+                    provider: self.provider,
+                    state: self.state,
+                    scroll_view: 0 as *mut c_void,
+                }
             }
         }
 

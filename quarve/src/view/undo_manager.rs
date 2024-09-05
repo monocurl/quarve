@@ -54,12 +54,13 @@ impl History {
             self.grouped_actions.push_back((bucket, 1));
         }
         else {
-            // max might not be the best function
-            // but realistically if you have different groups in same transaction
+            // realistically if you have different groups in same transaction
             // it's likely you just want them to be merged
-            // max is nice since it's path independent
+            // but there still technically is a race condition
+            // and the order in which groups are applied can matter
+            // in practice, i dont think it's a large issue
             let back = self.grouped_actions.back_mut().unwrap();
-            back.0 = UndoBucket(back.0.0.max(bucket.0));
+            back.0 = bucket;
             back.1 += 1;
         }
 
