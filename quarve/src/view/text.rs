@@ -1,5 +1,3 @@
-// TODO
-
 mod attribute {
     mod character {
         use crate::resource::Resource;
@@ -548,10 +546,6 @@ mod text_view {
                 fn to_run_attribute(&self) -> impl AsRef<RunAttribute> {
                     self
                 }
-
-                fn merge(first: &Self, _second: &Self) -> Self {
-                    *first
-                }
             }
 
             pub trait ToPageAttribute: Default + Send + PartialEq + Clone + 'static {
@@ -844,12 +838,22 @@ mod text_view {
             use crate::util::geo::ScreenUnit;
             use crate::util::marker::FalseMarker;
 
-            #[derive(Default)]
+            #[derive(Copy, Clone)]
             pub struct RunGUIInfo {
-                pub height: ScreenUnit,
+                // maintained by run decorator
+                pub added_decoration_listener: bool,
+                // maintained by page vp
+                pub added_vp_listener: bool,
+
+                // maintained more or less by state which adds the listeners
+                // for insertion, pagevp is responsible for setting it to true
+                pub dirty: bool,
+                // maintained by run
+                pub codeunits: usize,
+
+                // maintained by page vp
                 pub line: usize,
-                pub start_char: usize,
-                pub page_position: ScreenUnit
+                pub page_height: ScreenUnit,
             }
 
             impl Stateful for RunGUIInfo {
@@ -861,8 +865,8 @@ mod text_view {
         mod run {
             use std::ops::{Deref, Range};
             use quarve_derive::StoreContainer;
-            use crate::core::Slock;
-            use crate::state::{Binding, DerivedStore, EditingString, SetAction, Signal, Store, StringActionBasis, Word};
+            use crate::core::{MSlock, Slock};
+            use crate::state::{Bindable, Binding, DerivedStore, EditingString, GroupAction, SetAction, Signal, Store, StringActionBasis, Word};
             use crate::state::SetAction::Set;
             use crate::util::marker::ThreadMarker;
             use crate::util::rust_util::DerefMap;
@@ -873,7 +877,7 @@ mod text_view {
             #[derive(StoreContainer)]
             pub struct Run<I, D> where I: AttributeSet, D: AttributeSet {
                 content: Store<EditingString>,
-                gui_info: DerivedStore<RunGUIInfo>,
+                pub(crate) gui_info: DerivedStore<RunGUIInfo>,
 
                 char_intrinsic_attribute: Store<RangedAttributeHolder<I::CharAttribute>>,
                 char_derived_attribute: DerivedStore<RangedAttributeHolder<D::CharAttribute>>,
@@ -883,36 +887,99 @@ mod text_view {
             }
 
             impl<I, D> Run<I, D> where I: AttributeSet, D: AttributeSet {
-                pub(super) fn new() -> Self {
-                    Run {
-                        content: Store::default(),
-                        gui_info: DerivedStore::default(),
-                        char_intrinsic_attribute: Store::default(),
-                        char_derived_attribute: DerivedStore::default(),
+                pub(super) fn new_with(
+                    initial: String,
+                    intrinsic: RangedAttributeHolder<I::CharAttribute>,
+                    derived: RangedAttributeHolder<D::CharAttribute>,
+                    s: Slock<impl ThreadMarker>
+                ) -> Self {
+                    let codeunits = initial.encode_utf16().count();
+                    let run = Run {
+                        content: Store::new(EditingString(initial)),
+                        gui_info: DerivedStore::new(RunGUIInfo {
+                            added_decoration_listener: false,
+                            added_vp_listener: false,
+                            dirty: true,
+                            codeunits,
+                            line: 0,
+                            page_height: 0.0,
+                        }),
+                        char_intrinsic_attribute: Store::new(intrinsic),
+                        char_derived_attribute: DerivedStore::new(derived),
                         intrinsic_attribute: Store::default(),
                         derived_attribute: DerivedStore::default(),
-                    }
+                    };
+
+                    // upon change, set dirty flag to true
+                    let gui = run.gui_info.binding();
+                    run.char_intrinsic_attribute.listen(move |_, s| {
+                        let mut g = *gui.borrow(s);
+                        if !g.dirty {
+                            g.dirty = true;
+                            gui.apply(Set(g), s);
+                        }
+                        true
+                    }, s);
+
+                    let gui = run.gui_info.binding();
+                    run.char_derived_attribute.listen(move |_, s| {
+                        let mut g = *gui.borrow(s);
+                        if !g.dirty {
+                            g.dirty = true;
+                            gui.apply(Set(g), s);
+                        }
+                        true
+                    }, s);
+
+                    let gui = run.gui_info.binding();
+                    run.intrinsic_attribute.listen(move |_, s| {
+                        let mut g = *gui.borrow(s);
+                        if !g.dirty {
+                            g.dirty = true;
+                            gui.apply(Set(g), s);
+                        }
+                        true
+                    }, s);
+
+                    let gui = run.gui_info.binding();
+                    run.derived_attribute.listen(move |_, s| {
+                        let mut g = *gui.borrow(s);
+                        if !g.dirty {
+                            g.dirty = true;
+                            gui.apply(Set(g), s);
+                        }
+                        true
+                    }, s);
+
+                    let gui = run.gui_info.binding();
+                    run.content.listen(move |c, s| {
+                        let mut g = *gui.borrow(s);
+                        g.dirty = true;
+                        g.codeunits = c.0.encode_utf16().count();
+                        gui.apply(Set(g), s);
+                        true
+                    }, s);
+
+                    run
+                }
+                pub(super) fn new(s: Slock<impl ThreadMarker>) -> Self {
+                    Run::new_with(
+                        "".to_owned(),
+                        RangedAttributeHolder::default(), RangedAttributeHolder::default(),
+                        s
+                    )
                 }
 
-                pub(super) fn split_trail(&self, at: usize, s: Slock<impl ThreadMarker>) -> Run<I, D> {
+                pub(super) fn split_trail(&self, at: usize, s: MSlock) -> Run<I, D> {
                     let len = self.len(s);
                     let content = self.content.borrow(s).0[at..len].to_string();
                     let derived = self.char_derived_attribute.borrow(s)
                         .subrange(at..len);
-                    let intrinsic = self.char_derived_attribute.borrow(s)
+                    let intrinsic = self.char_intrinsic_attribute.borrow(s)
                         .subrange(at..len);
 
-                    let ret = Run {
-                        content: Store::new(EditingString(content)),
-                        gui_info: Default::default(),
-                        char_intrinsic_attribute: Store::new(intrinsic),
-                        char_derived_attribute: DerivedStore::new(derived),
-                        // use new run attributes
-                        intrinsic_attribute: Store::default(),
-                        derived_attribute: DerivedStore::default(),
-                    };
                     self.replace(at..len, "", s);
-                    ret
+                    Run::new_with(content, intrinsic, derived, s)
                 }
 
                 pub(super) fn merge_from(&self, run: &Run<I, D>, s: Slock<impl ThreadMarker>) {
@@ -922,30 +989,34 @@ mod text_view {
 
                     // attributes aren't too bad either
                     let mut pos = len;
+                    let mut actions = RangedAttributeAction::identity();
                     for (attr, len) in run.char_derived_attribute.borrow(s).attributes.iter() {
-                        self.char_derived_attribute.apply(
+                        actions.actions.push(
                             RangedBasis::Insert {
                                 at: pos,
                                 len: *len,
                                 attribute: attr.clone(),
-                            }, s
+                            }
                         );
-
                         pos += *len;
                     }
+                    self.char_derived_attribute.apply(actions, s);
 
                     let mut pos = len;
+                    let mut actions = RangedAttributeAction::identity();
                     for (attr, len) in run.char_intrinsic_attribute.borrow(s).attributes.iter() {
-                        self.char_intrinsic_attribute.apply(
+                        actions.actions.push(
                             RangedBasis::Insert {
                                 at: pos,
                                 len: *len,
                                 attribute: attr.clone(),
-                            }, s
+                            }
                         );
 
                         pos += *len;
                     }
+
+                    self.char_intrinsic_attribute.apply(actions, s);
                 }
 
                 pub fn content<'a>(&'a self, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=str> + 'a {
@@ -999,7 +1070,10 @@ mod text_view {
                     }), s);
                 }
 
-                pub fn replace(&self, range: Range<usize>, with: impl Into<String>, s: Slock<impl ThreadMarker>) {
+                /// Due to a race condition, modification of text contents
+                /// may only be performed on the main thread
+                // (technically an undo could be called on other threads, but this wont happen in practice)
+                pub fn replace(&self, range: Range<usize>, with: impl Into<String>, s: MSlock) {
                     self.replace_with_attributes(
                         range, with,
                         Default::default(), Default::default(),
@@ -1007,13 +1081,15 @@ mod text_view {
                     );
                 }
 
+                /// Due to a race condition, modification of text contents
+                /// may only be performed on the main thread
                 pub fn replace_with_attributes(
                     &self,
                     range: Range<usize>,
                     with: impl Into<String>,
                     intrinsic: I::CharAttribute,
                     derived: D::CharAttribute,
-                    s: Slock<impl ThreadMarker>
+                    s: MSlock
                 ) {
                     // delete old attrs
                     if !range.is_empty() {
@@ -1034,6 +1110,7 @@ mod text_view {
 
                     // modify content
                     let replacement = with.into();
+                    assert!(replacement.chars().all(|c| c != '\n'), "Cannot replace with newline!. Use Page.replace_range instead");
                     let replacement_len = replacement.len();
                     self.content.apply(
                         StringActionBasis::ReplaceSubrange(range.clone(), replacement), s
@@ -1088,6 +1165,53 @@ mod text_view {
                                 attribute
                             }
                         ],
+                    }, s);
+                }
+
+                // FIXME, these two could be more efficient (no clones or vec)
+                pub fn modify_char_intrinsic(&self, range: Range<usize>, mut f: impl FnMut(I::CharAttribute) -> I::CharAttribute, s: Slock<impl ThreadMarker>) {
+                    let subrange = self.char_intrinsic_attribute.borrow(s).subrange(range.clone()).attributes;
+                    self.char_intrinsic_attribute.apply(RangedAttributeAction {
+                        actions: vec![RangedBasis::Delete {
+                            at: range.start,
+                            len: range.len(),
+                        }],
+                    }, s);
+                    let mut loc = range.start;
+                    let mapped_subrange = subrange.into_iter().map(|(a, l)| {
+                        let ret = RangedBasis::Insert {
+                            at: loc,
+                            len: l,
+                            attribute: f(a),
+                        };
+                        loc += l;
+                        ret
+                    });
+                    self.char_intrinsic_attribute.apply(RangedAttributeAction {
+                        actions: mapped_subrange.collect(),
+                    }, s);
+                }
+
+                pub fn modify_char_derived(&self, range: Range<usize>, mut f: impl FnMut(D::CharAttribute) -> D::CharAttribute, s: Slock<impl ThreadMarker>) {
+                    let subrange = self.char_derived_attribute.borrow(s).subrange(range.clone()).attributes;
+                    self.char_derived_attribute.apply(RangedAttributeAction {
+                        actions: vec![RangedBasis::Delete {
+                            at: range.start,
+                            len: range.len(),
+                        }],
+                    }, s);
+                    let mut loc = range.start;
+                    let mapped_subrange = subrange.into_iter().map(|(a, l)| {
+                        let ret = RangedBasis::Insert {
+                            at: loc,
+                            len: l,
+                            attribute: f(a),
+                        };
+                        loc += l;
+                        ret
+                    });
+                    self.char_derived_attribute.apply(RangedAttributeAction {
+                        actions: mapped_subrange.collect(),
                     }, s);
                 }
 
@@ -1179,42 +1303,172 @@ mod text_view {
             pub type RunsContainer<T> = Vec<T>;
         }
         pub use runs::*;
+        
+        mod cursor_state {
+            use quarve_derive::StoreContainer;
+            use crate::core::Slock;
+            use crate::state::{Bindable, Binding, Buffer, Filterless, Signal, Store};
+            use crate::state::SetAction::Set;
+            use crate::util::marker::ThreadMarker;
+
+            #[derive(StoreContainer)]
+            pub struct CursorState {
+                start_run: Store<usize>,
+                start_char: Store<usize>,
+
+                end_run: Store<usize>,
+                end_char: Store<usize>,
+            }
+
+            impl CursorState {
+                pub fn new() -> Self {
+                    CursorState {
+                        start_run: Store::default(),
+                        start_char: Store::default(),
+                        end_run: Store::default(),
+                        end_char: Store::new(usize::MAX),
+                    }
+                }
+
+                pub fn start_run_binding(&self) -> impl Binding<Filterless<usize>> {
+                    self.start_run.binding()
+                }
+
+                pub fn end_run_binding(&self) -> impl Binding<Filterless<usize>> {
+                    self.end_run.binding()
+                }
+
+                pub fn start_char_binding(&self) -> impl Binding<Filterless<usize>> {
+                    self.start_char.binding()
+                }
+
+                pub fn end_char_binding(&self) -> impl Binding<Filterless<usize>> {
+                    self.end_char.binding()
+                }
+
+                pub fn start_run(&self, s: Slock<impl ThreadMarker>) -> usize {
+                    *self.start_run.borrow(s)
+                }
+
+                pub fn end_run(&self, s: Slock<impl ThreadMarker>) -> usize {
+                    *self.end_run.borrow(s)
+                }
+
+                pub fn start_char(&self, s: Slock<impl ThreadMarker>) -> usize {
+                    *self.start_char.borrow(s)
+                }
+
+                pub fn end_char(&self, s: Slock<impl ThreadMarker>) -> usize {
+                    *self.end_char.borrow(s)
+                }
+
+                pub fn set_range(
+                    &self,
+                    start_run: usize,
+                    start_char: usize,
+                    end_run: usize,
+                    end_char: usize,
+                    s: Slock<impl ThreadMarker>
+                ) {
+                    self.start_run.apply(Set(start_run), s);
+                    self.start_char.apply(Set(start_char), s);
+                    self.end_run.apply(Set(end_run), s);
+                    self.end_char.apply(Set(end_char), s);
+                }
+
+                // Function is called with start_run, start_char, end_run, end_char
+                pub fn listen(
+                    &self,
+                    f: impl FnMut(usize, usize, usize, usize, Slock) -> bool + Send + 'static,
+                    s: Slock<impl ThreadMarker>
+                ) {
+                    let stores = [&self.start_run, &self.start_char, &self.end_run, &self.end_char];
+                    // (alive, function, current args)
+                    let state = Buffer::new(
+                        (true, f, stores.map(|store| *store.borrow(s)))
+                    );
+
+                    for (i, store) in stores.into_iter().enumerate() {
+                        // basically a clone
+                        // we use the function to determine when to return false
+                        // rather than weak/strong (we also dont need to worry about cycles)
+                        let my_state = state.downgrade().upgrade().unwrap();
+                        store.listen(move |val, s| {
+                            let mut state = my_state.borrow_mut(s);
+                            if !state.0 {
+                                return false;
+                            }
+
+                            // update appropriate argument
+                            state.2[i] = *val;
+                            let args = state.2;
+                            state.0 = (state.1)(args[0], args[1], args[2], args[3], s);
+
+                            state.0
+                        }, s)
+                    }
+                }
+            }
+        }
+        pub use cursor_state::*;
 
         mod page {
             use std::ops::Deref;
             use quarve_derive::StoreContainer;
-            use crate::core::Slock;
-            use crate::state::{Binding, DerivedStore, SetAction, Signal, Store, VecActionBasis, Word};
+            use crate::core::{MSlock, Slock};
+            use crate::state::{Binding, DerivedStore, SetAction, Signal, Stateful, Store, VecActionBasis, Word};
             use crate::state::SetAction::Set;
-            use crate::util::marker::ThreadMarker;
+            use crate::util::marker::{FalseMarker, ThreadMarker};
             use crate::util::rust_util::DerefMap;
+            use crate::view::text::CursorState;
             use crate::view::text::text_view::state::{AttributeSet, Run, RunsContainer};
             use crate::view::text::text_view::state::attribute_holder::{AttributeHolder};
 
+            #[derive(Copy, Clone)]
+            pub(crate) struct PageGUIInfo {
+                // maintained by textviewvp
+                pub page_num: usize
+            }
+
+            impl Stateful for PageGUIInfo {
+                type Action = SetAction<PageGUIInfo>;
+                type HasInnerStores = FalseMarker;
+            }
+
             #[derive(StoreContainer)]
             pub struct Page<I, D> where I: AttributeSet, D: AttributeSet {
-                pub(crate) runs: Store<Vec<Run<I, D>>>,
+                pub(crate) gui_info: DerivedStore<PageGUIInfo>,
 
+                pub(crate) cursor: CursorState,
+                pub(crate) runs: Store<Vec<Run<I, D>>>,
                 pub(crate) page_intrinsic_attribute: Store<AttributeHolder<I::PageAttribute>>,
                 pub(crate) page_derived_attribute: DerivedStore<AttributeHolder<D::PageAttribute>>
             }
 
             impl<I, D> Page<I, D> where I: AttributeSet, D: AttributeSet {
-                pub fn new() -> Self {
+                pub fn new(s: Slock<impl ThreadMarker>) -> Self {
                     Page {
+                        gui_info: DerivedStore::new(PageGUIInfo {
+                            page_num: 0
+                        }),
+                        cursor: CursorState::new(),
                         runs: Store::new(vec![
-                            Run::new()
+                            Run::new(s)
                         ]),
                         page_intrinsic_attribute: Store::default(),
                         page_derived_attribute: DerivedStore::default(),
                     }
                 }
 
+                pub fn selection(&self) -> &CursorState {
+                    &self.cursor
+                }
+
                 pub fn num_runs(&self, s: Slock<impl ThreadMarker>) -> usize {
                     self.runs.borrow(s).len()
                 }
 
-                pub fn runs<'a>(&'a mut self, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=RunsContainer<Run<I, D>>> + 'a {
+                pub fn runs<'a>(&'a self, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=RunsContainer<Run<I, D>>> + 'a {
                     self.runs.borrow(s)
                 }
 
@@ -1225,12 +1479,18 @@ mod text_view {
                     )
                 }
 
-                pub fn insert_run<'a>(&'a self, at: usize, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=Run<I, D>> + 'a {
-                    self.runs.apply(VecActionBasis::Insert(Run::new(), at), s);
+                /// Due to a race condition, modification of text contents
+                /// may only be performed on the main thread
+                // (technically an undo could be called on other threads, but this wont happen in practice)
+                pub fn insert_run<'a>(&'a self, at: usize, s: MSlock<'a>) -> impl Deref<Target=Run<I, D>> + 'a {
+                    self.runs.apply(VecActionBasis::Insert(Run::new(s), at), s);
                     self.run(at, s)
                 }
 
-                pub fn remove_run(&self, at: usize, s: Slock<impl ThreadMarker>) {
+                /// Due to a race condition, modification of text contents
+                /// may only be performed on the main thread
+                // (technically an undo could be called on other threads, but this wont happen in practice)
+                pub fn remove_run(&self, at: usize, s: MSlock) {
                     assert!(self.runs.borrow(s).len() > 1);
                     self.runs.apply(VecActionBasis::Remove(at), s);
                 }
@@ -1261,14 +1521,15 @@ mod text_view {
                     }), s);
                 }
 
+                /// Due to a race condition, modification of text contents
+                /// may only be performed on the main thread
+                // (technically an undo could be called on other threads, but this wont happen in practice)
                 pub fn replace_range(
                     &self,
-                    start_run: usize,
-                    start_char: usize,
-                    end_run: usize,
-                    end_char: usize,
+                    start_run: usize, start_char: usize,
+                    end_run: usize, end_char: usize,
                     with: impl Into<String>,
-                    s: Slock<impl ThreadMarker>
+                    s: MSlock
                 ) {
                     let with = with.into();
                     let segments: Vec<_> = with
@@ -1284,7 +1545,7 @@ mod text_view {
                     if start_run == end_run {
                         let range = start_char .. end_char;
                         self.run(start_run, s)
-                            .replace(range, with, s);
+                            .replace(range, with.clone(), s);
                     }
                     else {
                         let start = self.run(start_run, s);
@@ -1305,7 +1566,7 @@ mod text_view {
                         {
                             let curr = self.run(start_run, s);
                             let next = self.run(start_run + 1, s);
-                            curr.merge_from(next, s);
+                            curr.merge_from(next.deref(), s);
                         }
                         self.remove_run(start_run + 1, s);
                     }
@@ -1324,46 +1585,19 @@ mod text_view {
                     }
 
                     // 5) handle intermediate runs relatively normally
-                    let intermediate_runs: Vec<Run<I, D>> = &segments[1.. (segments.len() - 1).max(1)].iter()
-                        .map(|run| {
-                            let run = Run::new();
-                            run.replace(0..0, *run, s);
+                    let intermediate_runs: Vec<Run<I, D>> = segments[1..(segments.len() - 1).max(1)].iter()
+                        .map(|seg| {
+                            let run = Run::new(s);
+                            run.replace(0..0, *seg, s);
                             run
                         })
                         .collect();
                     if !intermediate_runs.is_empty() {
                         self.runs.apply(VecActionBasis::InsertMany(intermediate_runs, start_run + 1), s);
                     }
-
-
-                    // if start_run == end_run {
-                    //     let range = start_char .. end_char;
-                    //     self.run(start_run, s)
-                    //         .replace(range, with, s);
-                    // }
-                    // else {
-                    //     // delete all intermediate runs
-                    //     if end_run > start_run + 1 {
-                    //         self.runs.apply(VecActionBasis::RemoveMany(start_run + 1 .. end_run), s);
-                    //     }
-                    //
-                    //     let new_run_attribute =
-                    //         I::RunAttribute::merge(self.run(start_run, s).deref(), self.run(start_run + 1, s).deref());
-                    //
-                    //     let next_run = self.run(start_run + 1, s);
-                    //     self.run(start_run, s)
-                    //         .replace(start_char);
-                    //
-                    //     hello
-                    //     // elide old run
-                    //     self.remove_run(start_run + 1, s);
-                    //
-                    // }
-
-                    // insert
                 }
 
-                pub fn build_full_content(&mut self, s: Slock<impl ThreadMarker>) -> String {
+                pub fn build_full_content(&self, s: Slock<impl ThreadMarker>) -> String {
                     let runs = self.runs(s);
                     let contents = runs.iter()
                             .map(|run| run.content(s));
@@ -1437,166 +1671,43 @@ mod text_view {
         }
         pub use page::*;
 
-        mod cursor_state {
-            use quarve_derive::StoreContainer;
-            use crate::core::Slock;
-            use crate::state::{Bindable, Binding, Buffer, Filterless, Signal, Store};
-            use crate::state::SetAction::Set;
-            use crate::util::marker::ThreadMarker;
-
-            #[derive(StoreContainer)]
-            pub struct CursorState {
-                page_num: Store<usize>,
-
-                start_run: Store<usize>,
-                start_char: Store<usize>,
-
-                end_run: Store<usize>,
-                end_char: Store<usize>,
-            }
-
-            impl CursorState {
-                pub fn new() -> Self {
-                    CursorState {
-                        page_num: Store::default(),
-                        start_run: Store::default(),
-                        start_char: Store::default(),
-                        end_run: Store::default(),
-                        end_char: Store::default(),
-                    }
-                }
-
-                pub fn page_binding(&self) -> impl Binding<Filterless<usize>> {
-                    self.page_num.binding()
-                }
-
-                pub fn start_run_binding(&self) -> impl Binding<Filterless<usize>> {
-                    self.start_run.binding()
-                }
-
-                pub fn end_run_binding(&self) -> impl Binding<Filterless<usize>> {
-                    self.end_run.binding()
-                }
-
-                pub fn start_char_binding(&self) -> impl Binding<Filterless<usize>> {
-                    self.start_char.binding()
-                }
-
-                pub fn end_char_binding(&self) -> impl Binding<Filterless<usize>> {
-                    self.end_char.binding()
-                }
-
-                pub fn page(&self, s: Slock<impl ThreadMarker>) -> usize {
-                    *self.page_num.borrow(s)
-                }
-
-                pub fn start_run(&self, s: Slock<impl ThreadMarker>) -> usize {
-                    *self.start_run.borrow(s)
-                }
-
-                pub fn end_run(&self, s: Slock<impl ThreadMarker>) -> usize {
-                    *self.end_run.borrow(s)
-                }
-
-                pub fn start_char(&self, s: Slock<impl ThreadMarker>) -> usize {
-                    *self.start_char.borrow(s)
-                }
-
-                pub fn end_char(&self, s: Slock<impl ThreadMarker>) -> usize {
-                    *self.end_char.borrow(s)
-                }
-
-                pub fn set_range(
-                    &self,
-                    start_run: usize,
-                    start_char: usize,
-                    end_run: usize,
-                    end_char: usize,
-                    s: Slock<impl ThreadMarker>
-                ) {
-                    self.start_run.apply(Set(start_run), s);
-                    self.start_char.apply(Set(start_char), s);
-                    self.end_run.apply(Set(end_run), s);
-                    self.end_char.apply(Set(end_char), s);
-                }
-
-                pub fn set_page(&self, page: usize, s: Slock<impl ThreadMarker>) {
-                    self.page_num.apply(Set(page), s);
-                }
-
-                // Function is called with page, start_run, start_char, end_run, end_char
-                pub fn listen(
-                    &self,
-                    f: impl FnMut(usize, usize, usize, usize, usize, Slock) -> bool + Send + 'static,
-                    s: Slock<impl ThreadMarker>
-                ) {
-                    let stores = [&self.page_num, &self.start_run, &self.start_char, &self.end_run, &self.end_char];
-                    // (alive, function, current args)
-                    let state = Buffer::new(
-                        (true, f, stores.map(|store| *store.borrow(s)))
-                    );
-
-                    for (i, store) in stores.into_iter().enumerate() {
-                        // basically a clone
-                        // we use the function to determine when to return false
-                        // rather than weak/strong (we also dont need to worry about cycles)
-                        let my_state = state.downgrade().upgrade().unwrap();
-                        store.listen(move |val, s| {
-                            let mut state = my_state.borrow_mut(s);
-                            if !state.0 {
-                                return false;
-                            }
-
-                            // update appropriate argument
-                            state.2[i] = *val;
-                            let args = state.2;
-                            state.0 = (state.1)(args[0], args[1], args[2], args[3], args[4], s);
-
-                            state.0
-                        }, s)
-                    }
-                }
-            }
-        }
-        pub use cursor_state::*;
-
         mod text_view_state {
             use std::ops::Deref;
             use quarve_derive::StoreContainer;
-            use crate::core::Slock;
-            use crate::state::{Signal, Binding, Store, VecActionBasis, Word};
+            use crate::core::{MSlock, Slock};
+            use crate::state::{Signal, Binding, Store, VecActionBasis, Word, StoreContainerSource, SetAction, Filterless, Bindable};
             use crate::util::marker::ThreadMarker;
             use crate::util::rust_util::DerefMap;
-            use crate::view::text::text_view::state::{AttributeSet, CursorState, Page};
+            use crate::view::text::text_view::state::{AttributeSet, Page};
 
             #[derive(StoreContainer)]
             pub struct TextViewState<I, D> where I: AttributeSet, D: AttributeSet {
-                pages: Store<Vec<Page<I, D>>>,
-                cursor: CursorState,
+                pub(crate) pages: Store<Vec<StoreContainerSource<Page<I, D>>>>,
+                pub(crate) selected_page: Store<Option<usize>>
             }
 
             impl<I, D> TextViewState<I, D> where I: AttributeSet, D: AttributeSet {
                 pub fn new() -> Self {
                     TextViewState {
                         pages: Store::new(vec![]),
-                        cursor: CursorState::new(),
+                        selected_page: Store::new(None)
                     }
                 }
 
-                pub fn pages<'a>(&'a self, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=Vec<Page<I, D>>> + 'a {
+                pub fn pages<'a>(&'a self, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=Vec<StoreContainerSource<Page<I, D>>>> + 'a {
                     self.pages.borrow(s)
                 }
 
                 pub fn page<'a>(&'a self, at: usize, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=Page<I, D>> + 'a {
                     DerefMap::new(
                         self.pages.borrow(s),
-                        move |p| &p[at]
+                        move |p| p[at].deref()
                     )
                 }
 
-                pub fn insert_page(&self, page: Page<I, D>, at: usize, s: Slock) {
+                pub fn insert_page(&self, page: Page<I, D>, at: usize, s: Slock<impl ThreadMarker>) {
                     self.pages.apply(
-                        VecActionBasis::Insert(page, at), s
+                        VecActionBasis::Insert(StoreContainerSource::new(page), at), s
                     )
                 }
 
@@ -1606,21 +1717,37 @@ mod text_view {
                     )
                 }
 
+                /// To avoid race conditions, any text modification must be done on main thread
+                pub fn replace_selection(&self, with: impl Into<String>, s: MSlock){
+                    let Some(page_num) = *self.selected_page.borrow(s) else {
+                        return;
+                    };
+                    let page = self.page(page_num, s);
+                    let cursor = page.selection();
+                    page.replace_range(
+                        cursor.start_run(s),
+                        cursor.start_char(s),
+                        cursor.end_run(s),
+                        cursor.end_char(s),
+                        with, s
+                    );
+                }
 
-                pub fn replace_selection(&self, with: impl Into<String>, s: Slock<impl ThreadMarker>) {
-                    self.page(self.cursor.page(s), s)
-                        .replace_range(
-                            self.cursor.start_run(s),
-                            self.cursor.start_char(s),
-                            self.cursor.end_run(s),
-                            self.cursor.end_char(s),
-                            with, s
-                        );
+                pub fn selected_page(&self, s: Slock<impl ThreadMarker>) -> Option<usize> {
+                    *self.selected_page.borrow(s)
+                }
+
+                pub fn set_selected_page(&self, page: Option<usize>, s: Slock<impl ThreadMarker>) {
+                    self.selected_page.apply(SetAction::Set(page), s);
+                }
+
+                pub fn selected_page_binding(&self) -> impl Binding<Filterless<Option<usize>>> {
+                    self.selected_page.binding()
                 }
 
                 pub fn action_listen(
                     &self,
-                    f: impl FnMut(&Vec<Page<I, D>>, &Word<VecActionBasis<Page<I, D>>>, Slock) -> bool + Send + 'static,
+                    f: impl FnMut(&Vec<StoreContainerSource<Page<I, D>>>, &Word<VecActionBasis<StoreContainerSource<Page<I, D>>>>, Slock) -> bool + Send + 'static,
                     s: Slock<impl ThreadMarker>
                 ) {
                     self.pages.action_listen(f, s);
@@ -1628,7 +1755,7 @@ mod text_view {
 
                 pub fn listen(
                     &self,
-                    f: impl FnMut(&Vec<Page<I, D>>, Slock) -> bool + Send + 'static,
+                    f: impl FnMut(&Vec<StoreContainerSource<Page<I, D>>>, Slock) -> bool + Send + 'static,
                     s: Slock<impl ThreadMarker>
                 ) {
                     self.pages.listen(f, s);
@@ -1640,18 +1767,32 @@ mod text_view {
     pub use state::*;
 
     mod text_view {
+        use std::cell::Cell;
         use std::ffi::c_void;
+        use std::marker::PhantomData;
+        use std::ops::{Deref, Range};
+        use std::sync::Arc;
         use crate::core::{Environment, MSlock};
-        use crate::state::{Signal, StoreContainer, StoreContainerView};
-        use crate::util::geo::Size;
-        use crate::view::{IntoViewProvider, ViewProvider};
-        use crate::view::text::{AttributeSet, Run, TextViewState};
+        use crate::{native};
+        use crate::native::view::text_view::{text_view_full_replace, text_view_init};
+        use crate::state::{Bindable, Binding, Buffer, Filterless, GroupAction, Signal, Store, StoreContainer, StoreContainerView, StringActionBasis, VecActionBasis, WeakBinding, Word};
+        use crate::state::SetAction::Set;
+        use crate::state::slock_cell::MainSlockCell;
+        use crate::util::{FromOptions, geo};
+        use crate::util::geo::{Inset, Rect, ScreenUnit, Size};
+        use crate::view::{EnvRef, IntoViewProvider, NativeView, NativeViewState, Subtree, TrivialContextViewRef, View, ViewProvider, ViewRef, WeakInvalidator};
+        use crate::view::layout::{BindingVMap, LayoutProvider, VecBindingLayout, VecLayoutProvider, VStackOptions};
+        use crate::view::text::{AttributeSet, Page, Run, TextViewState};
 
-        trait TextViewProvider<E> where E: Environment {
+        thread_local! {
+            pub static IN_TEXTVIEW_FRONT_CALLBACK: Cell<bool> = Cell::new(false)
+        }
+
+        pub trait TextViewProvider<E> : 'static where E: Environment {
             type IntrinsicAttribute: AttributeSet;
             type DerivedAttribute: AttributeSet;
 
-            const PAGE_INSET: Size;
+            const PAGE_INSET: Inset;
 
             fn init(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock);
 
@@ -1661,14 +1802,15 @@ mod text_view {
             fn alt_newline(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock);
 
             fn run_decoration(
-                &mut self,
+                &self,
                 number: impl Signal<Target=usize>,
-                run: &Run<Self::IntrinsicAttribute, Self::DerivedAttribute>
-            ) -> impl IntoViewProvider<E>;
+                run: &Run<Self::IntrinsicAttribute, Self::DerivedAttribute>,
+                s: MSlock
+            ) -> impl IntoViewProvider<E, DownContext=(), UpContext=()> + 'static;
 
             fn page_background(
-                &self,
-            ) -> impl IntoViewProvider<E>;
+                &self, page: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock
+            ) -> impl IntoViewProvider<E, DownContext=()> + 'static;
         }
 
         // Composed as a series of pages
@@ -1685,8 +1827,11 @@ mod text_view {
             where P: TextViewProvider<E>,
                   E: Environment
         {
-            pub fn new(state: StoreContainerView<TextViewState<P::IntrinsicAttribute, P::DerivedAttribute>>) -> Self {
-                todo!()
+            pub fn new(state: StoreContainerView<TextViewState<P::IntrinsicAttribute, P::DerivedAttribute>>, provider: P) -> Self {
+                TextView {
+                    provider,
+                    state,
+                }
             }
         }
 
@@ -1694,32 +1839,679 @@ mod text_view {
             type UpContext = ();
             type DownContext = ();
 
-            fn into_view_provider(self, _env: &E::Const, s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
+            fn into_view_provider(mut self, env: &E::Const, s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
                 // merge them in undo history
                 self.state.group_undos(s);
 
+                self.provider.init(self.state.deref(), s);
+                let shared_provider = Arc::new(MainSlockCell::new_main(self.provider, s));
+                let selected_page = self.state.selected_page.binding();
+
+                let sp = shared_provider.clone();
+                let pages = self.state.pages.binding().binding_vmap_options(move |p, s| {
+                    new_page_coordinator(sp.clone(), selected_page.clone(), p.view(), s)
+                }, VStackOptions::default().spacing(0.0)).into_view_provider(env, s).into_view(s);
                 TextViewVP {
-                    provider: self.provider,
+                    provider: shared_provider,
                     state: self.state,
                     scroll_view: 0 as *mut c_void,
+                    pages,
                 }
             }
         }
 
-        // struct PageVP {
-        //     backing: *mut c_void,
-        //     decoration: P
-        // }
-
-        struct TextViewVP<E, P>
+        struct TextViewVP<E, P, VP>
             where P: TextViewProvider<E>,
+                  VP: ViewProvider<E, DownContext=()>,
                   E: Environment
         {
-            provider: P,
+            provider: Arc<MainSlockCell<P>>,
             state: StoreContainerView<TextViewState<P::IntrinsicAttribute, P::DerivedAttribute>>,
 
             scroll_view: *mut c_void,
-            // pages: Vec<View<E, PageVP<>>>
+            pages: View<E, VP>,
+        }
+
+        impl<E, P, VP> ViewProvider<E> for TextViewVP<E, P, VP>
+            where E: Environment,
+                  P: TextViewProvider<E>,
+                  VP: ViewProvider<E, DownContext=()>
+        {
+            type UpContext = ();
+            type DownContext = ();
+
+            fn intrinsic_size(&mut self, _s: MSlock) -> Size {
+                Size::new(0.0, 0.0)
+            }
+
+            fn xsquished_size(&mut self, _s: MSlock) -> Size {
+                Size::new(0.0, 0.0)
+            }
+
+            fn xstretched_size(&mut self, _s: MSlock) -> Size {
+                Size::new(geo::UNBOUNDED, geo::UNBOUNDED)
+            }
+
+            fn ysquished_size(&mut self, _s: MSlock) -> Size {
+                Size::new(0.0, 0.0)
+            }
+
+            fn ystretched_size(&mut self, _s: MSlock) -> Size {
+                Size::new(geo::UNBOUNDED, geo::UNBOUNDED)
+            }
+
+            fn up_context(&mut self, _s: MSlock) -> Self::UpContext {
+                ()
+            }
+
+            fn init_backing(&mut self, _invalidator: WeakInvalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+                let state = Buffer::new(NativeViewState::default());
+                let binding_y = Store::new(0.0);
+
+                let mut nv = {
+                    if let Some((nv, bs)) = backing_source {
+                        self.pages.take_backing(bs.pages, env, s);
+                        nv
+                    }
+                    else {
+                        unsafe {
+                            NativeView::new(native::view::scroll::init_scroll_view(true, false, binding_y.binding(), Store::new(0.0), s), s)
+                        }
+                    }
+                };
+                nv.set_clips_subviews();
+                self.scroll_view = nv.backing();
+
+                let weak_y = state.downgrade();
+                binding_y.listen(move |y, s| {
+                    let Some(strong) = weak_y.upgrade() else {
+                        return false;
+                    };
+
+                    strong.borrow_mut(s).offset_y = *y;
+                    true
+                }, s);
+
+                subtree.push_subview(&self.pages, env, s);
+                nv.set_state(state);
+                nv
+            }
+
+            fn layout_up(&mut self, _subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, s: MSlock) -> bool {
+                // adjust page numbers (and possibly cursor)
+                let pages = self.state.pages.borrow(s);
+                let mut current = self.state.selected_page(s);
+                for (i, p) in pages.iter().enumerate() {
+                    let mut gui = *p.gui_info.borrow(s);
+                    if current == Some(gui.page_num) {
+                        self.state.set_selected_page(Some(i), s);
+                        current = Some(i);
+                    }
+
+                    gui.page_num = i;
+                    p.gui_info.apply(Set(gui), s);
+                }
+                true
+            }
+
+            fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
+                let w = frame.w;
+                let h = geo::UNBOUNDED;
+
+                let unbounded = Rect::new(0.0, 0.0, w, h);
+
+                self.pages.layout_down_with_context(unbounded, layout_context, env, s);
+                (frame.full_rect(), frame.full_rect())
+            }
+        }
+
+        // all components of a page
+        struct PageCoordinator<E, B, P, D>
+            where E: Environment,
+                  B: IntoViewProvider<E, DownContext=()>,
+                  P: TextViewProvider<E>,
+                  D: IntoViewProvider<E, DownContext=()>
+        {
+            provider: Arc<MainSlockCell<P>>,
+            background: B,
+            page_view: PageVP<E, P>,
+            decorations: D,
+            phantom: PhantomData<E>
+        }
+
+        fn new_page_coordinator<E, P>(
+            provider: Arc<MainSlockCell<P>>,
+            selected_page: <Store<Option<usize>> as Bindable<Filterless<Option<usize>>>>::Binding,
+            page: StoreContainerView<Page<P::IntrinsicAttribute, P::DerivedAttribute>>,
+            s: MSlock
+        ) -> PageCoordinator<E, impl IntoViewProvider<E, DownContext=()>, P, impl IntoViewProvider<E, DownContext=()>>
+            where E: Environment, P: TextViewProvider<E>
+        {
+            fn _background<E, P>(page: &'static Page<P::IntrinsicAttribute, P::DerivedAttribute>, s: MSlock<'static>, p: &'static P)
+                                 -> impl IntoViewProvider<E, DownContext=()> + 'static
+                where E: Environment, P: TextViewProvider<E> {
+                p.page_background(page, s)
+            }
+
+            fn _run_decoration<E, P>(run: &'static Run<P::IntrinsicAttribute, P::DerivedAttribute>, s: MSlock<'static>, p: &'static P)
+                                     -> impl IntoViewProvider<E, DownContext=(), UpContext=()> + 'static
+                where E: Environment, P: TextViewProvider<E> {
+                let line_number =
+                    run.gui_info.map(|g| g.line, s);
+
+                p.run_decoration(line_number, run, s)
+            }
+
+            let (background, decorations) = {
+                let provider_clone = provider.clone();
+                let provider = provider.borrow_main(s);
+
+                // safety: see below (basically since .background is static in general, it cant borrow from anything)
+                let (static_provider, long_s, long_page):
+                    (&'static P, MSlock<'static>, &'static Page<P::IntrinsicAttribute, P::DerivedAttribute>)
+                    = unsafe {
+                    std::mem::transmute((provider.deref(), s, page.deref()))
+                };
+
+                let background = _background(long_page, long_s, static_provider);
+                let decorations =
+                    VecBindingLayout::new(page.runs.binding(), move |run, s| {
+                        // TODO dont like this unsafe
+                        // safety:
+                        // we require that .run_decoration gives a static reference
+                        // so that it cannot borrow from
+                        // (see layout.rs _into_view_provider for detailed proof)
+                        let provider_borrow = provider_clone.borrow_main(s);
+                        let (static_provider, long_s, long_run):
+                            (&'static P, MSlock<'static>, &'static Run<P::IntrinsicAttribute, P::DerivedAttribute>)
+                            = unsafe {
+                            std::mem::transmute((provider_borrow.deref(), s, run))
+                        };
+
+                        _run_decoration(long_run, long_s, static_provider)
+                    }, RunDecorator::from_options(RunDecoratorOptions::<E, P> {
+                        runs: Some(page.clone()),
+                        phantom: PhantomData
+                    }));
+
+                (background, decorations)
+            };
+
+            PageCoordinator {
+                provider: provider.clone(),
+                background,
+                page_view: PageVP {
+                    selected_page,
+                    page,
+                    provider,
+                    total_height: 0.0,
+                    text_view: 0 as *mut c_void,
+                },
+                decorations,
+                phantom: Default::default(),
+            }
+        }
+
+        impl<E, B, P, D> IntoViewProvider<E> for PageCoordinator<E, B, P, D>
+            where E: Environment,
+                  B: IntoViewProvider<E, DownContext=()>,
+                  P: TextViewProvider<E>,
+                  D: IntoViewProvider<E, DownContext=()>
+        {
+            type UpContext = ();
+            type DownContext = ();
+
+            fn into_view_provider(self, env: &E::Const, s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
+                let lp = PageCoordinatorLP {
+                    provider: self.provider,
+                    background: self.background.into_view_provider(env, s).into_view(s),
+                    page_view: self.page_view.into_view(s),
+                    decorations: self.decorations.into_view_provider(env, s).into_view(s),
+                    phantom: PhantomData
+                };
+
+                lp.into_layout_view_provider()
+            }
+        }
+
+        struct PageCoordinatorLP<E, B, P, D>
+            where E: Environment,
+                  B: ViewProvider<E, DownContext=()>,
+                  P: TextViewProvider<E>,
+                  D: ViewProvider<E, DownContext=()>
+        {
+            provider: Arc<MainSlockCell<P>>,
+            background: View<E, B>,
+            page_view: View<E, PageVP<E, P>>,
+            decorations: View<E, D>,
+            phantom: PhantomData<E>
+        }
+
+        impl<E, B, P, D> LayoutProvider<E> for PageCoordinatorLP<E, B, P, D>
+            where E: Environment,
+                  B: ViewProvider<E, DownContext=()>,
+                  P: TextViewProvider<E>,
+                  D: ViewProvider<E, DownContext=()>
+        {
+            type DownContext = ();
+            type UpContext = ();
+
+            fn intrinsic_size(&mut self, s: MSlock) -> Size {
+                self.page_view.intrinsic_size(s)
+            }
+
+            fn up_context(&mut self, _s: MSlock) -> Self::UpContext {
+                ()
+            }
+
+            fn init(&mut self, _invalidator: WeakInvalidator<E>, subtree: &mut Subtree<E>, source_provider: Option<Self>, env: &mut EnvRef<E>, s: MSlock) {
+                if let Some(other) = source_provider {
+                    self.background.take_backing(other.background, env, s);
+                    self.page_view.take_backing(other.page_view, env, s);
+                    self.decorations.take_backing(other.decorations, env, s);
+                }
+
+                subtree.push_subview(&self.background, env, s);
+                subtree.push_subview(&self.page_view, env, s);
+                subtree.push_subview(&self.decorations, env, s);
+            }
+
+            fn layout_up(&mut self, _subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, _s: MSlock) -> bool {
+                false
+            }
+
+            fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, _layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> Rect {
+                let inset = P::PAGE_INSET;
+
+                let page = self.page_view.layout_down(
+                    Rect::new(inset.l, inset.t, frame.w - inset.r.min(frame.w), frame.h - inset.b.min(frame.h)),
+                    env, s
+                );
+                self.background.layout_down(page, env, s);
+                self.decorations.layout_down(page, env, s);
+
+                page
+            }
+        }
+
+        // align based on the heights of the runs
+        struct RunDecoratorOptions<E, P>
+            where E: Environment, P: TextViewProvider<E>
+        {
+            runs: Option<StoreContainerView<Page<P::IntrinsicAttribute, P::DerivedAttribute>>>,
+            phantom: PhantomData<E>
+        }
+
+        impl<E, P> Default for RunDecoratorOptions<E, P>
+            where E: Environment, P: TextViewProvider<E>
+        {
+            fn default() -> Self {
+                RunDecoratorOptions {
+                    runs: None,
+                    phantom: Default::default(),
+                }
+            }
+        }
+
+        struct RunDecorator<E, P>
+            where E: Environment, P: TextViewProvider<E>
+        {
+            options: RunDecoratorOptions<E, P>
+        }
+
+        impl<E, P> FromOptions for RunDecorator<E, P>
+            where E: Environment,
+                  P: TextViewProvider<E>
+        {
+            type Options = RunDecoratorOptions<E, P>;
+
+            fn from_options(options: Self::Options) -> Self {
+                RunDecorator {
+                    options
+                }
+            }
+
+            fn options(&mut self) -> &mut Self::Options {
+                &mut self.options
+            }
+        }
+
+        impl<E, Q> VecLayoutProvider<E> for RunDecorator<E, Q>
+            where E: Environment, Q: TextViewProvider<E>
+        {
+            type DownContext = ();
+            type UpContext = ();
+            type SubviewDownContext = ();
+            type SubviewUpContext = ();
+
+            fn init(&mut self, invalidator: WeakInvalidator<E>, s: MSlock) {
+                self.options.runs.as_ref().unwrap().runs
+                    .action_listen(move |_r, a, s| {
+                        let Some(_) = invalidator.upgrade() else {
+                            return false;
+                        };
+
+                        for action in a.iter() {
+                            let handle_run = |run: &Run<Q::IntrinsicAttribute, Q::DerivedAttribute>| {
+                                let mut curr = *run.gui_info.borrow(s);
+                                if !curr.added_decoration_listener {
+                                    curr.added_decoration_listener = true;
+                                    run.gui_info.apply(Set(curr), s);
+
+                                    let invalidator_copy = invalidator.clone();
+                                    let mut last_height = 0.0;
+                                    run.gui_info.listen(move |gui, s| {
+                                            let Some(invalidator) = invalidator_copy.upgrade() else {
+                                                return false;
+                                            };
+                                            if gui.page_height != last_height {
+                                                last_height = gui.page_height;
+                                                invalidator.invalidate(s);
+                                            }
+                                            true
+                                        }, s);
+                                }
+                            };
+
+
+                            match action {
+                                VecActionBasis::Insert(run, _) => {
+                                    handle_run(run);
+                                }
+                                VecActionBasis::InsertMany(runs, _) => {
+                                    runs.iter().for_each(handle_run);
+                                }
+                                _ => {}
+                            }
+                        }
+
+                        true
+                    }, s);
+            }
+
+            // sizes aren't used by page coordinator
+            fn intrinsic_size(&mut self, _s: MSlock) -> Size {
+                Size::default()
+            }
+
+            fn xsquished_size(&mut self, _s: MSlock) -> Size {
+                Size::default()
+            }
+
+            fn ysquished_size(&mut self, _s: MSlock) -> Size {
+                Size::default()
+            }
+
+            fn xstretched_size(&mut self, _s: MSlock) -> Size {
+                Size::default()
+            }
+
+            fn ystretched_size(&mut self, _s: MSlock) -> Size {
+                Size::default()
+            }
+
+            fn up_context(&mut self, _s: MSlock) -> Self::UpContext {
+                ()
+            }
+
+            fn layout_up<'a, P>(&mut self, _subviews: impl Iterator<Item=&'a P> + Clone, _env: &mut EnvRef<E>, _s: MSlock) -> bool where P: ViewRef<E, DownContext=Self::SubviewDownContext, UpContext=Self::SubviewUpContext> + ?Sized + 'a {
+                true
+            }
+
+            fn layout_down<'a, P>(&mut self, subviews: impl Iterator<Item=&'a P> + Clone, frame: Size, _context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> Rect where P: ViewRef<E, DownContext=Self::SubviewDownContext, UpContext=Self::SubviewUpContext> + ?Sized + 'a {
+                // run gui filled by PageVP
+                let runs = &self.options.runs.as_ref().unwrap().runs;
+                let mut y = 0.0;
+                for (run, sv) in runs.borrow(s).iter().zip(subviews) {
+                    let h = run.gui_info.borrow(s).page_height;
+                    sv.layout_down(Rect::new(0.0, y, frame.w, h), env, s);
+                    y += h;
+                }
+                
+                frame.full_rect()
+            }
+        }
+
+        // just the text
+        struct PageVP<E, P> where P: TextViewProvider<E>, E: Environment {
+            selected_page: <Store<Option<usize>> as Bindable<Filterless<Option<usize>>>>::Binding,
+            page: StoreContainerView<Page<P::IntrinsicAttribute, P::DerivedAttribute>>,
+            provider: Arc<MainSlockCell<P>>,
+            total_height: ScreenUnit,
+            text_view: *mut c_void,
+        }
+
+        impl<E, P> ViewProvider<E> for PageVP<E, P>
+            where E: Environment, P: TextViewProvider<E>
+        {
+            type UpContext = ();
+            type DownContext = ();
+
+            fn intrinsic_size(&mut self, _s: MSlock) -> Size {
+                Size::default()
+            }
+
+            fn xsquished_size(&mut self, _s: MSlock) -> Size {
+                Size::default()
+            }
+
+            fn xstretched_size(&mut self, _s: MSlock) -> Size {
+                Size::default()
+            }
+
+            fn ysquished_size(&mut self, _s: MSlock) -> Size {
+                Size::default()
+            }
+
+            fn ystretched_size(&mut self, _s: MSlock) -> Size {
+                Size::default()
+            }
+
+            fn up_context(&mut self, _s: MSlock) -> Self::UpContext {
+                ()
+            }
+
+            fn init_backing(&mut self, invalidator: WeakInvalidator<E>, _subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+                let backing =
+                    if let Some((bs, _)) = backing_source {
+                        text_view_full_replace(bs.backing(), &self.page.build_full_content(s), s);
+                        bs.backing()
+                    }
+                    else {
+                        let backing = text_view_init(self.page.clone(), s);
+                        text_view_full_replace(backing, &self.page.build_full_content(s), s);
+                        backing
+                    };
+                let backing_id = backing as usize;
+
+                // mark all lines as dirty initially so we can update lines
+                for run in self.page.runs.borrow(s).iter() {
+                    let mut gui = *run.gui_info.borrow(s);
+                    gui.dirty = true;
+                    run.gui_info.apply(Set(gui), s);
+                }
+
+                // invalidate whenever page of cursor changes
+                let inv = invalidator.clone();
+                self.selected_page.listen(move |_, s| {
+                    let Some(inv) = inv.upgrade() else {
+                        return false;
+                    };
+
+                    inv.invalidate(s);
+                    true
+                }, s);
+
+                // invalidate whenever a run is inserted or deleted
+                let weak_inv = invalidator;
+                let weak_runs = self.page.runs.weak_binding();
+                self.page.runs.action_listen(move |r, a, s| {
+                    let Some(inv) = weak_inv.upgrade() else {
+                        return false;
+                    };
+
+                    let handle_run = |run: &Run<P::IntrinsicAttribute, P::DerivedAttribute>| {
+                        let mut curr = *run.gui_info.borrow(s);
+                        curr.dirty = true;
+
+                        if !curr.added_vp_listener {
+                            curr.added_vp_listener = true;
+
+                            // range updating
+                            let runs = weak_runs.clone();
+                            let id = run.gui_info.address();
+                            run.content_action_listen(move |c, a, s| {
+                                let runs = runs.upgrade().unwrap();
+                                let mut pos = 0;
+                                for run in runs.borrow(s).iter() {
+                                    if run.gui_info.address() == id {
+                                        break
+                                    }
+
+                                    pos += run.gui_info.borrow(s).codeunits;
+                                    // new line character
+                                    pos += 1;
+                                }
+
+                                if !IN_TEXTVIEW_FRONT_CALLBACK.get() {
+                                    // must be called on main thread
+                                    let mslock = s.try_to_main_slock().unwrap();
+                                    for StringActionBasis::ReplaceSubrange(act, with) in a.iter() {
+                                        let exact_pos = pos + c.0[..act.start].encode_utf16().count();
+                                        let end_pos = exact_pos + c.0[act.start..act.end].encode_utf16().count();
+                                        native::view::text_view::text_view_replace(backing_id as *mut c_void, exact_pos..end_pos, &with, mslock);
+                                    }
+                                }
+
+                                true
+                            }, s);
+
+                            let invalidator_copy = weak_inv.clone();
+                            run.gui_info.listen(move |gui, s| {
+                                let Some(invalidator) = invalidator_copy.upgrade() else {
+                                    return false;
+                                };
+                                if gui.dirty {
+                                    invalidator.invalidate(s);
+                                }
+                                true
+                            }, s);
+                        }
+
+                        run.gui_info.apply(Set(curr), s);
+                    };
+
+                    // invalidate whenever a particular run is edited
+                    for action in a.iter() {
+                        let replaced_range: Range<usize>;
+                        let mut with = "".to_string();
+
+                        match action {
+                            VecActionBasis::Insert(run, at) => {
+                                handle_run(run);
+
+                                let mut pos = 0;
+                                for i in 0 .. *at {
+                                    // include newline
+                                    pos += r[i].gui_info.borrow(s).codeunits + 1;
+                                }
+
+                                replaced_range = pos .. pos;
+                                with = run.content(s).deref().to_string() + "\n"
+                            }
+                            VecActionBasis::InsertMany(runs, at) => {
+                                runs.iter().for_each(handle_run);
+
+                                let mut pos = 0;
+                                for i in 0 .. *at {
+                                    // include newline
+                                    pos += r[i].gui_info.borrow(s).codeunits + 1;
+                                }
+
+                                replaced_range = pos .. pos;
+                                with = runs
+                                    .iter()
+                                    .map(|r| r.content(s))
+                                    .fold("".to_string(), |a, b| a + &b + "\n")
+                            }
+                            VecActionBasis::Remove(at) => {
+                                let mut pos = 0;
+                                for i in 0 .. *at {
+                                    pos += r[i].gui_info.borrow(s).codeunits + 1;
+                                }
+
+                                replaced_range = pos .. (pos + r[*at].gui_info.borrow(s).codeunits + 1);
+                            }
+                            VecActionBasis::RemoveMany(range) => {
+                                let mut pos = 0;
+                                for i in 0 .. range.start {
+                                    pos += r[i].gui_info.borrow(s).codeunits + 1;
+                                }
+
+                                let mut end = pos;
+                                for i in range.clone() {
+                                    end += r[i].gui_info.borrow(s).codeunits + 1
+                                }
+
+                                replaced_range = pos .. end;
+                            }
+                            _ => {
+                                continue
+                            }
+                        }
+
+                        if !IN_TEXTVIEW_FRONT_CALLBACK.get() {
+                            let mslock = s.try_to_main_slock().unwrap();
+                            native::view::text_view::text_view_replace(backing_id as *mut c_void, replaced_range, &with, mslock);
+                        }
+                    }
+                    inv.invalidate(s);
+                    true
+                }, s);
+
+                unsafe {
+                    NativeView::new(backing, s)
+                }
+            }
+
+            fn layout_up(&mut self, _subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, s: MSlock) -> bool {
+                // run gui filling in line numbers (easy)
+                for (i, run) in self.page.runs.borrow(s).iter().enumerate() {
+                    let mut gui = *run.gui_info.borrow(s);
+                    if gui.line != i {
+                        gui.line = i;
+                        run.gui_info.apply(Set(gui), s);
+                    }
+                }
+
+                // relay attrs of affected lines
+                // and recalculate line heights (hard)
+                self.total_height = 0.0;
+                for run in self.page.runs.borrow(s).iter() {
+                    let mut gui = *run.gui_info.borrow(s);
+                    if !gui.dirty {
+                        self.total_height += gui.page_height;
+                        continue;
+                    }
+
+                    // adjust line attributes
+
+                    // calculating line height
+
+                    gui.page_height = 100.0;
+                    self.total_height += gui.page_height;
+                    run.gui_info.apply(Set(gui), s);
+                }
+
+                // relay cursor information + number (easy)
+                // todo!()
+                true
+            }
+
+            fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, _layout_context: &Self::DownContext, _env: &mut EnvRef<E>, _s: MSlock) -> (Rect, Rect) {
+                let rect = Rect::new(0.0, 0.0, frame.w, self.total_height);
+                (rect, rect)
+            }
         }
     }
     pub use text_view::*;

@@ -127,7 +127,7 @@ pub mod slock_cell {
 }
 
 mod listener {
-    use crate::core::Slock;
+    use crate::core::{MSlock, Slock};
     use crate::state::Stateful;
     use crate::view::undo_manager::UndoBucket;
 
@@ -140,19 +140,19 @@ mod listener {
     pub trait DirectlyInvertible: Send {
         // This function must only be called once per instance
         // (We cannot take ownership since the caller is often unsized)
-        fn invert(&mut self, s: Slock);
+        fn invert(&mut self, s: MSlock);
 
         /// It must be guaranteed by the caller
         /// the other type is exactly the same as our type
         /// and with the same id
-        unsafe fn right_multiply(&mut self, by: Box<dyn DirectlyInvertible>, s: Slock);
+        unsafe fn right_multiply(&mut self, by: Box<dyn DirectlyInvertible>, s: MSlock);
 
         // gets a pointer to the action instance
         // (void pointer)
-        unsafe fn action_pointer(&self, s: Slock) -> *const ();
+        unsafe fn action_pointer(&self, s: MSlock) -> *const ();
 
         // forgets the reference action without dropping it
-        unsafe fn forget_action(&mut self, s: Slock);
+        unsafe fn forget_action(&mut self, s: MSlock);
 
         fn id(&self) -> usize;
     }
@@ -1120,6 +1120,9 @@ mod store {
 
     // Like with signal, I believe it makes more sense for
     pub trait Binding<F>: Signal<Target=F::Target> + Sized + Send + 'static where F: StateFilter {
+        fn address(&self) -> usize;
+        fn ptr_eq(&self, other: &Self) -> bool;
+
         fn is_applying(&self, s: Slock<impl ThreadMarker>) -> bool;
         fn apply(&self, action: impl IntoAction<<<F as StateFilter>::Target as Stateful>::Action, <F as StateFilter>::Target>, s: Slock<impl ThreadMarker>);
         fn apply_coupled(&self, action: impl IntoAction<<<F as StateFilter>::Target as Stateful>::Action, <F as StateFilter>::Target>, s: Slock<impl ThreadMarker>) {
@@ -1286,6 +1289,14 @@ mod store {
         // Since FixedSignal 'might' implement RawStoreSharedOwnerBase
         // It's therefore done as macros
         impl<F, R> Binding<F> for R where F: StateFilter, R: RawStoreSharedOwner<F> {
+            fn address(&self) -> usize {
+                Arc::as_ptr(&self.inner_ref()) as usize
+            }
+
+            fn ptr_eq(&self, other: &Self) -> bool {
+                Arc::ptr_eq(self.inner_ref(), other.inner_ref())
+            }
+
             fn is_applying(&self, s: Slock<impl ThreadMarker>) -> bool {
                 self.inner_ref().is_borrowed_mut(s)
             }
@@ -1318,7 +1329,7 @@ mod store {
     mod action_inverter {
         use std::marker::PhantomData;
         use std::sync::Weak;
-        use crate::core::Slock;
+        use crate::core::{MSlock, Slock};
         use crate::state::listener::DirectlyInvertible;
         use crate::state::slock_cell::SlockCell;
         use crate::state::{StateFilter, Stateful};
@@ -1341,7 +1352,7 @@ mod store {
         }
 
         impl<F, I> DirectlyInvertible for ActionInverter<F, I> where F: StateFilter, I: RawStore<F> {
-            fn invert(&mut self, s: Slock) {
+            fn invert(&mut self, s: MSlock) {
                 let Some(state) = self.state.upgrade() else {
                     return;
                 };
@@ -1349,7 +1360,7 @@ mod store {
                 I::apply(&state, self.action.take().unwrap(), true, s);
             }
 
-            unsafe fn right_multiply(&mut self, mut by: Box<dyn DirectlyInvertible>, s: Slock) {
+            unsafe fn right_multiply(&mut self, mut by: Box<dyn DirectlyInvertible>, s: MSlock) {
                 /* we are free to assume by is of type Self, allowing us to do this conversion */
                 let ptr = by.action_pointer(s) as *const <F::Target as Stateful>::Action;
                 self.action = Some(self.action.take().unwrap() * std::ptr::read(ptr));
@@ -1359,11 +1370,11 @@ mod store {
                 by.forget_action(s);
             }
 
-            unsafe fn action_pointer(&self, _s: Slock) -> *const () {
+            unsafe fn action_pointer(&self, _s: MSlock) -> *const () {
                 self.action.as_ref().unwrap() as *const <F::Target as Stateful>::Action as *const ()
             }
 
-            unsafe fn forget_action(&mut self, _s: Slock) {
+            unsafe fn forget_action(&mut self, _s: MSlock) {
                 std::mem::forget(self.action.take());
             }
 

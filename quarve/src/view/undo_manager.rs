@@ -164,7 +164,7 @@ impl UndoManagerInner {
         self.is_undoing.set(true);
         for _ in 0..multiplicity {
             let mut action = undo.callbacks.pop_back().unwrap();
-            action.invert(s.to_general_slock());
+            action.invert(s);
         }
         self.is_undoing.set(false);
 
@@ -188,7 +188,7 @@ impl UndoManagerInner {
         self.is_redoing.set(true);
         for _ in 0..multiplicity {
             let mut action = redo.callbacks.pop_back().unwrap();
-            action.invert(s.to_general_slock());
+            action.invert(s);
         }
         self.is_redoing.set(false);
 
@@ -243,7 +243,7 @@ impl InverseListener for UMListener {
         };
 
         strong.borrow(s)
-            .register_inverter(inverse_action, bucket, s);
+            .register_inverter(inverse_action, bucket, s.to_general_slock());
 
         // FIXME Would be nice to elide most async_main calls
         // OTOH, it may be more efficient than an invalidator call?

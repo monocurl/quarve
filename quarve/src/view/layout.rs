@@ -456,7 +456,7 @@ mod vec_layout {
         use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, Subtree, UpContextAdapter, View, ViewProvider, ViewRef};
         use crate::view::layout::{VecLayoutProvider};
 
-        pub trait HeteroIVPNode<E, U, D> : where E: Environment, U: 'static, D: 'static {
+        pub trait HeteroIVPNode<E, U, D> where E: Environment, U: 'static, D: 'static {
             fn into_layout(self, env: &E::Const, build: impl HeteroVPNode<E, U, D>, s: MSlock) -> impl HeteroVPNode<E, U, D>;
         }
 

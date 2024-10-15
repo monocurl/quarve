@@ -377,8 +377,62 @@ back_text_field_paste(void *view)
 }
 
 // MARK: textview
+@interface TextView : NSTextView
+@property fat_pointer state;
+@end
+
+@implementation TextView
+@end
+
+void *
+back_text_view_init(fat_pointer state)
+{
+    TextView* tv = [[TextView alloc] init];
+    tv.state = state;
+    tv.drawsBackground = YES;
+    tv.richText = NO;
+    tv.automaticSpellingCorrectionEnabled = NO;
+    tv.automaticTextReplacementEnabled = NO;
+    tv.automaticTextCompletionEnabled = NO;
+    tv.automaticQuoteSubstitutionEnabled = NO;
+    tv.automaticDashSubstitutionEnabled = NO;
+    tv.automaticLinkDetectionEnabled = NO;
+    tv.automaticDataDetectionEnabled = NO;
+    return tv;
+}
+
+// may discard attributes
 void
-back_text_view_init()
+back_text_view_full_replace(void *tv, const uint8_t* with)
+{
+    TextView* textView = tv;
+    textView.string = [NSString stringWithUTF8String:(const char*)with];
+}
+
+void
+back_text_view_replace(void *tv, size_t start, size_t len, const uint8_t* with)
+{
+    TextView* textView = tv;
+    [textView replaceCharactersInRange: NSMakeRange(start, len)
+                      withString: [NSString stringWithUTF8String:(const char*)with]
+    ];
+}
+
+void
+back_text_view_set_attributes(void *tv)
 {
 
 }
+
+void
+back_text_view_set_selection(void *tv)
+{
+
+}
+
+double
+back_text_view_get_line_height(void *tv, size_t pos)
+{
+    return -1;
+}
+

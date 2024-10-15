@@ -2,8 +2,8 @@ use quarve::core::{Application, Environment, launch, MSlock, run_main_async, Sta
 use quarve::event::EventModifiers;
 use quarve::prelude::rgb;
 use quarve::resource::local_storage;
-use quarve::state::{Bindable, FixedSignal, SetAction, Signal, Store, TokenStore};
-use quarve::util::geo::{Alignment, HorizontalAlignment, Size};
+use quarve::state::{Bindable, FixedSignal, SetAction, Signal, Store, StoreContainerSource, TokenStore};
+use quarve::util::geo::{Alignment, HorizontalAlignment, Inset, Size};
 use quarve::view::{ViewProvider, IntoViewProvider, WeakInvalidator};
 use quarve::view::color_view::EmptyView;
 use quarve::state::Binding;
@@ -12,10 +12,10 @@ use quarve::view::control::{Button, Dropdown};
 use quarve::view::layout::*;
 use quarve::view::menu::{Menu, MenuButton, MenuSend, WindowMenu};
 use quarve::view::modal::{OpenFilePicker, SaveFilePicker};
-use quarve::view::modifers::{Cursor, CursorModifiable, EnvironmentModifier, Frame, FrameModifiable, OffsetModifiable, PaddingModifiable};
+use quarve::view::modifers::{Cursor, CursorModifiable, EnvironmentModifier, ForeBackModifiable, Frame, FrameModifiable, OffsetModifiable, PaddingModifiable};
 use quarve::view::portal::{Portal, PortalReceiver, PortalSendable};
 use quarve::view::scroll::ScrollView;
-use quarve::view::text::{Text, TextField, TextModifier};
+use quarve::view::text::{AttributeSet, CharAttribute, Page, PageAttribute, Run, RunAttribute, Text, TextField, TextModifier, TextView, TextViewProvider, TextViewState};
 use quarve::view::undo_manager::{UndoManager, UndoManagerExt};
 use quarve::view::util::Color;
 use quarve_derive::StoreContainer;
@@ -63,6 +63,51 @@ struct Stores {
     text: Store<String>
 }
 
+struct AttrSet;
+impl AttributeSet for AttrSet {
+    type CharAttribute = CharAttribute;
+    type RunAttribute = RunAttribute;
+    type PageAttribute = PageAttribute;
+}
+
+struct TVProvider {
+
+}
+
+impl TextViewProvider<Env> for TVProvider {
+    type IntrinsicAttribute = AttrSet;
+    type DerivedAttribute = AttrSet;
+    const PAGE_INSET: Inset = Inset {
+        l: 0.0,
+        r: 0.0,
+        b: 0.0,
+        t: 0.0,
+    };
+
+    fn init(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) {
+    }
+
+    fn tab(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) {
+    }
+
+    fn untab(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) {
+    }
+
+    fn newline(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) {
+    }
+
+    fn alt_newline(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) {
+    }
+
+    fn run_decoration(&self, number: impl Signal<Target=usize>, run: &Run<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> impl IntoViewProvider<Env, DownContext=(), UpContext=()> + 'static {
+        EmptyView
+    }
+
+    fn page_background(&self, page: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> impl IntoViewProvider<Env, DownContext=()> + 'static {
+        EmptyView
+    }
+}
+
 impl quarve::core::WindowProvider for WindowProvider {
     type Env = Env;
 
@@ -91,6 +136,9 @@ impl quarve::core::WindowProvider for WindowProvider {
         let focused = TokenStore::new(Some(2));
         let binding = focused.binding();
         let binding2 = focused.binding();
+
+        let tv = StoreContainerSource::new(TextViewState::new());
+        tv.insert_page(Page::new(s), 0, s.to_general_slock());
 
         // let portal = Portal::new();
 
@@ -138,6 +186,13 @@ impl quarve::core::WindowProvider for WindowProvider {
                     TextField::new(text.binding())
                         .focused_if_eq(focused.binding(), 3)
                         .text_size(24.0)
+                )
+                .push(
+                    TextView::new(tv.view(), TVProvider {})
+                        .frame(Frame::default().stretched(10000, 100))
+                        .border(Color::white(), 1)
+                        .padding(10.0)
+                        .bg_color(Color::rgba(0,0,0,120))
                 )
                 .push(
                     Dropdown::new(selected.binding())

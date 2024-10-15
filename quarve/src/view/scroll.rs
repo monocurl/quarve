@@ -232,7 +232,6 @@ impl<E, P, BX, BY> ViewProvider<E> for ScrollViewVP<E, P, BX, BY>
         let weak_y = state.downgrade();
         self.binding_y.listen(move |y, s| {
             let Some(strong) = weak_y.upgrade() else {
-                println!("Cancelling");
                 return false;
             };
 

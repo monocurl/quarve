@@ -509,6 +509,14 @@ pub mod view {
         fn back_text_field_copy(view: *mut c_void);
         fn back_text_field_paste(view: *mut c_void);
 
+        /* text view */
+        fn back_text_view_init(state: FatPointer) -> *mut c_void;
+
+        // may discard attributes
+        fn back_text_view_full_replace(tv: *mut c_void, with: *const u8);
+
+        fn back_text_view_replace(tv: *mut c_void, start: usize, len: usize, with: *const u8);
+
         /* message box */
         fn back_message_box_init(title: *const u8, message: *const u8) -> *mut c_void;
         fn back_message_box_add_button(mb: *mut c_void, button_type: u8);
@@ -913,6 +921,48 @@ pub mod view {
             unsafe {
                 back_text_field_size(view, suggested)
             }
+        }
+    }
+
+    pub mod text_view {
+        use std::ffi::{c_void, CString};
+        use std::ops::Range;
+        use crate::core::{MSlock, Slock};
+        use crate::native::FatPointer;
+        use crate::native::view::{back_text_view_full_replace, back_text_view_init, back_text_view_replace};
+        use crate::state::StoreContainerView;
+        use crate::view::text::{AttributeSet, Page, TextViewState};
+
+        pub fn text_view_init(state: StoreContainerView<Page<impl AttributeSet, impl AttributeSet>>, _s: MSlock) -> *mut c_void {
+            unsafe {
+                back_text_view_init(FatPointer(0, 0))
+            }
+        }
+
+        pub fn text_view_full_replace(tv: *mut c_void, with: &str, _s: MSlock) {
+            let cstring = CString::new(with).unwrap();
+            unsafe {
+                back_text_view_full_replace(tv, cstring.as_bytes().as_ptr())
+            }
+        }
+
+        pub fn text_view_replace(tv: *mut c_void, range: Range<usize>, with: &str, _s: MSlock) {
+            let cstring = CString::new(with).unwrap();
+            unsafe {
+                back_text_view_replace(tv, range.start, range.len(), cstring.as_bytes().as_ptr())
+            }
+        }
+
+        pub fn text_view_set_attributes(tv: *mut c_void, _s: MSlock) {
+
+        }
+
+        pub fn text_view_set_selection(tv: *mut c_void) {
+
+        }
+
+        pub fn text_view_get_line_height(tv: *mut c_void, _s : MSlock) {
+
         }
     }
 
