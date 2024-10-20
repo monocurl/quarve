@@ -219,7 +219,7 @@ mod text_field {
     {
         text: B,
         focused_token: i32,
-        focused: Option<<TokenStore<Option<i32>> as Bindable<Filterless<Option<i32>>>>::Binding>,
+        focused: <TokenStore<Option<i32>> as Bindable<Filterless<Option<i32>>>>::Binding,
         callback: Option<Box<dyn FnMut(MSlock)>>,
         autofocus: bool,
         unstyled: bool,
@@ -299,7 +299,7 @@ mod text_field {
             TextFieldVP {
                 text: self.text,
                 focused_token: self.focused_token,
-                focused: self.focused,
+                focused: self.focused.unwrap_or(TokenStore::new(None).binding()),
                 callback: self.callback,
                 autofocus: self.autofocus,
                 unstyled: self.unstyled,
@@ -358,16 +358,14 @@ mod text_field {
                 true
             }, s);
 
-            if let Some(ref focused) = self.focused {
-                focused.store().equals(Some(self.focused_token), s)
-                    .listen(move |_, s| {
-                        let Some(invalidator) = invalidator.upgrade() else {
-                            return false;
-                        };
-                        invalidator.invalidate(s);
-                        true
-                    }, s);
-            }
+            self.focused.store().equals(Some(self.focused_token), s)
+                .listen(move |_, s| {
+                    let Some(invalidator) = invalidator.upgrade() else {
+                        return false;
+                    };
+                    invalidator.invalidate(s);
+                    true
+                }, s);
 
             let nv = if let Some((nv, _)) = backing_source {
                 nv
@@ -378,13 +376,7 @@ mod text_field {
                     .unwrap_or_else(|| Box::new(|_| {}));
 
                 unsafe {
-                    if let Some(ref focused) = self.focused {
-                        NativeView::new(text_field_init(self.text.clone(), focused.clone(), action, self.focused_token, self.unstyled, self.secret, s), s)
-                    }
-                    else {
-                        let focused = TokenStore::new(None);
-                        NativeView::new(text_field_init(self.text.clone(), focused.binding(), action, self.focused_token, self.unstyled, self.secret, s), s)
-                    }
+                    NativeView::new(text_field_init(self.text.clone(), self.focused.clone(), action, self.focused_token, self.unstyled, self.secret, s), s)
                 }
             };
 
@@ -400,18 +392,16 @@ mod text_field {
                     .request_default_focus(view)
             }
 
-            if let Some(ref focused) = self.focused {
-                let view = Arc::downgrade(subtree.owner());
-                if *focused.borrow(s) == Some(self.focused_token) {
-                    subtree.window().and_then(|w| w.upgrade()).unwrap()
-                        .borrow_main(s)
-                        .request_focus(view);
-                }
-                else {
-                    subtree.window().and_then(|w| w.upgrade()).unwrap()
-                        .borrow_main(s)
-                        .unrequest_focus(view);
-                }
+            let view = Arc::downgrade(subtree.owner());
+            if *self.focused.borrow(s) == Some(self.focused_token) {
+                subtree.window().and_then(|w| w.upgrade()).unwrap()
+                    .borrow_main(s)
+                    .request_focus(view);
+            }
+            else {
+                subtree.window().and_then(|w| w.upgrade()).unwrap()
+                    .borrow_main(s)
+                    .unrequest_focus(view);
             }
 
             text_field_update(
@@ -445,10 +435,8 @@ mod text_field {
         }
 
         fn focused(&self, _rel_depth: u32, s: MSlock) {
-            if let Some(ref f) = self.focused {
-                if *f.borrow(s) != Some(self.focused_token) {
-                    f.apply(SetAction::Set(Some(self.focused_token)), s);
-                }
+            if *self.focused.borrow(s) != Some(self.focused_token) {
+                self.focused.apply(SetAction::Set(Some(self.focused_token)), s);
             }
 
             text_field_focus(self.backing, s);
@@ -469,10 +457,8 @@ mod text_field {
         }
 
         fn unfocused(&self, _rel_depth: u32, s: MSlock) {
-            if let Some(ref f) = self.focused {
-                if *f.borrow(s) == Some(self.focused_token) {
-                    f.apply(SetAction::Set(None), s);
-                }
+            if *self.focused.borrow(s) == Some(self.focused_token) {
+                self.focused.apply(SetAction::Set(None), s);
             }
 
             text_field_unfocus(self.backing, s);

@@ -138,128 +138,144 @@ impl quarve::core::WindowProvider for WindowProvider {
         let binding2 = focused.binding();
 
         let tv = StoreContainerSource::new(TextViewState::new());
-        tv.insert_page(Page::new(s), 0, s.to_general_slock());
+        let p = Page::new(s);
+        p.replace_range(0, 0, 0, 0, "test", s);
+        tv.insert_page(p, 0, s.to_general_slock());
 
         // let portal = Portal::new();
 
-        let v1 = ScrollView::vertical(
-            VStack::hetero_options(VStackOptions::default().align(HorizontalAlignment::Leading))
-                .push(
-                    Button::new_with_label(
-                        Color::black()
-                            .intrinsic(100, 100),
-                        move |s| {
-                            SaveFilePicker::new()
-                                .content_types("pdf")
-                                .run(|path, s| {
+        // let v1 = ScrollView::vertical(
+        //     VStack::hetero_options(VStackOptions::default().align(HorizontalAlignment::Leading))
+        //         .push(
+        //             Button::new_with_label(
+        //                 Color::black()
+        //                     .intrinsic(100, 100),
+        //                 move |s| {
+        //                     SaveFilePicker::new()
+        //                         .content_types("pdf")
+        //                         .run(|path, s| {
+        //
+        //                         });
+        //                     binding.apply(SetAction::Set(None), s);
+        //                 }
+        //             )
+        //                 .offset_signal(FixedSignal::new(0.0), offset_y.signal())
+        //         )
+        //         .push(
+        //             Button::new("Focus", move |s| {
+        //                 binding2.apply(SetAction::Set(Some(2)), s);
+        //             })
+        //         )
+        //         .push(
+        //             Dropdown::new(selected.binding())
+        //                 .option("Hello")
+        //                 .option("World")
+        //         )
+        //         .push(
+        //             Text::from_signal(focused.map(|r| format!("Selected {:?}", r), s))
+        //                 .text_backcolor(Color::rgb(255, 0, 2))
+        //                 .text_size(24.0)
+        //         )
+        //         .push(
+        //             TextField::new(text.binding())
+        //                 .unstyled()
+        //                 .focused_if_eq(focused.binding(), 2)
+        //                 .max_lines(0)
+        //                 .text_size(24.0)
+        //                 .padding(10)
+        //         )
+        //         .push(
+        //             TextField::new(text.binding())
+        //                 .focused_if_eq(focused.binding(), 3)
+        //                 .text_size(24.0)
+        //         )
+        //         .push(
+        //             TextView::new(tv.view(), TVProvider {})
+        //                 .frame(Frame::default().stretched(10000, 100))
+        //                 .border(Color::white(), 1)
+        //                 .padding(10.0)
+        //                 .bg_color(Color::rgba(0,0,0,120))
+        //         )
+        //         .push(
+        //             Dropdown::new(selected.binding())
+        //                 .option("Hello")
+        //                 .option("World")
+        //         )
+        //         .push(
+        //             (0..14)
+        //                 .vmap(|x, _s| {
+        //                     Color::white()
+        //                         .intrinsic(100, 100 + 10 * *x)
+        //                         .cursor(Cursor::Pointer)
+        //                 })
+        //                 .padding(10)
+        //                 .border(Color::black(), 1)
+        //         )
+        //         .push(
+        //             Text::new(format!("Item {:?}", 1))
+        //                 .intrinsic(100, 100)
+        //                 .bg_color(rgb(0, 0, 0))
+        //         )
+        //     // offset_y.binding()
+        // )
+        //     .frame(Frame::default()
+        //         .intrinsic(300, 300)
+        //             .unlimited_stretch()
+        //             .align(Alignment::Center)
+        //     )
+        //     .mount_undo_manager(UndoManager::new(&stores, s))
+        //     .text_color(Color::white())
+        //     .text_font("SignikaNegative-Regular.ttf")
+        //     .underline()
+        //     .bold();
+        //
+        // let v2 = ScrollView::vertical_with_binding(
+        //         VStack::hetero_options(VStackOptions::default().align(HorizontalAlignment::Leading))
+        //             .push(
+        //                 Button::new_with_label(
+        //                     Color::white()
+        //                         .intrinsic(100, 100),
+        //                     |_| println!("Clicked")
+        //                 )
+        //                     .offset_signal(FixedSignal::new(0.0), offset_y.signal())
+        //             )
+        //             .push(
+        //                 (0..14).vmap(|x, s| {
+        //                         Color::black()
+        //                             .intrinsic(100, 100 + 10 * *x)
+        //                             .cursor(Cursor::Pointer)
+        //                     })
+        //                     .padding(10)
+        //                     .border(Color::white(), 1)
+        //             ),
+        //         offset_y.binding()
+        //     )
+        //         .frame(Frame::default()
+        //             .intrinsic(300, 300)
+        //             .unlimited_stretch()
+        //             .align(Alignment::Center)
+        //         );
 
-                                });
-                            binding.apply(SetAction::Set(None), s);
-                        }
-                    )
-                        .offset_signal(FixedSignal::new(0.0), offset_y.signal())
-                )
-                .push(
-                    Button::new("Focus", move |s| {
-                        binding2.apply(SetAction::Set(Some(2)), s);
-                    })
-                )
-                .push(
-                    Dropdown::new(selected.binding())
-                        .option("Hello")
-                        .option("World")
-                )
-                .push(
-                    Text::from_signal(focused.map(|r| format!("Selected {:?}", r), s))
-                        .text_backcolor(Color::rgb(255, 0, 2))
-                        .text_size(24.0)
-                )
-                .push(
-                    TextField::new(text.binding())
-                        .unstyled()
-                        .focused_if_eq(focused.binding(), 2)
-                        .max_lines(0)
-                        .text_size(24.0)
-                        .padding(10)
-                )
-                .push(
-                    TextField::new(text.binding())
-                        .focused_if_eq(focused.binding(), 3)
-                        .text_size(24.0)
-                )
-                .push(
-                    TextView::new(tv.view(), TVProvider {})
-                        .frame(Frame::default().stretched(10000, 100))
-                        .border(Color::white(), 1)
-                        .padding(10.0)
-                        .bg_color(Color::rgba(0,0,0,120))
-                )
-                .push(
-                    Dropdown::new(selected.binding())
-                        .option("Hello")
-                        .option("World")
-                )
-                .push(
-                    (0..14)
-                        .vmap(|x, _s| {
-                            Color::white()
-                                .intrinsic(100, 100 + 10 * *x)
-                                .cursor(Cursor::Pointer)
-                        })
-                        .padding(10)
-                        .border(Color::black(), 1)
-                )
-                .push(
-                    Text::new(format!("Item {:?}", 1))
-                        .intrinsic(100, 100)
-                        .bg_color(rgb(0, 0, 0))
-                )
-            // offset_y.binding()
-        )
+        TextView::new(tv.view(), TVProvider {})
             .frame(Frame::default()
-                .intrinsic(300, 300)
-                    .unlimited_stretch()
-                    .align(Alignment::Center)
+                .intrinsic(100, 400)
+                .stretched(10000, 400)
             )
-            .mount_undo_manager(UndoManager::new(&stores, s))
-            .text_color(Color::white())
-            .text_font("SignikaNegative-Regular.ttf")
-            .underline()
-            .bold();
-
-        let v2 = ScrollView::vertical_with_binding(
-                VStack::hetero_options(VStackOptions::default().align(HorizontalAlignment::Leading))
-                    .push(
-                        Button::new_with_label(
-                            Color::white()
-                                .intrinsic(100, 100),
-                            |_| println!("Clicked")
-                        )
-                            .offset_signal(FixedSignal::new(0.0), offset_y.signal())
-                    )
-                    .push(
-                        (0..14).vmap(|x, s| {
-                                Color::black()
-                                    .intrinsic(100, 100 + 10 * *x)
-                                    .cursor(Cursor::Pointer)
-                            })
-                            .padding(10)
-                            .border(Color::white(), 1)
-                    ),
-                offset_y.binding()
-            )
-                .frame(Frame::default()
-                    .intrinsic(300, 300)
-                    .unlimited_stretch()
-                    .align(Alignment::Center)
-                );
-
-        VStack::hetero()
-            .push(v1)
-            .push(
-                v2
-            )
+            .border(Color::white(), 1)
             .into_view_provider(env, s)
+
+        // VStack::hetero()
+        //     .push(
+        //             // .bg_color(Color::rgba(0,0,0,120))
+        //     )
+        //     .push(
+        //         TextField::new(text.binding())
+        //             // .focused_if_eq(focused.binding(), 3)
+        //             .text_size(24.0)
+        //     )
+        //     // .push(v1)
+        //     // .push(v2)
+        //     .into_view_provider(env, s)
     }
 
     fn menu(&self, env: &<Self::Env as Environment>::Const, s: MSlock) -> WindowMenu {

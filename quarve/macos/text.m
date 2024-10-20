@@ -382,15 +382,41 @@ back_text_field_paste(void *view)
 @end
 
 @implementation TextView
+
+- (void)mouseDown:(NSEvent *)event {
+    [super mouseDown:event];
+//     [[self window] makeFirstResponder:self];
+}
+
+- (BOOL)becomeFirstResponder
+{
+    BOOL status = [super becomeFirstResponder];
+    return status;
+}
+
+- (NSView *)hitTest:(NSPoint)point {
+    NSView *hitView = [super hitTest:point];
+    return hitView;
+}
 @end
 
 void *
 back_text_view_init(fat_pointer state)
 {
-    TextView* tv = [[TextView alloc] init];
-    tv.state = state;
+    TextView* theTextView = [[TextView alloc] initWithFrame:NSMakeRect(0, 0,
+                400, 400)];
+    [theTextView setHorizontallyResizable:NO];
+    [theTextView setAutoresizingMask:NSViewWidthSizable];
+
+    [[theTextView textContainer]
+                setContainerSize:NSMakeSize(400.0, FLT_MAX)];
+    [[theTextView textContainer] setWidthTracksTextView:NO];
+    NSTextView *tv = theTextView;
+//     tv.state = state;
     tv.drawsBackground = YES;
     tv.richText = NO;
+    tv.editable = YES;
+    tv.allowsUndo = NO;
     tv.automaticSpellingCorrectionEnabled = NO;
     tv.automaticTextReplacementEnabled = NO;
     tv.automaticTextCompletionEnabled = NO;
@@ -398,6 +424,8 @@ back_text_view_init(fat_pointer state)
     tv.automaticDashSubstitutionEnabled = NO;
     tv.automaticLinkDetectionEnabled = NO;
     tv.automaticDataDetectionEnabled = NO;
+    [tv setHorizontallyResizable:YES];
+
     return tv;
 }
 

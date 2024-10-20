@@ -8,6 +8,12 @@
 - (BOOL)isFlipped {
     return YES;
 }
+
+- (NSView *)hitTest:(NSPoint)point {
+    NSView *hitView = [super hitTest:point];
+    // exclude this view from hit tests
+    return hitView == self ? nil : hitView;
+}
 @end
 
 void *

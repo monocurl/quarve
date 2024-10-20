@@ -64,6 +64,34 @@ int performing_subview_insertion = 0;
     self->handle = _handle;
 
     ContentView *contentView = [[ContentView alloc] initWithFrame:NSMakeRect(0, 0, 100, 100)];
+
+    // TODO DEBUG
+//     NSTextView* theTextView = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0,
+//                 200, 100)];
+//     [theTextView setHorizontallyResizable:NO];
+//     [theTextView setAutoresizingMask:NSViewWidthSizable];
+//
+//     [[theTextView textContainer]
+//                 setContainerSize:NSMakeSize(400.0, FLT_MAX)];
+//     [[theTextView textContainer] setWidthTracksTextView:NO];
+//     NSTextView *tv = theTextView;
+// //     tv.state = state;
+//     tv.drawsBackground = YES;
+//     tv.richText = NO;
+//     tv.editable = YES;
+//     tv.allowsUndo = NO;
+//     tv.automaticSpellingCorrectionEnabled = NO;
+//     tv.automaticTextReplacementEnabled = NO;
+//     tv.automaticTextCompletionEnabled = NO;
+//     tv.automaticQuoteSubstitutionEnabled = NO;
+//     tv.automaticDashSubstitutionEnabled = NO;
+//     tv.automaticLinkDetectionEnabled = NO;
+//     tv.automaticDataDetectionEnabled = NO;
+//     [tv setHorizontallyResizable:YES];
+//     NSView* view = [[ContentView alloc] initWithFrame: NSMakeRect(0, 0, 400, 400)];
+//     [view addSubview: tv];
+//     [contentView addSubview:view];
+
     [self setContentView:contentView];
     [self center];
 }
@@ -74,6 +102,16 @@ int performing_subview_insertion = 0;
 
 - (void)windowDidBecomeKey:(NSNotification*)notification {
     [NSApp setMainMenu: self.menu];
+}
+
+- (BOOL)canBecomeKeyWindow
+{
+    return YES;
+}
+
+- (BOOL)canBecomeMainWindow
+{
+    return YES;
 }
 
 - (void)dispatchEvent:(NSEvent*)event {
