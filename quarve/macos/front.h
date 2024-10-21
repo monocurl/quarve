@@ -51,3 +51,6 @@ extern void front_set_bool_binding(fat_pointer box, uint8_t value);
 
 // box: Box<dyn Fn(u8, MSlock)>
 extern void front_free_bool_binding(fat_pointer box);
+
+// box is a page store container
+extern void front_replace_textview_range(fat_pointer box, size_t start, size_t end, uint8_t const* value);

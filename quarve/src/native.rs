@@ -103,10 +103,13 @@ impl From<BufferEvent> for Event {
 
 /* back -> front call backs */
 mod callbacks {
+    use std::ffi::{c_char, CStr, CString};
+    use std::ops::Deref;
     use crate::core::{APP, MSlock, slock_force_main_owner, slock_main_owner, SlockOwner};
     use crate::native::{BufferEvent, FatPointer};
     use crate::util::geo::ScreenUnit;
     use crate::util::marker::MainThreadMarker;
+    use crate::view::text::{IN_TEXTVIEW_FRONT_CALLBACK, PageFrontCallback};
 
     #[no_mangle]
     extern "C" fn front_will_spawn() {
@@ -262,6 +265,25 @@ mod callbacks {
         let _b: Box<dyn Fn(u8, MSlock)> = unsafe {
             std::mem::transmute(bx)
         };
+    }
+
+    #[no_mangle]
+    extern "C" fn front_replace_textview_range(bx: FatPointer, start: usize, len: usize, value: *const u8) {
+        let old = IN_TEXTVIEW_FRONT_CALLBACK.replace(true);
+
+        let view: Box<dyn PageFrontCallback> = unsafe {
+            std::mem::transmute(bx)
+        };
+        let slock = unsafe {
+            slock_force_main_owner()
+        };
+        let str = CString::from( unsafe {
+            CStr::from_ptr(value as *const c_char)
+        }).into_string().unwrap();
+        view.replace_utf16_range(start .. start + len, str, slock.marker());
+
+        std::mem::forget(view);
+        IN_TEXTVIEW_FRONT_CALLBACK.set(old);
     }
 }
 
@@ -927,15 +949,16 @@ pub mod view {
     pub mod text_view {
         use std::ffi::{c_void, CString};
         use std::ops::Range;
-        use crate::core::{MSlock, Slock};
+        use crate::core::{MSlock};
         use crate::native::FatPointer;
         use crate::native::view::{back_text_view_full_replace, back_text_view_init, back_text_view_replace};
         use crate::state::StoreContainerView;
-        use crate::view::text::{AttributeSet, Page, TextViewState};
+        use crate::view::text::{AttributeSet, Page, PageFrontCallback};
 
         pub fn text_view_init(state: StoreContainerView<Page<impl AttributeSet, impl AttributeSet>>, _s: MSlock) -> *mut c_void {
+            let bx: Box<dyn PageFrontCallback> = Box::new(state);
             unsafe {
-                back_text_view_init(FatPointer(0, 0))
+                back_text_view_init(std::mem::transmute(bx))
             }
         }
 

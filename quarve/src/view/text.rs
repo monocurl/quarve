@@ -608,6 +608,7 @@ mod text_view {
                         ind += 1;
                     }
 
+                    i = range.start;
                     while i < range.end {
                         let next = (i + self.attributes[ind].1).min(range.end);
                         attributes.push((self.attributes[ind].0.clone(), next - i));
@@ -701,8 +702,6 @@ mod text_view {
                                 end += to.attributes[j].1;
                                 j += 1;
                             }
-
-                            assert!(at + len <= end, "Invalid length");
 
                             // (we go right to left to avoid index issues)
                             if start > at + len {
@@ -965,6 +964,14 @@ mod text_view {
                         .subrange(at..len);
 
                     self.replace(at..len, "", s);
+                    #[cfg(debug_assertions)]
+                    {
+                        let i = intrinsic.attributes.iter().fold(0, |a,b| a+b.1);
+                        let j = derived.attributes.iter().fold(0, |a,b| a+b.1);
+                        let k =  content.len();
+                        debug_assert!(i == j && j == k);
+                    }
+
                     Run::new_with(content, intrinsic, derived, s)
                 }
 
@@ -1399,16 +1406,17 @@ mod text_view {
         pub use cursor_state::*;
 
         mod page {
-            use std::ops::Deref;
+            use std::ops::{Deref, Range};
             use quarve_derive::StoreContainer;
             use crate::core::{MSlock, Slock};
-            use crate::state::{Binding, DerivedStore, SetAction, Signal, Stateful, Store, VecActionBasis, Word};
+            use crate::state::{Binding, DerivedStore, SetAction, Signal, Stateful, Store, StoreContainerView, VecActionBasis, Word};
             use crate::state::SetAction::Set;
             use crate::util::marker::{FalseMarker, ThreadMarker};
             use crate::util::rust_util::DerefMap;
             use crate::view::text::CursorState;
             use crate::view::text::text_view::state::{AttributeSet, Run, RunsContainer};
             use crate::view::text::text_view::state::attribute_holder::{AttributeHolder};
+            use crate::view::undo_manager::UndoManager;
 
             #[derive(Copy, Clone)]
             pub(crate) struct PageGUIInfo {
@@ -1419,6 +1427,10 @@ mod text_view {
             impl Stateful for PageGUIInfo {
                 type Action = SetAction<PageGUIInfo>;
                 type HasInnerStores = FalseMarker;
+            }
+
+            pub(crate) trait PageFrontCallback {
+                fn replace_utf16_range(&self, range: Range<usize>, with: String, _s: MSlock);
             }
 
             #[derive(StoreContainer)]
@@ -1523,22 +1535,23 @@ mod text_view {
                         .collect();
 
                     // strategy:
-                    // 1) delete intermediate runs + tips
-                    if end_run > start_run + 1 {
-                        self.runs.apply(VecActionBasis::RemoveMany(start_run + 1 .. end_run), s);
-                    }
+                    // 1) delete tips + intermediate runs
 
                     if start_run == end_run {
                         let range = start_char .. end_char;
                         self.run(start_run, s)
-                            .replace(range, with.clone(), s);
+                            .replace(range, "", s);
                     }
                     else {
                         let start = self.run(start_run, s);
                         start.replace(start_char..start.len(s), "", s);
 
                         self.run(end_run, s)
-                            .replace(0..start_char, "", s);
+                            .replace(0..end_char, "", s);
+                    }
+
+                    if end_run > start_run + 1 {
+                        self.runs.apply(VecActionBasis::RemoveMany(start_run + 1 .. end_run), s);
                     }
 
                     // 2) if there was only one line and there's multiple segments, split this one run
@@ -1652,6 +1665,49 @@ mod text_view {
                     s: Slock<impl ThreadMarker>
                 ) {
                     self.page_derived_attribute.listen(f, s);
+                }
+            }
+
+            impl<I, D> PageFrontCallback for StoreContainerView<Page<I, D>>
+                where I: AttributeSet, D: AttributeSet
+            {
+                fn replace_utf16_range(&self, range: Range<usize>, with: String, s: MSlock) {
+                    let find_pos = |mut pos| {
+                        for (i, run) in self.runs.borrow(s).iter().enumerate() {
+                            let cu = run.gui_info.borrow(s).codeunits;
+                            if pos <= cu {
+                                let mut utf16_count = 0;
+                                if utf16_count == pos {
+                                    // empty string edge case
+                                    return (i, 0)
+                                }
+
+                                for (byte_idx, ch) in run.content(s).char_indices() {
+                                    let ch_utf16_len = ch.len_utf16();
+                                    if utf16_count + ch_utf16_len > pos {
+                                        return (i, byte_idx);
+                                    }
+                                    utf16_count += ch_utf16_len;
+                                    if utf16_count == pos {
+                                        return (i, byte_idx + ch.len_utf8());
+                                    }
+                                }
+
+                                unreachable!("bad utf16")
+                            }
+
+                            // dont forget new line
+                            pos -= cu + 1;
+                        }
+
+                        return (self.num_runs(s), pos)
+                    };
+
+                    let start = find_pos(range.start);
+                    let end = find_pos(range.end);
+                    println!("Old Content: {:?}", self.build_full_content(s));
+                    self.replace_range(start.0, start.1, end.0, end.1, with, s);
+                    println!("New Content: {:?}", self.build_full_content(s));
                 }
             }
         }
@@ -2461,32 +2517,30 @@ mod text_view {
             }
 
             fn layout_up(&mut self, _subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, s: MSlock) -> bool {
-                // run gui filling in line numbers (easy)
-                for (i, run) in self.page.runs.borrow(s).iter().enumerate() {
-                    let mut gui = *run.gui_info.borrow(s);
-                    if gui.line != i {
-                        gui.line = i;
-                        run.gui_info.apply(Set(gui), s);
-                    }
-                }
-
+                // rewrite line numbers
+                // - IMPORTANT: the dirty flag is set to false whenever we flush the changes
+                // - so we don't have to worry about recursive invalidation
                 // relay attrs of affected lines
                 // and recalculate line heights (hard)
                 self.total_height = 0.0;
-                for run in self.page.runs.borrow(s).iter() {
+                for (i, run) in self.page.runs.borrow(s).iter().enumerate() {
                     let mut gui = *run.gui_info.borrow(s);
-                    if !gui.dirty {
-                        self.total_height += gui.page_height;
-                        continue;
+
+                    if gui.dirty {
+                        // adjust line attributes
+
+                        // calculating line height
+                        gui.page_height = 600.0;
                     }
 
-                    // adjust line attributes
+                    // only send flush if necessary
+                    if gui.line != i || gui.dirty {
+                        gui.dirty = false;
+                        gui.line = i;
+                        run.gui_info.apply(Set(gui), s);
+                    }
 
-                    // calculating line height
-
-                    gui.page_height = 100.0;
                     self.total_height += gui.page_height;
-                    run.gui_info.apply(Set(gui), s);
                 }
 
                 // relay cursor information + number (easy)

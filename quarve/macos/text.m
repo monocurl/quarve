@@ -379,41 +379,49 @@ back_text_field_paste(void *view)
 // MARK: textview
 @interface TextView : NSTextView
 @property fat_pointer state;
+@property BOOL executing_back;
 @end
 
 @implementation TextView
-
-- (void)mouseDown:(NSEvent *)event {
-    [super mouseDown:event];
-//     [[self window] makeFirstResponder:self];
-}
-
-- (BOOL)becomeFirstResponder
-{
-    BOOL status = [super becomeFirstResponder];
-    return status;
-}
-
-- (NSView *)hitTest:(NSPoint)point {
-    NSView *hitView = [super hitTest:point];
-    return hitView;
+- (BOOL)shouldChangeTextInRange:(NSRange)affectedCharRange
+              replacementString:(NSString *)replacementString {
+    if (!self.executing_back) {
+        if (replacementString) {
+            uint8_t const* const str = (uint8_t const*) [replacementString UTF8String];
+            front_replace_textview_range(self.state, affectedCharRange.location, affectedCharRange.length, str);
+        }
+        else {
+            uint8_t const* const str = (uint8_t const*) "";
+            front_replace_textview_range(self.state, affectedCharRange.location, affectedCharRange.length, str);
+        }
+    }
+    return YES;
 }
 @end
+
+@interface TextViewDelegate : NSObject<NSTextViewDelegate>
+@end
+
+@implementation TextViewDelegate
+@end
+
 
 void *
 back_text_view_init(fat_pointer state)
 {
-    TextView* theTextView = [[TextView alloc] initWithFrame:NSMakeRect(0, 0,
-                400, 400)];
-    [theTextView setHorizontallyResizable:NO];
-    [theTextView setAutoresizingMask:NSViewWidthSizable];
+    TextView* tv = [[TextView alloc] initWithFrame:NSMakeRect(0, 0,
+               1000, 500)];
+    [tv setHorizontallyResizable:NO];
+    [tv setVerticallyResizable:YES];
+    [[tv textContainer]
+                setContainerSize:NSMakeSize(FLT_MAX, FLT_MAX)];
+    [[tv textContainer] setWidthTracksTextView:YES];
+    [[tv textContainer] setHeightTracksTextView:NO];
+    [tv setAutoresizingMask:NSViewWidthSizable];
 
-    [[theTextView textContainer]
-                setContainerSize:NSMakeSize(400.0, FLT_MAX)];
-    [[theTextView textContainer] setWidthTracksTextView:NO];
-    NSTextView *tv = theTextView;
-//     tv.state = state;
-    tv.drawsBackground = YES;
+
+    tv.state = state;
+    tv.drawsBackground = NO;
     tv.richText = NO;
     tv.editable = YES;
     tv.allowsUndo = NO;
@@ -424,7 +432,6 @@ back_text_view_init(fat_pointer state)
     tv.automaticDashSubstitutionEnabled = NO;
     tv.automaticLinkDetectionEnabled = NO;
     tv.automaticDataDetectionEnabled = NO;
-    [tv setHorizontallyResizable:YES];
 
     return tv;
 }
@@ -434,33 +441,44 @@ void
 back_text_view_full_replace(void *tv, const uint8_t* with)
 {
     TextView* textView = tv;
+    textView.executing_back = YES;
     textView.string = [NSString stringWithUTF8String:(const char*)with];
+    textView.executing_back = NO;
 }
 
 void
 back_text_view_replace(void *tv, size_t start, size_t len, const uint8_t* with)
 {
     TextView* textView = tv;
+    textView.executing_back = YES;
     [textView replaceCharactersInRange: NSMakeRange(start, len)
                       withString: [NSString stringWithUTF8String:(const char*)with]
     ];
+    textView.executing_back = NO;
 }
 
 void
 back_text_view_set_attributes(void *tv)
 {
-
+    TextView* textView = tv;
+    textView.executing_back = YES;
+    textView.executing_back = NO;
 }
 
 void
 back_text_view_set_selection(void *tv)
 {
-
+    TextView* textView = tv;
+    textView.executing_back = YES;
+    textView.executing_back = NO;
 }
 
 double
 back_text_view_get_line_height(void *tv, size_t pos)
 {
+    TextView* textView = tv;
+    textView.executing_back = YES;
+    textView.executing_back = NO;
     return -1;
 }
 
