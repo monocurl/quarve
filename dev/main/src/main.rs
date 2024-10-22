@@ -155,15 +155,15 @@ impl quarve::core::WindowProvider for WindowProvider {
             // )
         }
         thread::spawn(move || {
-            thread::sleep(Duration::from_secs(5));
+            thread::sleep(Duration::from_secs(3));
 
             run_main_async(move |s| {
                 let p = tv2.page(0, s);
                 println!("about to call");
                 p.replace_range(
-                    0, 0,
-                    0, 0,
-                    "HELLO WORLD\nTHIS IS SECOND LINE\n",
+                    0, 1,
+                    0, 2,
+                    "Auxiliary\nTHIS IS SECOND LINE\n",
                     s
                 );
                 println!("Content {:?}", p.build_full_content(s));

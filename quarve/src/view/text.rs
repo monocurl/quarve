@@ -1529,6 +1529,8 @@ mod text_view {
                     with: impl Into<String>,
                     s: MSlock
                 ) {
+                    assert!(end_run >= start_run || (start_run == end_run && end_char >= end_run));
+
                     let with = with.into();
                     let segments: Vec<_> = with
                         .split('\n')
@@ -1697,14 +1699,16 @@ mod text_view {
                                 unreachable!("bad utf16")
                             }
 
-                            pos -= cu;
-                            // dont forget new line
                             if i == len - 1 {
-                                pos -= 1
+                                return (i, pos)
+                            }
+                            else {
+                                // dont forget new line
+                                pos -= cu + 1;
                             }
                         }
 
-                        return (self.num_runs(s), pos)
+                        unreachable!("Should always have at least one run")
                     };
 
                     let start = find_pos(range.start);
