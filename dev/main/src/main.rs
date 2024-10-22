@@ -1,4 +1,6 @@
-use quarve::core::{Application, Environment, launch, MSlock, run_main_async, StandardConstEnv, StandardVarEnv};
+use std::thread;
+use std::time::Duration;
+use quarve::core::{Application, Environment, launch, MSlock, run_main_async, slock_owner, StandardConstEnv, StandardVarEnv};
 use quarve::event::EventModifiers;
 use quarve::prelude::rgb;
 use quarve::resource::local_storage;
@@ -141,6 +143,32 @@ impl quarve::core::WindowProvider for WindowProvider {
         let p = Page::new(s);
         p.replace_range(0, 0, 0, 0, "test", s);
         tv.insert_page(p, 0, s.to_general_slock());
+
+        let tv2 = tv.view();
+        {
+            let p = tv2.page(0, s);
+            // p.replace_range(
+            //     0, 0,
+            //     0, 0,
+            //     "HELLO WORLD\nTHIS IS SECOND LINE\n",
+            //     s
+            // )
+        }
+        thread::spawn(move || {
+            thread::sleep(Duration::from_secs(5));
+
+            run_main_async(move |s| {
+                let p = tv2.page(0, s);
+                println!("about to call");
+                p.replace_range(
+                    0, 0,
+                    0, 0,
+                    "HELLO WORLD\nTHIS IS SECOND LINE\n",
+                    s
+                );
+                println!("Content {:?}", p.build_full_content(s));
+            })
+        });
 
         // let portal = Portal::new();
 

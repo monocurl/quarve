@@ -450,11 +450,14 @@ void
 back_text_view_replace(void *tv, size_t start, size_t len, const uint8_t* with)
 {
     TextView* textView = tv;
+    printf("Range %zu %zu\n with '%s'\n", start, len);
+    NSLog(@"Replacing length %zu\n", textView.string.length);
     textView.executing_back = YES;
     [textView replaceCharactersInRange: NSMakeRange(start, len)
                       withString: [NSString stringWithUTF8String:(const char*)with]
     ];
     textView.executing_back = NO;
+    printf("Replaced\n");
 }
 
 void

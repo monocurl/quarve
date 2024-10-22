@@ -937,7 +937,7 @@ mod text_view {
                     }, s);
 
                     let gui = run.gui_info.binding();
-                    run.content.listen(move |c, s| {
+                    run.content.listen(move |c,  s| {
                         let mut g = *gui.borrow(s);
                         g.dirty = true;
                         g.codeunits = c.0.encode_utf16().count();
@@ -1673,6 +1673,7 @@ mod text_view {
             {
                 fn replace_utf16_range(&self, range: Range<usize>, with: String, s: MSlock) {
                     let find_pos = |mut pos| {
+                        let len = self.runs.borrow(s).len();
                         for (i, run) in self.runs.borrow(s).iter().enumerate() {
                             let cu = run.gui_info.borrow(s).codeunits;
                             if pos <= cu {
@@ -1696,8 +1697,11 @@ mod text_view {
                                 unreachable!("bad utf16")
                             }
 
+                            pos -= cu;
                             // dont forget new line
-                            pos -= cu + 1;
+                            if i == len - 1 {
+                                pos -= 1
+                            }
                         }
 
                         return (self.num_runs(s), pos)
@@ -1813,8 +1817,9 @@ mod text_view {
         use std::ffi::c_void;
         use std::marker::PhantomData;
         use std::ops::{Deref, Range};
+        use std::ptr::replace;
         use std::sync::Arc;
-        use crate::core::{Environment, MSlock};
+        use crate::core::{Environment, MSlock, Slock};
         use crate::{native};
         use crate::native::view::text_view::{text_view_full_replace, text_view_init};
         use crate::state::{Bindable, Binding, Buffer, Filterless, GroupAction, Signal, Store, StoreContainer, StoreContainerView, StringActionBasis, VecActionBasis, WeakBinding, Word};
@@ -2384,65 +2389,86 @@ mod text_view {
                     true
                 }, s);
 
+
+                let weak_runs = self.page.runs.weak_binding();
+                let weak_inv = invalidator.clone();
+                let handle_run = move |run: &Run<P::IntrinsicAttribute, P::DerivedAttribute>, s: Slock| {
+                    let mut curr = *run.gui_info.borrow(s);
+                    curr.dirty = true;
+
+                    if !curr.added_vp_listener {
+                        curr.added_vp_listener = true;
+
+                        // range updating
+                        let runs = weak_runs.clone();
+                        let id = run.gui_info.address();
+                        run.content_action_listen(move |c, a, s| {
+                            let runs = runs.upgrade().unwrap();
+                            let mut pos = 0;
+                            let mut found = false;
+                            let len = runs.borrow(s).len();
+                            for (i, run) in runs.borrow(s).iter().enumerate() {
+                                if run.gui_info.address() == id {
+                                    found = true;
+                                    break
+                                }
+
+                                // notice that action listen finishes before the
+                                // codeunits are updated, but we're looking
+                                // at previous run codeunits which are valid
+                                pos += run.gui_info.borrow(s).codeunits;
+                                // new line character
+                                if i != len - 1 {
+                                    pos += 1;
+                                }
+                            }
+
+                            if !found {
+                                return false;
+                            }
+
+                            if !IN_TEXTVIEW_FRONT_CALLBACK.get() {
+                                // must be called on main thread
+                                let mslock = s.try_to_main_slock().unwrap();
+                                for StringActionBasis::ReplaceSubrange(act, with) in a.iter() {
+                                    let exact_pos = pos + c.0[..act.start].encode_utf16().count();
+                                    let end_pos = exact_pos + c.0[act.start..act.end].encode_utf16().count();
+                                    native::view::text_view::text_view_replace(backing_id as *mut c_void, exact_pos..end_pos, &with, mslock);
+                                }
+                            }
+
+                            true
+                        }, s);
+                        // make sure to set it before we add
+                        // the listener so we don't invalidate instantly
+                        run.gui_info.apply(Set(curr), s);
+
+                        let invalidator_copy = weak_inv.clone();
+                        run.gui_info.listen(move |gui, s| {
+                            let Some(invalidator) = invalidator_copy.upgrade() else {
+                                return false;
+                            };
+                            if gui.dirty {
+                                invalidator.invalidate(s);
+                            }
+                            true
+                        }, s);
+                    }
+                    else {
+                        run.gui_info.apply(Set(curr), s);
+                    }
+                };
+
+                for run in self.page.runs.borrow(s).iter() {
+                    handle_run(run, s.to_general_slock())
+                }
+
                 // invalidate whenever a run is inserted or deleted
                 let weak_inv = invalidator;
-                let weak_runs = self.page.runs.weak_binding();
                 self.page.runs.action_listen(move |r, a, s| {
                     let Some(inv) = weak_inv.upgrade() else {
                         return false;
                     };
-
-                    let handle_run = |run: &Run<P::IntrinsicAttribute, P::DerivedAttribute>| {
-                        let mut curr = *run.gui_info.borrow(s);
-                        curr.dirty = true;
-
-                        if !curr.added_vp_listener {
-                            curr.added_vp_listener = true;
-
-                            // range updating
-                            let runs = weak_runs.clone();
-                            let id = run.gui_info.address();
-                            run.content_action_listen(move |c, a, s| {
-                                let runs = runs.upgrade().unwrap();
-                                let mut pos = 0;
-                                for run in runs.borrow(s).iter() {
-                                    if run.gui_info.address() == id {
-                                        break
-                                    }
-
-                                    pos += run.gui_info.borrow(s).codeunits;
-                                    // new line character
-                                    pos += 1;
-                                }
-
-                                if !IN_TEXTVIEW_FRONT_CALLBACK.get() {
-                                    // must be called on main thread
-                                    let mslock = s.try_to_main_slock().unwrap();
-                                    for StringActionBasis::ReplaceSubrange(act, with) in a.iter() {
-                                        let exact_pos = pos + c.0[..act.start].encode_utf16().count();
-                                        let end_pos = exact_pos + c.0[act.start..act.end].encode_utf16().count();
-                                        native::view::text_view::text_view_replace(backing_id as *mut c_void, exact_pos..end_pos, &with, mslock);
-                                    }
-                                }
-
-                                true
-                            }, s);
-
-                            let invalidator_copy = weak_inv.clone();
-                            run.gui_info.listen(move |gui, s| {
-                                let Some(invalidator) = invalidator_copy.upgrade() else {
-                                    return false;
-                                };
-                                if gui.dirty {
-                                    invalidator.invalidate(s);
-                                }
-                                true
-                            }, s);
-                        }
-
-                        run.gui_info.apply(Set(curr), s);
-                    };
-
                     // invalidate whenever a particular run is edited
                     for action in a.iter() {
                         let replaced_range: Range<usize>;
@@ -2450,55 +2476,114 @@ mod text_view {
 
                         match action {
                             VecActionBasis::Insert(run, at) => {
-                                handle_run(run);
+                                handle_run(run, s);
 
                                 let mut pos = 0;
                                 for i in 0 .. *at {
+                                    pos += r[i].gui_info.borrow(s).codeunits;
                                     // include newline
-                                    pos += r[i].gui_info.borrow(s).codeunits + 1;
+                                    if i != r.len() - 1 {
+                                        pos += 1
+                                    }
                                 }
 
                                 replaced_range = pos .. pos;
-                                with = run.content(s).deref().to_string() + "\n"
+                                with = run.content(s).deref().to_string() + "\n";
+                                // rotate
+                                if *at == r.len() {
+                                    if *at == 0 {
+                                        with.remove(with.len() - 1);
+                                    }
+                                    else {
+                                        with = "\n".to_owned() + &with[..with.len() - 1]
+                                    }
+                                }
                             }
                             VecActionBasis::InsertMany(runs, at) => {
-                                runs.iter().for_each(handle_run);
+                                runs.iter().for_each(|r| handle_run(r, s));
 
                                 let mut pos = 0;
                                 for i in 0 .. *at {
+                                    pos += r[i].gui_info.borrow(s).codeunits;
                                     // include newline
-                                    pos += r[i].gui_info.borrow(s).codeunits + 1;
+                                    if i != r.len() - 1 {
+                                        pos += 1
+                                    }
                                 }
 
                                 replaced_range = pos .. pos;
                                 with = runs
                                     .iter()
                                     .map(|r| r.content(s))
-                                    .fold("".to_string(), |a, b| a + &b + "\n")
+                                    .fold("".to_string(), |a, b| a + &b + "\n");
+
+                                // if last, flip position of "\n"
+                                if *at == r.len() {
+                                    if *at == 0 {
+                                        with.remove(with.len() - 1);
+                                    }
+                                    else {
+                                        with = "\n".to_owned() + &with[..with.len() - 1]
+                                    }
+                                }
                             }
                             VecActionBasis::Remove(at) => {
                                 let mut pos = 0;
                                 for i in 0 .. *at {
-                                    pos += r[i].gui_info.borrow(s).codeunits + 1;
+                                    pos += r[i].gui_info.borrow(s).codeunits;
+                                    // include newline
+                                    if i != r.len() - 1 {
+                                        pos += 1
+                                    }
                                 }
 
-                                replaced_range = pos .. (pos + r[*at].gui_info.borrow(s).codeunits + 1);
+                                let end = pos + r[*at].gui_info.borrow(s).codeunits + 1;
+                                // if last, shift
+                                if *at == r.len() - 1 {
+                                    if *at == 0 {
+                                        replaced_range = pos .. (end - 1);
+                                    }
+                                    else {
+                                        replaced_range = (pos - 1) .. (end - 1);
+                                    }
+                                } else {
+                                    replaced_range = pos .. end;
+                                };
                             }
                             VecActionBasis::RemoveMany(range) => {
                                 let mut pos = 0;
                                 for i in 0 .. range.start {
-                                    pos += r[i].gui_info.borrow(s).codeunits + 1;
+                                    pos += r[i].gui_info.borrow(s).codeunits;
+                                    // include newline
+                                    if i != r.len() - 1 {
+                                        pos += 1
+                                    }
                                 }
 
                                 let mut end = pos;
                                 for i in range.clone() {
-                                    end += r[i].gui_info.borrow(s).codeunits + 1
+                                    end += r[i].gui_info.borrow(s).codeunits;
+                                    // include newline
+                                    if i != r.len() - 1 {
+                                        end += 1
+                                    }
                                 }
 
-                                replaced_range = pos .. end;
+                                if range.end == r.len() {
+                                    if range.start == 0 {
+                                        replaced_range = 0..end
+                                    }
+                                    else {
+                                        replaced_range = pos - 1 .. end
+                                    }
+                                }
+                                else {
+                                    replaced_range = pos .. end;
+                                }
                             }
-                            _ => {
-                                continue
+                            VecActionBasis::Swap(_, _) => {
+                                // we dont use swaps
+                                unreachable!()
                             }
                         }
 

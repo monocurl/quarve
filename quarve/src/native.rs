@@ -105,6 +105,7 @@ impl From<BufferEvent> for Event {
 mod callbacks {
     use std::ffi::{c_char, CStr, CString};
     use std::ops::Deref;
+    use std::panic::catch_unwind;
     use crate::core::{APP, MSlock, slock_force_main_owner, slock_main_owner, SlockOwner};
     use crate::native::{BufferEvent, FatPointer};
     use crate::util::geo::ScreenUnit;
@@ -161,6 +162,7 @@ mod callbacks {
 
         /* main thread only */
         let s = slock_main_owner();
+        println!("Called");
         b(s);
     }
 
