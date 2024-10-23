@@ -1416,7 +1416,6 @@ mod text_view {
             use crate::view::text::CursorState;
             use crate::view::text::text_view::state::{AttributeSet, Run, RunsContainer};
             use crate::view::text::text_view::state::attribute_holder::{AttributeHolder};
-            use crate::view::undo_manager::UndoManager;
 
             #[derive(Copy, Clone)]
             pub(crate) struct PageGUIInfo {
@@ -1713,9 +1712,7 @@ mod text_view {
 
                     let start = find_pos(range.start);
                     let end = find_pos(range.end);
-                    println!("Old Content: {:?}", self.build_full_content(s));
                     self.replace_range(start.0, start.1, end.0, end.1, with, s);
-                    println!("New Content: {:?}", self.build_full_content(s));
                 }
             }
         }
@@ -1733,7 +1730,10 @@ mod text_view {
             #[derive(StoreContainer)]
             pub struct TextViewState<I, D> where I: AttributeSet, D: AttributeSet {
                 pub(crate) pages: Store<Vec<StoreContainerSource<Page<I, D>>>>,
-                pub(crate) selected_page: Store<Option<usize>>
+
+                // i32 so it matches the focus
+                // maybe change this in the future? usize is better...
+                pub(crate) selected_page: Store<Option<i32>>
             }
 
             impl<I, D> TextViewState<I, D> where I: AttributeSet, D: AttributeSet {
@@ -1772,7 +1772,7 @@ mod text_view {
                     let Some(page_num) = *self.selected_page.borrow(s) else {
                         return;
                     };
-                    let page = self.page(page_num, s);
+                    let page = self.page(page_num as usize, s);
                     let cursor = page.selection();
                     page.replace_range(
                         cursor.start_run(s),
@@ -1783,15 +1783,17 @@ mod text_view {
                     );
                 }
 
-                pub fn selected_page(&self, s: Slock<impl ThreadMarker>) -> Option<usize> {
+                pub fn selected_page(&self, s: Slock<impl ThreadMarker>) -> Option<i32> {
                     *self.selected_page.borrow(s)
                 }
 
-                pub fn set_selected_page(&self, page: Option<usize>, s: Slock<impl ThreadMarker>) {
+                pub fn set_selected_page(&self, page: Option<i32>, s: Slock<impl ThreadMarker>) {
+                    assert!(page.unwrap_or(0) >= 0);
+
                     self.selected_page.apply(SetAction::Set(page), s);
                 }
 
-                pub fn selected_page_binding(&self) -> impl Binding<Filterless<Option<usize>>> {
+                pub fn selected_page_binding(&self) -> impl Binding<Filterless<Option<i32>>> {
                     self.selected_page.binding()
                 }
 
@@ -1821,18 +1823,19 @@ mod text_view {
         use std::ffi::c_void;
         use std::marker::PhantomData;
         use std::ops::{Deref, Range};
-        use std::ptr::replace;
         use std::sync::Arc;
-        use crate::core::{Environment, MSlock, Slock};
+        use crate::core::{Environment, MSlock, Slock, StandardConstEnv};
         use crate::{native};
-        use crate::native::view::text_view::{text_view_full_replace, text_view_init};
-        use crate::state::{Bindable, Binding, Buffer, Filterless, GroupAction, Signal, Store, StoreContainer, StoreContainerView, StringActionBasis, VecActionBasis, WeakBinding, Word};
+        use crate::event::{Event, EventPayload, EventResult, MouseEvent};
+        use crate::native::view::text_view::{text_view_copy, text_view_cut, text_view_focus, text_view_full_replace, text_view_init, text_view_paste, text_view_select_all, text_view_set_page_num, text_view_unfocus};
+        use crate::state::{ActualDiffSignal, Bindable, Binding, Buffer, Filterless, Signal, Store, StoreContainer, StoreContainerView, StringActionBasis, VecActionBasis, WeakBinding, Word};
         use crate::state::SetAction::Set;
         use crate::state::slock_cell::MainSlockCell;
         use crate::util::{FromOptions, geo};
         use crate::util::geo::{Inset, Rect, ScreenUnit, Size};
         use crate::view::{EnvRef, IntoViewProvider, NativeView, NativeViewState, Subtree, TrivialContextViewRef, View, ViewProvider, ViewRef, WeakInvalidator};
         use crate::view::layout::{BindingVMap, LayoutProvider, VecBindingLayout, VecLayoutProvider, VStackOptions};
+        use crate::view::menu::MenuChannel;
         use crate::view::text::{AttributeSet, Page, Run, TextViewState};
 
         thread_local! {
@@ -1886,7 +1889,10 @@ mod text_view {
             }
         }
 
-        impl<E, P> IntoViewProvider<E> for TextView<E, P> where E: Environment, P: TextViewProvider<E> {
+        impl<E, P> IntoViewProvider<E> for TextView<E, P>
+            where E: Environment,
+                  E::Const: AsRef<StandardConstEnv>,
+                  P: TextViewProvider<E> {
             type UpContext = ();
             type DownContext = ();
 
@@ -1925,6 +1931,7 @@ mod text_view {
 
         impl<E, P, VP> ViewProvider<E> for TextViewVP<E, P, VP>
             where E: Environment,
+                  E::Const: AsRef<StandardConstEnv>,
                   P: TextViewProvider<E>,
                   VP: ViewProvider<E, DownContext=()>
         {
@@ -1994,9 +2001,9 @@ mod text_view {
                 let mut current = self.state.selected_page(s);
                 for (i, p) in pages.iter().enumerate() {
                     let mut gui = *p.gui_info.borrow(s);
-                    if current == Some(gui.page_num) {
-                        self.state.set_selected_page(Some(i), s);
-                        current = Some(i);
+                    if current == Some(gui.page_num as i32) {
+                        self.state.set_selected_page(Some(i as i32), s);
+                        current = Some(i as i32);
                     }
 
                     gui.page_num = i;
@@ -2019,24 +2026,27 @@ mod text_view {
         // all components of a page
         struct PageCoordinator<E, B, P, D>
             where E: Environment,
+                  E::Const: AsRef<StandardConstEnv>,
                   B: IntoViewProvider<E, DownContext=()>,
                   P: TextViewProvider<E>,
                   D: IntoViewProvider<E, DownContext=()>
         {
             provider: Arc<MainSlockCell<P>>,
             background: B,
-            page_view: PageVP<E, P>,
+            page_view: PageIVP<E, P>,
             decorations: D,
             phantom: PhantomData<E>
         }
 
         fn new_page_coordinator<E, P>(
             provider: Arc<MainSlockCell<P>>,
-            selected_page: <Store<Option<usize>> as Bindable<Filterless<Option<usize>>>>::Binding,
+            selected_page: <Store<Option<i32>> as Bindable<Filterless<Option<i32>>>>::Binding,
             page: StoreContainerView<Page<P::IntrinsicAttribute, P::DerivedAttribute>>,
             s: MSlock
         ) -> PageCoordinator<E, impl IntoViewProvider<E, DownContext=()>, P, impl IntoViewProvider<E, DownContext=()>>
-            where E: Environment, P: TextViewProvider<E>
+            where E: Environment,
+                  E::Const: AsRef<StandardConstEnv>,
+                  P: TextViewProvider<E>
         {
             fn _background<E, P>(page: &'static Page<P::IntrinsicAttribute, P::DerivedAttribute>, s: MSlock<'static>, p: &'static P)
                                  -> impl IntoViewProvider<E, DownContext=()> + 'static
@@ -2091,12 +2101,10 @@ mod text_view {
             PageCoordinator {
                 provider: provider.clone(),
                 background,
-                page_view: PageVP {
+                page_view: PageIVP {
                     selected_page,
                     page,
                     provider,
-                    total_height: 0.0,
-                    text_view: 0 as *mut c_void,
                 },
                 decorations,
                 phantom: Default::default(),
@@ -2105,6 +2113,7 @@ mod text_view {
 
         impl<E, B, P, D> IntoViewProvider<E> for PageCoordinator<E, B, P, D>
             where E: Environment,
+                  E::Const: AsRef<StandardConstEnv>,
                   B: IntoViewProvider<E, DownContext=()>,
                   P: TextViewProvider<E>,
                   D: IntoViewProvider<E, DownContext=()>
@@ -2116,7 +2125,7 @@ mod text_view {
                 let lp = PageCoordinatorLP {
                     provider: self.provider,
                     background: self.background.into_view_provider(env, s).into_view(s),
-                    page_view: self.page_view.into_view(s),
+                    page_view: self.page_view.into_view_provider(env, s).into_view(s),
                     decorations: self.decorations.into_view_provider(env, s).into_view(s),
                     phantom: PhantomData
                 };
@@ -2125,24 +2134,26 @@ mod text_view {
             }
         }
 
-        struct PageCoordinatorLP<E, B, P, D>
+        struct PageCoordinatorLP<E, B, P, D, V>
             where E: Environment,
                   B: ViewProvider<E, DownContext=()>,
                   P: TextViewProvider<E>,
-                  D: ViewProvider<E, DownContext=()>
+                  D: ViewProvider<E, DownContext=()>,
+                  V: ViewProvider<E, DownContext=()>
         {
             provider: Arc<MainSlockCell<P>>,
             background: View<E, B>,
-            page_view: View<E, PageVP<E, P>>,
+            page_view: View<E, V>,
             decorations: View<E, D>,
             phantom: PhantomData<E>
         }
 
-        impl<E, B, P, D> LayoutProvider<E> for PageCoordinatorLP<E, B, P, D>
+        impl<E, B, P, D, V> LayoutProvider<E> for PageCoordinatorLP<E, B, P, D, V>
             where E: Environment,
                   B: ViewProvider<E, DownContext=()>,
                   P: TextViewProvider<E>,
-                  D: ViewProvider<E, DownContext=()>
+                  D: ViewProvider<E, DownContext=()>,
+                  V: ViewProvider<E, DownContext=()>
         {
             type DownContext = ();
             type UpContext = ();
@@ -2324,12 +2335,53 @@ mod text_view {
         }
 
         // just the text
+        struct PageIVP<E, P>
+            where P: TextViewProvider<E>,
+                  E: Environment,
+                  E::Const: AsRef<StandardConstEnv>
+        {
+            selected_page: <Store<Option<i32>> as Bindable<Filterless<Option<i32>>>>::Binding,
+            page: StoreContainerView<Page<P::IntrinsicAttribute, P::DerivedAttribute>>,
+            provider: Arc<MainSlockCell<P>>,
+        }
+
+        impl<E, P> IntoViewProvider<E> for PageIVP<E, P>
+            where E: Environment, P: TextViewProvider<E>,
+                  E::Const: AsRef<StandardConstEnv>
+        {
+            type UpContext = ();
+            type DownContext = ();
+
+            fn into_view_provider(self, env: &E::Const, _s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
+                let env = env.as_ref();
+                PageVP {
+                    selected_page: self.selected_page,
+                    page: self.page,
+                    provider: self.provider,
+                    total_height: 0.0,
+                    text_view: 0 as *mut c_void,
+                    last_size: Default::default(),
+                    select_all_menu: env.channels.select_all_menu.clone(),
+                    cut_menu: env.channels.cut_menu.clone(),
+                    copy_menu: env.channels.copy_menu.clone(),
+                    paste_menu: env.channels.paste_menu.clone(),
+                }
+            }
+        }
+
         struct PageVP<E, P> where P: TextViewProvider<E>, E: Environment {
-            selected_page: <Store<Option<usize>> as Bindable<Filterless<Option<usize>>>>::Binding,
+            selected_page: <Store<Option<i32>> as Bindable<Filterless<Option<i32>>>>::Binding,
             page: StoreContainerView<Page<P::IntrinsicAttribute, P::DerivedAttribute>>,
             provider: Arc<MainSlockCell<P>>,
             total_height: ScreenUnit,
             text_view: *mut c_void,
+
+            last_size: Size,
+
+            select_all_menu: MenuChannel,
+            cut_menu: MenuChannel,
+            copy_menu: MenuChannel,
+            paste_menu: MenuChannel,
         }
 
         impl<E, P> ViewProvider<E> for PageVP<E, P>
@@ -2369,7 +2421,7 @@ mod text_view {
                         bs.backing()
                     }
                     else {
-                        let backing = text_view_init(self.page.clone(), s);
+                        let backing = text_view_init(self.page.clone(), self.selected_page.clone(), s);
                         text_view_full_replace(backing, &self.page.build_full_content(s), s);
                         backing
                     };
@@ -2382,6 +2434,17 @@ mod text_view {
                     run.gui_info.apply(Set(gui), s);
                 }
 
+                // invalidate whenever page num is changed (necessary for updating selected page)
+                let inv = invalidator.clone();
+                self.page.gui_info.listen(move |_, s| {
+                    inv.try_upgrade_invalidate(s)
+                }, s);
+
+                let inv = invalidator.clone();
+                self.selected_page.diff_listen(move |l, s| {
+                    inv.try_upgrade_invalidate(s)
+                }, s);
+
                 // invalidate whenever page of cursor changes
                 let inv = invalidator.clone();
                 self.selected_page.listen(move |_, s| {
@@ -2393,7 +2456,129 @@ mod text_view {
                     true
                 }, s);
 
+                self.run_listen(invalidator, s, backing_id);
 
+                self.text_view = backing;
+                unsafe {
+                    NativeView::new(backing, s)
+                }
+            }
+
+            fn layout_up(&mut self, subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, s: MSlock) -> bool {
+                // focus
+                let token = self.page.gui_info.borrow(s).page_num;
+                text_view_set_page_num(self.text_view, token, s);
+
+                let view = Arc::downgrade(subtree.owner());
+                if *self.selected_page.borrow(s) == Some(token as i32) {
+                    // the following request will
+                    // subsequently force us to change the token if necesary
+                    // TODO this needs work
+                    subtree.window().and_then(|w| w.upgrade()).unwrap()
+                        .borrow_main(s)
+                        .request_focus(view);
+                }
+                else {
+                    subtree.window().and_then(|w| w.upgrade()).unwrap()
+                        .borrow_main(s)
+                        .unrequest_focus(view);
+                }
+
+                // rewrite line numbers
+                // - IMPORTANT: the dirty flag is set to false whenever we flush the changes
+                // - so we don't have to worry about recursive invalidation
+                // relay attrs of affected lines
+                // and recalculate line heights (hard)
+                self.total_height = 0.0;
+                for (i, run) in self.page.runs.borrow(s).iter().enumerate() {
+                    let mut gui = *run.gui_info.borrow(s);
+
+                    if gui.dirty {
+                        // adjust line attributes
+
+                        // calculating line height
+                        gui.page_height = 600.0;
+                    }
+
+                    // only send flush if necessary
+                    if gui.line != i || gui.dirty {
+                        gui.dirty = false;
+                        gui.line = i;
+                        run.gui_info.apply(Set(gui), s);
+                    }
+
+                    self.total_height += gui.page_height;
+                }
+
+                // relay cursor information + number (easy)
+                // todo!()
+                true
+            }
+
+            fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, _layout_context: &Self::DownContext, _env: &mut EnvRef<E>, _s: MSlock) -> (Rect, Rect) {
+                let rect = Rect::new(0.0, 0.0, frame.w, self.total_height);
+                (rect, rect)
+            }
+
+            fn focused(&self, _rel_depth: u32, s: MSlock) {
+                let token = self.page.gui_info.borrow(s).page_num;
+                if *self.selected_page.borrow(s) != Some(token as i32) {
+                    self.selected_page.apply(Set(Some(token as i32)), s);
+                }
+
+                text_view_focus(self.text_view, s);
+
+                let backing = self.text_view;
+                self.select_all_menu.set(Box::new(move |s| {
+                    text_view_select_all(backing, s);
+                }), None, s);
+                self.cut_menu.set(Box::new(move |s| {
+                    text_view_cut(backing, s);
+                }), None, s);
+                self.copy_menu.set(Box::new(move |s| {
+                    text_view_copy(backing, s);
+                }), None, s);
+                self.paste_menu.set(Box::new(move |s| {
+                    text_view_paste(backing, s);
+                }), None, s);
+            }
+
+            fn unfocused(&self, _rel_depth: u32, s: MSlock) {
+                let token = self.page.gui_info.borrow(s).page_num;
+                if *self.selected_page.borrow(s) == Some(token as i32) {
+                    self.selected_page.apply(Set(None), s);
+                }
+
+                text_view_unfocus(self.text_view, s);
+
+                self.select_all_menu.unset(s);
+                self.copy_menu.unset(s);
+                self.cut_menu.unset(s);
+                self.paste_menu.unset(s);
+            }
+
+            fn handle_event(&self, e: &Event, _s: MSlock) -> EventResult {
+                if e.is_mouse() {
+                    if let EventPayload::Mouse(MouseEvent::LeftDown, at) = &e.payload {
+                        if self.last_size.full_rect().contains(*at) {
+                            EventResult::FocusAcquire
+                        }
+                        else {
+                            EventResult::FocusRelease
+                        }
+                    }
+                    else {
+                        EventResult::NotHandled
+                    }
+                }
+                else {
+                    EventResult::Handled
+                }
+            }
+        }
+
+        impl<E, P> PageVP<E, P> where E: Environment, P: TextViewProvider<E> {
+            fn run_listen(&mut self, invalidator: WeakInvalidator<E>, s: MSlock, backing_id: usize) {
                 let weak_runs = self.page.runs.weak_binding();
                 let weak_inv = invalidator.clone();
                 let handle_run = move |run: &Run<P::IntrinsicAttribute, P::DerivedAttribute>, s: Slock| {
@@ -2457,8 +2642,7 @@ mod text_view {
                             }
                             true
                         }, s);
-                    }
-                    else {
+                    } else {
                         run.gui_info.apply(Set(curr), s);
                     }
                 };
@@ -2483,7 +2667,7 @@ mod text_view {
                                 handle_run(run, s);
 
                                 let mut pos = 0;
-                                for i in 0 .. *at {
+                                for i in 0..*at {
                                     pos += r[i].gui_info.borrow(s).codeunits;
                                     // include newline
                                     if i != r.len() - 1 {
@@ -2491,14 +2675,13 @@ mod text_view {
                                     }
                                 }
 
-                                replaced_range = pos .. pos;
+                                replaced_range = pos..pos;
                                 with = run.content(s).deref().to_string() + "\n";
                                 // rotate
                                 if *at == r.len() {
                                     if *at == 0 {
                                         with.remove(with.len() - 1);
-                                    }
-                                    else {
+                                    } else {
                                         with = "\n".to_owned() + &with[..with.len() - 1]
                                     }
                                 }
@@ -2507,7 +2690,7 @@ mod text_view {
                                 runs.iter().for_each(|r| handle_run(r, s));
 
                                 let mut pos = 0;
-                                for i in 0 .. *at {
+                                for i in 0..*at {
                                     pos += r[i].gui_info.borrow(s).codeunits;
                                     // include newline
                                     if i != r.len() - 1 {
@@ -2515,7 +2698,7 @@ mod text_view {
                                     }
                                 }
 
-                                replaced_range = pos .. pos;
+                                replaced_range = pos..pos;
                                 with = runs
                                     .iter()
                                     .map(|r| r.content(s))
@@ -2525,15 +2708,14 @@ mod text_view {
                                 if *at == r.len() {
                                     if *at == 0 {
                                         with.remove(with.len() - 1);
-                                    }
-                                    else {
+                                    } else {
                                         with = "\n".to_owned() + &with[..with.len() - 1]
                                     }
                                 }
                             }
                             VecActionBasis::Remove(at) => {
                                 let mut pos = 0;
-                                for i in 0 .. *at {
+                                for i in 0..*at {
                                     pos += r[i].gui_info.borrow(s).codeunits;
                                     // include newline
                                     if i != r.len() - 1 {
@@ -2545,18 +2727,17 @@ mod text_view {
                                 // if last, shift
                                 if *at == r.len() - 1 {
                                     if *at == 0 {
-                                        replaced_range = pos .. (end - 1);
-                                    }
-                                    else {
-                                        replaced_range = (pos - 1) .. (end - 1);
+                                        replaced_range = pos..(end - 1);
+                                    } else {
+                                        replaced_range = (pos - 1)..(end - 1);
                                     }
                                 } else {
-                                    replaced_range = pos .. end;
+                                    replaced_range = pos..end;
                                 };
                             }
                             VecActionBasis::RemoveMany(range) => {
                                 let mut pos = 0;
-                                for i in 0 .. range.start {
+                                for i in 0..range.start {
                                     pos += r[i].gui_info.borrow(s).codeunits;
                                     // include newline
                                     if i != r.len() - 1 {
@@ -2576,13 +2757,11 @@ mod text_view {
                                 if range.end == r.len() {
                                     if range.start == 0 {
                                         replaced_range = 0..end
+                                    } else {
+                                        replaced_range = pos - 1..end
                                     }
-                                    else {
-                                        replaced_range = pos - 1 .. end
-                                    }
-                                }
-                                else {
-                                    replaced_range = pos .. end;
+                                } else {
+                                    replaced_range = pos..end;
                                 }
                             }
                             VecActionBasis::Swap(_, _) => {
@@ -2599,47 +2778,6 @@ mod text_view {
                     inv.invalidate(s);
                     true
                 }, s);
-
-                unsafe {
-                    NativeView::new(backing, s)
-                }
-            }
-
-            fn layout_up(&mut self, _subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, s: MSlock) -> bool {
-                // rewrite line numbers
-                // - IMPORTANT: the dirty flag is set to false whenever we flush the changes
-                // - so we don't have to worry about recursive invalidation
-                // relay attrs of affected lines
-                // and recalculate line heights (hard)
-                self.total_height = 0.0;
-                for (i, run) in self.page.runs.borrow(s).iter().enumerate() {
-                    let mut gui = *run.gui_info.borrow(s);
-
-                    if gui.dirty {
-                        // adjust line attributes
-
-                        // calculating line height
-                        gui.page_height = 600.0;
-                    }
-
-                    // only send flush if necessary
-                    if gui.line != i || gui.dirty {
-                        gui.dirty = false;
-                        gui.line = i;
-                        run.gui_info.apply(Set(gui), s);
-                    }
-
-                    self.total_height += gui.page_height;
-                }
-
-                // relay cursor information + number (easy)
-                // todo!()
-                true
-            }
-
-            fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, _layout_context: &Self::DownContext, _env: &mut EnvRef<E>, _s: MSlock) -> (Rect, Rect) {
-                let rect = Rect::new(0.0, 0.0, frame.w, self.total_height);
-                (rect, rect)
             }
         }
     }

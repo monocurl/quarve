@@ -1329,7 +1329,7 @@ mod store {
     mod action_inverter {
         use std::marker::PhantomData;
         use std::sync::Weak;
-        use crate::core::{MSlock, Slock};
+        use crate::core::{MSlock};
         use crate::state::listener::DirectlyInvertible;
         use crate::state::slock_cell::SlockCell;
         use crate::state::{StateFilter, Stateful};

@@ -284,26 +284,24 @@ impl quarve::core::WindowProvider for WindowProvider {
         //             .align(Alignment::Center)
         //         );
 
-        TextView::new(tv.view(), TVProvider {})
-            .frame(Frame::default()
-                .intrinsic(100, 400)
-                .stretched(10000, 400)
-            )
-            .border(Color::white(), 1)
-            .into_view_provider(env, s)
+        VStack::hetero()
+            .push(
+                TextView::new(tv.view(), TVProvider {})
+                    .frame(Frame::default()
+                        .intrinsic(100, 400)
+                        .stretched(10000, 400)
+                    )
+                    .border(Color::white(), 1)
 
-        // VStack::hetero()
-        //     .push(
-        //             // .bg_color(Color::rgba(0,0,0,120))
-        //     )
-        //     .push(
-        //         TextField::new(text.binding())
-        //             // .focused_if_eq(focused.binding(), 3)
-        //             .text_size(24.0)
-        //     )
+            )
+            .push(
+                TextField::new(text.binding())
+                    // .focused_if_eq(focused.binding(), 3)
+                    .text_size(24.0)
+            )
         //     // .push(v1)
         //     // .push(v2)
-        //     .into_view_provider(env, s)
+            .into_view_provider(env, s)
     }
 
     fn menu(&self, env: &<Self::Env as Environment>::Const, s: MSlock) -> WindowMenu {

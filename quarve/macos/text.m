@@ -377,8 +377,10 @@ back_text_field_paste(void *view)
 }
 
 // MARK: textview
-@interface TextView : NSTextView
+@interface TextView : NSTextView<NSTextViewDelegate>
 @property fat_pointer state;
+@property fat_pointer selected;
+@property size_t page_num;
 @property BOOL executing_back;
 @end
 
@@ -397,20 +399,31 @@ back_text_field_paste(void *view)
     }
     return YES;
 }
-@end
 
-@interface TextViewDelegate : NSObject<NSTextViewDelegate>
-@end
+- (BOOL)becomeFirstResponder {
+    front_set_token_binding(self.selected, 1, (int32_t) self.page_num);
+    return [super becomeFirstResponder];
+}
 
-@implementation TextViewDelegate
-@end
+- (BOOL)resignFirstResponder {
+    front_set_token_binding(self.selected, 0, 0);
+    return [super resignFirstResponder];
+}
 
+- (void)dealloc {
+    [super dealloc];
+
+    front_free_token_binding(self.selected);
+    front_free_textview_state(self.state);
+}
+@end
 
 void *
-back_text_view_init(fat_pointer state)
+back_text_view_init(fat_pointer state, fat_pointer selected)
 {
     TextView* tv = [[TextView alloc] initWithFrame:NSMakeRect(0, 0,
                1000, 500)];
+
     [tv setHorizontallyResizable:NO];
     [tv setVerticallyResizable:YES];
     [[tv textContainer]
@@ -419,7 +432,8 @@ back_text_view_init(fat_pointer state)
     [[tv textContainer] setHeightTracksTextView:NO];
     [tv setAutoresizingMask:NSViewWidthSizable];
 
-
+    tv.page_num = 0;
+    tv.selected = selected;
     tv.state = state;
     tv.drawsBackground = NO;
     tv.richText = NO;
@@ -432,6 +446,7 @@ back_text_view_init(fat_pointer state)
     tv.automaticDashSubstitutionEnabled = NO;
     tv.automaticLinkDetectionEnabled = NO;
     tv.automaticDataDetectionEnabled = NO;
+    tv.delegate = tv;
 
     return tv;
 }
@@ -450,14 +465,11 @@ void
 back_text_view_replace(void *tv, size_t start, size_t len, const uint8_t* with)
 {
     TextView* textView = tv;
-    printf("Range %zu %zu\n with '%s'\n", start, len);
-    NSLog(@"Replacing length %zu\n", textView.string.length);
     textView.executing_back = YES;
     [textView replaceCharactersInRange: NSMakeRange(start, len)
                       withString: [NSString stringWithUTF8String:(const char*)with]
     ];
     textView.executing_back = NO;
-    printf("Replaced\n");
 }
 
 void
@@ -465,6 +477,7 @@ back_text_view_set_attributes(void *tv)
 {
     TextView* textView = tv;
     textView.executing_back = YES;
+
     textView.executing_back = NO;
 }
 
@@ -473,6 +486,7 @@ back_text_view_set_selection(void *tv)
 {
     TextView* textView = tv;
     textView.executing_back = YES;
+
     textView.executing_back = NO;
 }
 
@@ -481,7 +495,60 @@ back_text_view_get_line_height(void *tv, size_t pos)
 {
     TextView* textView = tv;
     textView.executing_back = YES;
+
     textView.executing_back = NO;
     return -1;
 }
 
+void
+back_text_view_set_page_num(void *tv, size_t page_num)
+{
+    TextView* textView = tv;
+    textView.page_num = page_num;
+}
+
+void
+back_text_view_focus(void *tv)
+{
+    TextView* textView = tv;
+    if (textView.window.firstResponder != textView) {
+        [textView.window makeFirstResponder:textView];
+    }
+}
+
+void
+back_text_view_unfocus(void *tv)
+{
+    TextView* textView = tv;
+    if (textView.window.firstResponder == textView) {
+        [textView.window makeFirstResponder:nil];
+    }
+}
+
+void
+back_text_view_copy(void *tv)
+{
+    TextView *textView = tv;
+    [textView copy:textView];
+}
+
+void
+back_text_view_cut(void *tv)
+{
+    TextView *textView = tv;
+    [textView cut:textView];
+}
+
+void
+back_text_view_paste(void *tv)
+{
+    TextView *textView = tv;
+    [textView paste:textView];
+}
+
+void
+back_text_view_select_all(void *tv)
+{
+    TextView *textView = tv;
+    [textView selectAll:textView];
+}

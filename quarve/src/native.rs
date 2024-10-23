@@ -104,8 +104,6 @@ impl From<BufferEvent> for Event {
 /* back -> front call backs */
 mod callbacks {
     use std::ffi::{c_char, CStr, CString};
-    use std::ops::Deref;
-    use std::panic::catch_unwind;
     use crate::core::{APP, MSlock, slock_force_main_owner, slock_main_owner, SlockOwner};
     use crate::native::{BufferEvent, FatPointer};
     use crate::util::geo::ScreenUnit;
@@ -286,6 +284,13 @@ mod callbacks {
 
         std::mem::forget(view);
         IN_TEXTVIEW_FRONT_CALLBACK.set(old);
+    }
+
+    #[no_mangle]
+    extern "C" fn front_free_textview_state(bx: FatPointer, start: usize, len: usize, value: *const u8) {
+        let _view: Box<dyn PageFrontCallback> = unsafe {
+            std::mem::transmute(bx)
+        };
     }
 }
 
@@ -534,15 +539,28 @@ pub mod view {
         fn back_text_field_paste(view: *mut c_void);
 
         /* text view */
-        fn back_text_view_init(state: FatPointer) -> *mut c_void;
+        fn back_text_view_init(state: FatPointer, selected: FatPointer) -> *mut c_void;
 
         // may discard attributes
         fn back_text_view_full_replace(tv: *mut c_void, with: *const u8);
 
         fn back_text_view_replace(tv: *mut c_void, start: usize, len: usize, with: *const u8);
+        // returns if it's currently focused (and thus must updated page numbers)
+        fn back_text_view_set_page_num(tv: *mut c_void, page_num: usize);
+        fn back_text_view_focus(tv: *mut c_void);
+        fn back_text_view_unfocus(tv: *mut c_void);
+
+        fn back_text_view_copy(tv: *mut c_void);
+
+        fn back_text_view_cut(tv: *mut c_void);
+
+        fn back_text_view_paste(tv: *mut c_void);
+
+        fn back_text_view_select_all(tv: *mut c_void);
 
         /* message box */
         fn back_message_box_init(title: *const u8, message: *const u8) -> *mut c_void;
+
         fn back_message_box_add_button(mb: *mut c_void, button_type: u8);
 
         // returns index that was clicked
@@ -952,15 +970,29 @@ pub mod view {
         use std::ffi::{c_void, CString};
         use std::ops::Range;
         use crate::core::{MSlock};
-        use crate::native::FatPointer;
-        use crate::native::view::{back_text_view_full_replace, back_text_view_init, back_text_view_replace};
-        use crate::state::StoreContainerView;
+        use crate::native::view::{back_text_view_copy, back_text_view_cut, back_text_view_focus, back_text_view_full_replace, back_text_view_init, back_text_view_paste, back_text_view_replace, back_text_view_select_all, back_text_view_set_page_num, back_text_view_unfocus};
+        use crate::state::{Binding, Filterless, SetAction, StoreContainerView};
         use crate::view::text::{AttributeSet, Page, PageFrontCallback};
 
-        pub fn text_view_init(state: StoreContainerView<Page<impl AttributeSet, impl AttributeSet>>, _s: MSlock) -> *mut c_void {
+        pub fn text_view_init(
+            state: StoreContainerView<Page<impl AttributeSet, impl AttributeSet>>,
+            selected: impl Binding<Filterless<Option<i32>>>,
+            _s: MSlock
+        ) -> *mut c_void {
             let bx: Box<dyn PageFrontCallback> = Box::new(state);
+
+            let set_selected = Box::new(move |has_val, val, s: MSlock|  {
+                if has_val {
+                    selected.apply(SetAction::Set(Some(val)), s);
+                }
+                else if *selected.borrow(s) == Some(val) {
+                    // only free if it's active
+                    selected.apply(SetAction::Set(None), s);
+                }
+            }) as Box<dyn Fn(bool, i32, MSlock)>;
+
             unsafe {
-                back_text_view_init(std::mem::transmute(bx))
+                back_text_view_init(std::mem::transmute(bx), std::mem::transmute(set_selected))
             }
         }
 
@@ -978,16 +1010,58 @@ pub mod view {
             }
         }
 
+        pub fn text_view_focus(tv: *mut c_void, _s: MSlock) {
+            unsafe {
+                back_text_view_focus(tv)
+            }
+        }
+
+        pub fn text_view_unfocus(tv: *mut c_void, _s: MSlock) {
+            unsafe {
+                back_text_view_unfocus(tv)
+            }
+        }
+
+        pub fn text_view_set_page_num(tv: *mut c_void, num: usize, _s: MSlock) {
+            unsafe {
+                back_text_view_set_page_num(tv, num)
+            }
+        }
+
         pub fn text_view_set_attributes(tv: *mut c_void, _s: MSlock) {
 
         }
 
-        pub fn text_view_set_selection(tv: *mut c_void) {
+        pub fn text_view_set_selection(tv: *mut c_void, _s: MSlock) {
 
         }
 
         pub fn text_view_get_line_height(tv: *mut c_void, _s : MSlock) {
 
+        }
+
+        pub fn text_view_copy(tv: *mut c_void, _s: MSlock) {
+            unsafe {
+                back_text_view_copy(tv)
+            }
+        }
+
+        pub fn text_view_cut(tv: *mut c_void, _s: MSlock) {
+            unsafe {
+                back_text_view_cut(tv)
+            }
+        }
+
+        pub fn text_view_paste(tv: *mut c_void, _s: MSlock) {
+            unsafe {
+                back_text_view_paste(tv)
+            }
+        }
+
+        pub fn text_view_select_all(tv: *mut c_void, _s: MSlock) {
+            unsafe {
+                back_text_view_select_all(tv)
+            }
         }
     }
 

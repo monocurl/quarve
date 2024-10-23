@@ -192,6 +192,14 @@ pub struct WeakInvalidator<E> where E: Environment {
 }
 
 impl<E> WeakInvalidator<E> where E: Environment {
+    pub fn try_upgrade_invalidate(&self, s: Slock<impl ThreadMarker>) -> bool {
+        let Some(this) = self.upgrade() else {
+            return false;
+        };
+        this.invalidate(s);
+        true
+    }
+
     pub fn upgrade(&self) -> Option<Invalidator<E>> {
         self.view.upgrade()
             .map(|view| {
