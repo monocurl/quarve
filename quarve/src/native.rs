@@ -160,7 +160,6 @@ mod callbacks {
 
         /* main thread only */
         let s = slock_main_owner();
-        println!("Called");
         b(s);
     }
 
@@ -546,7 +545,7 @@ pub mod view {
 
         fn back_text_view_replace(tv: *mut c_void, start: usize, len: usize, with: *const u8);
         // returns if it's currently focused (and thus must updated page numbers)
-        fn back_text_view_set_page_num(tv: *mut c_void, page_num: usize);
+        fn back_text_view_set_page_id(tv: *mut c_void, page_id: i32);
         fn back_text_view_focus(tv: *mut c_void);
         fn back_text_view_unfocus(tv: *mut c_void);
 
@@ -970,7 +969,7 @@ pub mod view {
         use std::ffi::{c_void, CString};
         use std::ops::Range;
         use crate::core::{MSlock};
-        use crate::native::view::{back_text_view_copy, back_text_view_cut, back_text_view_focus, back_text_view_full_replace, back_text_view_init, back_text_view_paste, back_text_view_replace, back_text_view_select_all, back_text_view_set_page_num, back_text_view_unfocus};
+        use crate::native::view::{back_text_view_copy, back_text_view_cut, back_text_view_focus, back_text_view_full_replace, back_text_view_init, back_text_view_paste, back_text_view_replace, back_text_view_select_all, back_text_view_set_page_id, back_text_view_unfocus};
         use crate::state::{Binding, Filterless, SetAction, StoreContainerView};
         use crate::view::text::{AttributeSet, Page, PageFrontCallback};
 
@@ -1022,9 +1021,9 @@ pub mod view {
             }
         }
 
-        pub fn text_view_set_page_num(tv: *mut c_void, num: usize, _s: MSlock) {
+        pub fn text_view_set_page_id(tv: *mut c_void, num: i32, _s: MSlock) {
             unsafe {
-                back_text_view_set_page_num(tv, num)
+                back_text_view_set_page_id(tv, num)
             }
         }
 

@@ -1407,6 +1407,7 @@ mod text_view {
 
         mod page {
             use std::ops::{Deref, Range};
+            use std::sync::atomic::{AtomicI32, Ordering};
             use quarve_derive::StoreContainer;
             use crate::core::{MSlock, Slock};
             use crate::state::{Binding, DerivedStore, SetAction, Signal, Stateful, Store, StoreContainerView, VecActionBasis, Word};
@@ -1416,6 +1417,8 @@ mod text_view {
             use crate::view::text::CursorState;
             use crate::view::text::text_view::state::{AttributeSet, Run, RunsContainer};
             use crate::view::text::text_view::state::attribute_holder::{AttributeHolder};
+
+            static PAGE_ID_COUNTER: AtomicI32 = AtomicI32::new(1);
 
             #[derive(Copy, Clone)]
             pub(crate) struct PageGUIInfo {
@@ -1434,6 +1437,7 @@ mod text_view {
 
             #[derive(StoreContainer)]
             pub struct Page<I, D> where I: AttributeSet, D: AttributeSet {
+                pub(crate) id: i32,
                 pub(crate) gui_info: DerivedStore<PageGUIInfo>,
 
                 pub(crate) cursor: CursorState,
@@ -1445,6 +1449,7 @@ mod text_view {
             impl<I, D> Page<I, D> where I: AttributeSet, D: AttributeSet {
                 pub fn new(s: Slock<impl ThreadMarker>) -> Self {
                     Page {
+                        id: PAGE_ID_COUNTER.fetch_add(1, Ordering::SeqCst),
                         gui_info: DerivedStore::new(PageGUIInfo {
                             page_num: 0
                         }),
@@ -1769,7 +1774,7 @@ mod text_view {
 
                 /// To avoid race conditions, any text modification must be done on main thread
                 pub fn replace_selection(&self, with: impl Into<String>, s: MSlock){
-                    let Some(page_num) = *self.selected_page.borrow(s) else {
+                    let Some(page_num) = self.selected_page(s) else {
                         return;
                     };
                     let page = self.page(page_num as usize, s);
@@ -1784,17 +1789,27 @@ mod text_view {
                 }
 
                 pub fn selected_page(&self, s: Slock<impl ThreadMarker>) -> Option<i32> {
-                    *self.selected_page.borrow(s)
+                    let id = *self.selected_page.borrow(s);
+                    id.and_then(|id| {
+                         self.pages.borrow(s).iter()
+                             .position(|page| page.id == id)
+                             .map(|i| i as i32)
+                    })
                 }
 
-                pub fn set_selected_page(&self, page: Option<i32>, s: Slock<impl ThreadMarker>) {
-                    assert!(page.unwrap_or(0) >= 0);
+                pub fn set_selected_page(&self, page_num: Option<i32>, s: Slock<impl ThreadMarker>) {
+                    let id =
+                        page_num.and_then(|p| {
+                            let pages = self.pages.borrow(s);
+                            if p >= 0 && p < pages.len() as i32 {
+                                Some(pages[p as usize].id)
+                            }
+                            else {
+                                None
+                            }
+                        });
 
-                    self.selected_page.apply(SetAction::Set(page), s);
-                }
-
-                pub fn selected_page_binding(&self) -> impl Binding<Filterless<Option<i32>>> {
-                    self.selected_page.binding()
+                    self.selected_page.apply(SetAction::Set(id), s);
                 }
 
                 pub fn action_listen(
@@ -1827,8 +1842,8 @@ mod text_view {
         use crate::core::{Environment, MSlock, Slock, StandardConstEnv};
         use crate::{native};
         use crate::event::{Event, EventPayload, EventResult, MouseEvent};
-        use crate::native::view::text_view::{text_view_copy, text_view_cut, text_view_focus, text_view_full_replace, text_view_init, text_view_paste, text_view_select_all, text_view_set_page_num, text_view_unfocus};
-        use crate::state::{ActualDiffSignal, Bindable, Binding, Buffer, Filterless, Signal, Store, StoreContainer, StoreContainerView, StringActionBasis, VecActionBasis, WeakBinding, Word};
+        use crate::native::view::text_view::{text_view_copy, text_view_cut, text_view_focus, text_view_full_replace, text_view_init, text_view_paste, text_view_select_all, text_view_set_page_id, text_view_unfocus};
+        use crate::state::{ActualDiffSignal, Bindable, Binding, Buffer, Filterless, Signal, Store, StoreContainer, StoreContainerView, StringActionBasis, VecActionBasis, WeakBinding};
         use crate::state::SetAction::Set;
         use crate::state::slock_cell::MainSlockCell;
         use crate::util::{FromOptions, geo};
@@ -1839,7 +1854,7 @@ mod text_view {
         use crate::view::text::{AttributeSet, Page, Run, TextViewState};
 
         thread_local! {
-            pub static IN_TEXTVIEW_FRONT_CALLBACK: Cell<bool> = Cell::new(false)
+            pub(crate) static IN_TEXTVIEW_FRONT_CALLBACK: Cell<bool> = Cell::new(false)
         }
 
         pub trait TextViewProvider<E> : 'static where E: Environment {
@@ -2414,7 +2429,7 @@ mod text_view {
                 ()
             }
 
-            fn init_backing(&mut self, invalidator: WeakInvalidator<E>, _subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+            fn init_backing(&mut self, invalidator: WeakInvalidator<E>, _subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, s: MSlock) -> NativeView {
                 let backing =
                     if let Some((bs, _)) = backing_source {
                         text_view_full_replace(bs.backing(), &self.page.build_full_content(s), s);
@@ -2425,6 +2440,7 @@ mod text_view {
                         text_view_full_replace(backing, &self.page.build_full_content(s), s);
                         backing
                     };
+                text_view_set_page_id(backing, self.page.id, s);
                 let backing_id = backing as usize;
 
                 // mark all lines as dirty initially so we can update lines
@@ -2434,26 +2450,9 @@ mod text_view {
                     run.gui_info.apply(Set(gui), s);
                 }
 
-                // invalidate whenever page num is changed (necessary for updating selected page)
                 let inv = invalidator.clone();
-                self.page.gui_info.listen(move |_, s| {
+                self.selected_page.diff_listen(move |_l, s| {
                     inv.try_upgrade_invalidate(s)
-                }, s);
-
-                let inv = invalidator.clone();
-                self.selected_page.diff_listen(move |l, s| {
-                    inv.try_upgrade_invalidate(s)
-                }, s);
-
-                // invalidate whenever page of cursor changes
-                let inv = invalidator.clone();
-                self.selected_page.listen(move |_, s| {
-                    let Some(inv) = inv.upgrade() else {
-                        return false;
-                    };
-
-                    inv.invalidate(s);
-                    true
                 }, s);
 
                 self.run_listen(invalidator, s, backing_id);
@@ -2466,14 +2465,10 @@ mod text_view {
 
             fn layout_up(&mut self, subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, s: MSlock) -> bool {
                 // focus
-                let token = self.page.gui_info.borrow(s).page_num;
-                text_view_set_page_num(self.text_view, token, s);
+                let token = self.page.id;
 
                 let view = Arc::downgrade(subtree.owner());
-                if *self.selected_page.borrow(s) == Some(token as i32) {
-                    // the following request will
-                    // subsequently force us to change the token if necesary
-                    // TODO this needs work
+                if *self.selected_page.borrow(s) == Some(token) {
                     subtree.window().and_then(|w| w.upgrade()).unwrap()
                         .borrow_main(s)
                         .request_focus(view);
@@ -2521,9 +2516,9 @@ mod text_view {
             }
 
             fn focused(&self, _rel_depth: u32, s: MSlock) {
-                let token = self.page.gui_info.borrow(s).page_num;
-                if *self.selected_page.borrow(s) != Some(token as i32) {
-                    self.selected_page.apply(Set(Some(token as i32)), s);
+                let token = self.page.id;
+                if *self.selected_page.borrow(s) != Some(token) {
+                    self.selected_page.apply(Set(Some(token)), s);
                 }
 
                 text_view_focus(self.text_view, s);
@@ -2544,8 +2539,8 @@ mod text_view {
             }
 
             fn unfocused(&self, _rel_depth: u32, s: MSlock) {
-                let token = self.page.gui_info.borrow(s).page_num;
-                if *self.selected_page.borrow(s) == Some(token as i32) {
+                let token = self.page.id;
+                if *self.selected_page.borrow(s) == Some(token) {
                     self.selected_page.apply(Set(None), s);
                 }
 

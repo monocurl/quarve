@@ -380,7 +380,7 @@ back_text_field_paste(void *view)
 @interface TextView : NSTextView<NSTextViewDelegate>
 @property fat_pointer state;
 @property fat_pointer selected;
-@property size_t page_num;
+@property int32_t page_id;
 @property BOOL executing_back;
 @end
 
@@ -397,11 +397,12 @@ back_text_field_paste(void *view)
             front_replace_textview_range(self.state, affectedCharRange.location, affectedCharRange.length, str);
         }
     }
+
     return YES;
 }
 
 - (BOOL)becomeFirstResponder {
-    front_set_token_binding(self.selected, 1, (int32_t) self.page_num);
+    front_set_token_binding(self.selected, 1, (int32_t) self.page_id);
     return [super becomeFirstResponder];
 }
 
@@ -432,7 +433,7 @@ back_text_view_init(fat_pointer state, fat_pointer selected)
     [[tv textContainer] setHeightTracksTextView:NO];
     [tv setAutoresizingMask:NSViewWidthSizable];
 
-    tv.page_num = 0;
+    tv.page_id = 0;
     tv.selected = selected;
     tv.state = state;
     tv.drawsBackground = NO;
@@ -501,10 +502,10 @@ back_text_view_get_line_height(void *tv, size_t pos)
 }
 
 void
-back_text_view_set_page_num(void *tv, size_t page_num)
+back_text_view_set_page_id(void *tv, int32_t page_id)
 {
     TextView* textView = tv;
-    textView.page_num = page_num;
+    textView.page_id = page_id;
 }
 
 void
