@@ -1,4 +1,5 @@
 use std::sync::{Arc, Weak};
+use std::sync::atomic::{AtomicBool, Ordering};
 use crate::core::{Environment, MSlock, Slock};
 use crate::state::slock_cell::{MainSlockCell};
 use crate::util::rust_util::EnsureSend;
@@ -188,6 +189,7 @@ mod view_ref {
 pub use view_ref::*;
 
 pub struct WeakInvalidator<E> where E: Environment {
+    pub(crate) performing_up: Arc<AtomicBool>,
     pub(crate) view: Weak<MainSlockCell<dyn InnerViewBase<E>>>
 }
 
@@ -204,6 +206,7 @@ impl<E> WeakInvalidator<E> where E: Environment {
         self.view.upgrade()
             .map(|view| {
                 Invalidator {
+                    performing_up: Arc::clone(&self.performing_up),
                     view
                 }
             })
@@ -222,16 +225,19 @@ impl<E> Eq for WeakInvalidator<E> where E: Environment {
 impl<E> Clone for WeakInvalidator<E> where E: Environment {
     fn clone(&self) -> Self {
         WeakInvalidator {
+            performing_up: Arc::clone(&self.performing_up),
             view: self.view.clone(),
         }
     }
 }
 
 pub struct Invalidator<E> where E: Environment {
+    performing_up: Arc<AtomicBool>,
     view: Arc<MainSlockCell<dyn InnerViewBase<E>>>
 }
 
 impl<E> Invalidator<E> where E: Environment {
+    // Should never be called during layout down
     pub fn invalidate(&self, s: Slock<impl ThreadMarker>) {
         // invalidate just this
         // safety:
@@ -241,6 +247,11 @@ impl<E> Invalidator<E> where E: Environment {
         // and the window back pointer, whereas for window
         // it's just the list of invalidated views)
         // FIXME add better descriptions of safety
+
+        if self.performing_up.load(Ordering::SeqCst) {
+            return
+        }
+
         unsafe {
             self.view.borrow_non_main_non_send(s.to_general_slock())
                 .invalidate(Arc::downgrade(&self.view), s.to_general_slock());

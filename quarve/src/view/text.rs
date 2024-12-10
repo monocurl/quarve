@@ -1299,7 +1299,7 @@ mod text_view {
         
         mod cursor_state {
             use quarve_derive::StoreContainer;
-            use crate::core::Slock;
+            use crate::core::{Slock};
             use crate::state::{Bindable, Binding, Buffer, Filterless, Signal, Store};
             use crate::state::SetAction::Set;
             use crate::util::marker::ThreadMarker;
@@ -1319,24 +1319,8 @@ mod text_view {
                         start_run: Store::default(),
                         start_char: Store::default(),
                         end_run: Store::default(),
-                        end_char: Store::new(usize::MAX),
+                        end_char: Store::default(),
                     }
-                }
-
-                pub fn start_run_binding(&self) -> impl Binding<Filterless<usize>> {
-                    self.start_run.binding()
-                }
-
-                pub fn end_run_binding(&self) -> impl Binding<Filterless<usize>> {
-                    self.end_run.binding()
-                }
-
-                pub fn start_char_binding(&self) -> impl Binding<Filterless<usize>> {
-                    self.start_char.binding()
-                }
-
-                pub fn end_char_binding(&self) -> impl Binding<Filterless<usize>> {
-                    self.end_char.binding()
                 }
 
                 pub fn start_run(&self, s: Slock<impl ThreadMarker>) -> usize {
@@ -1433,6 +1417,7 @@ mod text_view {
 
             pub(crate) trait PageFrontCallback {
                 fn replace_utf16_range(&self, range: Range<usize>, with: String, _s: MSlock);
+                fn set_cursor_selection(&self, range: Range<usize>, _s: MSlock);
             }
 
             #[derive(StoreContainer)]
@@ -1544,11 +1529,10 @@ mod text_view {
                     // 1) delete tips + intermediate runs
 
                     if start_run == end_run {
-                        let range = start_char .. end_char;
+                        let range = start_char..end_char;
                         self.run(start_run, s)
                             .replace(range, "", s);
-                    }
-                    else {
+                    } else {
                         let start = self.run(start_run, s);
                         start.replace(start_char..start.len(s), "", s);
 
@@ -1557,7 +1541,7 @@ mod text_view {
                     }
 
                     if end_run > start_run + 1 {
-                        self.runs.apply(VecActionBasis::RemoveMany(start_run + 1 .. end_run), s);
+                        self.runs.apply(VecActionBasis::RemoveMany(start_run + 1..end_run), s);
                     }
 
                     // 2) if there was only one line and there's multiple segments, split this one run
@@ -1580,8 +1564,7 @@ mod text_view {
                     if segments.len() == 1 {
                         self.run(start_run, s)
                             .replace(start_char..start_char, segments[0], s);
-                    }
-                    else {
+                    } else {
                         self.run(start_run, s)
                             .replace(start_char..start_char, segments[0], s);
 
@@ -1605,7 +1588,7 @@ mod text_view {
                 pub fn build_full_content(&self, s: Slock<impl ThreadMarker>) -> String {
                     let runs = self.runs(s);
                     let contents = runs.iter()
-                            .map(|run| run.content(s));
+                        .map(|run| run.content(s));
                     let mut ret = String::new();
 
                     for line in contents {
@@ -1643,7 +1626,7 @@ mod text_view {
 
                 pub fn intrinsic_action_listen(
                     &self,
-                    f: impl FnMut(&AttributeHolder<I::PageAttribute>,  &SetAction<AttributeHolder<I::PageAttribute>>, Slock) -> bool + Send + 'static,
+                    f: impl FnMut(&AttributeHolder<I::PageAttribute>, &SetAction<AttributeHolder<I::PageAttribute>>, Slock) -> bool + Send + 'static,
                     s: Slock<impl ThreadMarker>
                 ) {
                     self.page_intrinsic_attribute.action_listen(f, s);
@@ -1674,50 +1657,80 @@ mod text_view {
                 }
             }
 
+            impl<I, D> StoreContainerView<Page<I, D>>
+                where I: AttributeSet, D: AttributeSet
+            {
+                pub(crate) fn utf16_to_position(&self, mut utf16_pos: usize, s: Slock) -> (usize, usize) {
+                    let len = self.runs.borrow(s).len();
+                    for (i, run) in self.runs.borrow(s).iter().enumerate() {
+                        let cu = run.gui_info.borrow(s).codeunits;
+                        if utf16_pos <= cu {
+                            let mut utf16_count = 0;
+                            if utf16_count == utf16_pos {
+                                // empty string edge case
+                                return (i, 0)
+                            }
+
+                            for (byte_idx, ch) in run.content(s).char_indices() {
+                                let ch_utf16_len = ch.len_utf16();
+                                if utf16_count + ch_utf16_len > utf16_pos {
+                                    return (i, byte_idx);
+                                }
+                                utf16_count += ch_utf16_len;
+                                if utf16_count == utf16_pos {
+                                    return (i, byte_idx + ch.len_utf8());
+                                }
+                            }
+
+                            unreachable!("bad utf16")
+                        }
+
+                        if i == len - 1 {
+                            return (i, utf16_pos)
+                        }
+                        else {
+                            // dont forget new line
+                            utf16_pos -= cu + 1;
+                        }
+                    }
+
+                    unreachable!("Should always have at least one run")
+                }
+
+                pub(crate) fn position_to_utf16(&self, line: usize, char: usize, s: Slock) -> usize {
+                    let mut utf16 = 0;
+                    for (i, run) in self.runs(s).iter().take(line + 1).enumerate() {
+                        if i == line {
+                            utf16 += run.content(s)[0..char]
+                                .encode_utf16().count()
+                        }
+                        else {
+                            // include new line
+                            utf16 += run.gui_info.borrow(s).codeunits + 1;
+                        }
+                    }
+
+                    utf16
+                }
+            }
+
             impl<I, D> PageFrontCallback for StoreContainerView<Page<I, D>>
                 where I: AttributeSet, D: AttributeSet
             {
                 fn replace_utf16_range(&self, range: Range<usize>, with: String, s: MSlock) {
-                    let find_pos = |mut pos| {
-                        let len = self.runs.borrow(s).len();
-                        for (i, run) in self.runs.borrow(s).iter().enumerate() {
-                            let cu = run.gui_info.borrow(s).codeunits;
-                            if pos <= cu {
-                                let mut utf16_count = 0;
-                                if utf16_count == pos {
-                                    // empty string edge case
-                                    return (i, 0)
-                                }
-
-                                for (byte_idx, ch) in run.content(s).char_indices() {
-                                    let ch_utf16_len = ch.len_utf16();
-                                    if utf16_count + ch_utf16_len > pos {
-                                        return (i, byte_idx);
-                                    }
-                                    utf16_count += ch_utf16_len;
-                                    if utf16_count == pos {
-                                        return (i, byte_idx + ch.len_utf8());
-                                    }
-                                }
-
-                                unreachable!("bad utf16")
-                            }
-
-                            if i == len - 1 {
-                                return (i, pos)
-                            }
-                            else {
-                                // dont forget new line
-                                pos -= cu + 1;
-                            }
-                        }
-
-                        unreachable!("Should always have at least one run")
-                    };
-
-                    let start = find_pos(range.start);
-                    let end = find_pos(range.end);
+                    let start = self.utf16_to_position(range.start, s.to_general_slock());
+                    let end = self.utf16_to_position(range.end, s.to_general_slock());
                     self.replace_range(start.0, start.1, end.0, end.1, with, s);
+                }
+
+                fn set_cursor_selection(&self, range: Range<usize>, s: MSlock) {
+                    let start = self.utf16_to_position(range.start, s.to_general_slock());
+                    let end = self.utf16_to_position(range.end, s.to_general_slock());
+                    self.selection()
+                        .set_range(
+                            start.0, start.1,
+                            end.0, end.1, s
+                        );
                 }
             }
         }
@@ -1727,7 +1740,7 @@ mod text_view {
             use std::ops::Deref;
             use quarve_derive::StoreContainer;
             use crate::core::{MSlock, Slock};
-            use crate::state::{Signal, Binding, Store, VecActionBasis, Word, StoreContainerSource, SetAction, Filterless, Bindable};
+            use crate::state::{Signal, Binding, Store, VecActionBasis, Word, StoreContainerSource, SetAction};
             use crate::util::marker::ThreadMarker;
             use crate::util::rust_util::DerefMap;
             use crate::view::text::text_view::state::{AttributeSet, Page};
@@ -1842,7 +1855,7 @@ mod text_view {
         use crate::core::{Environment, MSlock, Slock, StandardConstEnv};
         use crate::{native};
         use crate::event::{Event, EventPayload, EventResult, MouseEvent};
-        use crate::native::view::text_view::{text_view_copy, text_view_cut, text_view_focus, text_view_full_replace, text_view_init, text_view_paste, text_view_select_all, text_view_set_page_id, text_view_unfocus};
+        use crate::native::view::text_view::{text_view_copy, text_view_cut, text_view_focus, text_view_full_replace, text_view_get_selection, text_view_init, text_view_paste, text_view_select_all, text_view_set_page_id, text_view_set_selection, text_view_unfocus};
         use crate::state::{ActualDiffSignal, Bindable, Binding, Buffer, Filterless, Signal, Store, StoreContainer, StoreContainerView, StringActionBasis, VecActionBasis, WeakBinding};
         use crate::state::SetAction::Set;
         use crate::state::slock_cell::MainSlockCell;
@@ -2450,8 +2463,14 @@ mod text_view {
                     run.gui_info.apply(Set(gui), s);
                 }
 
+                // cursor changes
                 let inv = invalidator.clone();
                 self.selected_page.diff_listen(move |_l, s| {
+                    inv.try_upgrade_invalidate(s)
+                }, s);
+
+                let inv = invalidator.clone();
+                self.page.cursor.listen(move |_, _, _, _, s| {
                     inv.try_upgrade_invalidate(s)
                 }, s);
 
@@ -2506,7 +2525,21 @@ mod text_view {
                 }
 
                 // relay cursor information + number (easy)
-                // todo!()
+                let start = self.page.position_to_utf16(
+                    self.page.cursor.start_run(s),
+                    self.page.cursor.start_char(s), s.to_general_slock()
+                );
+                let end = self.page.position_to_utf16(
+                    self.page.cursor.end_run(s),
+                    self.page.cursor.end_char(s), s.to_general_slock()
+                );
+                text_view_set_selection(self.text_view, start..end, s);
+
+                let selection = text_view_get_selection(self.text_view);
+                let (sl, sc) = self.page.utf16_to_position(selection.start, s.to_general_slock());
+                let (el, ec) = self.page.utf16_to_position(selection.end, s.to_general_slock());
+                self.page.cursor.set_range(sl, sc, el, ec, s);
+
                 true
             }
 

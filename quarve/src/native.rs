@@ -286,7 +286,24 @@ mod callbacks {
     }
 
     #[no_mangle]
-    extern "C" fn front_free_textview_state(bx: FatPointer, start: usize, len: usize, value: *const u8) {
+    extern "C" fn front_set_textview_selection(bx: FatPointer, start: usize, len: usize) {
+        let old = IN_TEXTVIEW_FRONT_CALLBACK.replace(true);
+
+        let view: Box<dyn PageFrontCallback> = unsafe {
+            std::mem::transmute(bx)
+        };
+        let slock = unsafe {
+            slock_force_main_owner()
+        };
+        println!("Back setting range {:?}", start..start+len);
+        view.set_cursor_selection(start..start + len, slock.marker());
+
+        std::mem::forget(view);
+        IN_TEXTVIEW_FRONT_CALLBACK.set(old);
+    }
+
+    #[no_mangle]
+    extern "C" fn front_free_textview_state(bx: FatPointer) {
         let _view: Box<dyn PageFrontCallback> = unsafe {
             std::mem::transmute(bx)
         };
@@ -543,6 +560,8 @@ pub mod view {
         // may discard attributes
         fn back_text_view_full_replace(tv: *mut c_void, with: *const u8);
 
+        fn back_text_view_set_selection(tv: *mut c_void, start: usize, len: usize);
+        fn back_text_view_get_selection(tv: *mut c_void, start: *mut usize, end: *mut usize);
         fn back_text_view_replace(tv: *mut c_void, start: usize, len: usize, with: *const u8);
         // returns if it's currently focused (and thus must updated page numbers)
         fn back_text_view_set_page_id(tv: *mut c_void, page_id: i32);
@@ -969,7 +988,7 @@ pub mod view {
         use std::ffi::{c_void, CString};
         use std::ops::Range;
         use crate::core::{MSlock};
-        use crate::native::view::{back_text_view_copy, back_text_view_cut, back_text_view_focus, back_text_view_full_replace, back_text_view_init, back_text_view_paste, back_text_view_replace, back_text_view_select_all, back_text_view_set_page_id, back_text_view_unfocus};
+        use crate::native::view::{back_text_view_copy, back_text_view_cut, back_text_view_focus, back_text_view_full_replace, back_text_view_get_selection, back_text_view_init, back_text_view_paste, back_text_view_replace, back_text_view_select_all, back_text_view_set_page_id, back_text_view_set_selection, back_text_view_unfocus};
         use crate::state::{Binding, Filterless, SetAction, StoreContainerView};
         use crate::view::text::{AttributeSet, Page, PageFrontCallback};
 
@@ -1031,8 +1050,19 @@ pub mod view {
 
         }
 
-        pub fn text_view_set_selection(tv: *mut c_void, _s: MSlock) {
+        pub fn text_view_set_selection(tv: *mut c_void, range: Range<usize>, _s: MSlock) {
+            unsafe {
+                back_text_view_set_selection(tv, range.start, range.len())
+            }
+        }
 
+        pub fn text_view_get_selection(tv: *mut c_void) -> Range<usize> {
+            let mut start = 0usize;
+            let mut end = 0usize;
+            unsafe {
+                back_text_view_get_selection(tv, &mut start as *mut usize, &mut end as *mut usize);
+            }
+            start..end
         }
 
         pub fn text_view_get_line_height(tv: *mut c_void, _s : MSlock) {

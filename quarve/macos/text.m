@@ -401,6 +401,14 @@ back_text_field_paste(void *view)
     return YES;
 }
 
+- (void)textViewDidChangeSelection:(NSNotification *)notification
+{
+    if (!self.executing_back) {
+        NSRange range = [self selectedRange];
+        front_set_textview_selection(self.state, range.location, range.length);
+    }
+}
+
 - (BOOL)becomeFirstResponder {
     front_set_token_binding(self.selected, 1, (int32_t) self.page_id);
     return [super becomeFirstResponder];
@@ -483,12 +491,27 @@ back_text_view_set_attributes(void *tv)
 }
 
 void
-back_text_view_set_selection(void *tv)
+back_text_view_set_selection(void *tv, size_t start, size_t len)
 {
     TextView* textView = tv;
     textView.executing_back = YES;
 
+    NSRange range = NSMakeRange(start, len);
+    if (!NSEqualRanges(range, [textView selectedRange])) {
+        [textView setSelectedRange: range];
+    }
+
     textView.executing_back = NO;
+}
+
+void
+back_text_view_get_selection(void *tv, size_t *restrict start, size_t* restrict end)
+{
+    TextView* textView = tv;
+    NSRange range = [textView selectedRange];
+
+    *start = range.location;
+    *end = range.location + range.length;
 }
 
 double
@@ -496,6 +519,7 @@ back_text_view_get_line_height(void *tv, size_t pos)
 {
     TextView* textView = tv;
     textView.executing_back = YES;
+
 
     textView.executing_back = NO;
     return -1;

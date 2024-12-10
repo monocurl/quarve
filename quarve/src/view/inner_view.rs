@@ -2,6 +2,7 @@ use std::any::Any;
 use std::cell::{Cell};
 use std::ffi::c_void;
 use std::sync::{Arc, Weak};
+use std::sync::atomic::{AtomicBool, Ordering};
 use crate::core::{Environment, MSlock, Slock, WindowViewCallback};
 use crate::event::{Event, EventResult};
 use crate::native;
@@ -103,6 +104,8 @@ pub(crate) struct InnerView<E, P> where E: Environment,
 
     needs_layout_up: Cell<bool>,
     needs_layout_down: Cell<bool>,
+    // wonder if there is better solution
+    performing_up: Arc<AtomicBool>,
 
     /* cached layout results */
     last_suggested: Rect,
@@ -220,6 +223,7 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
             self.provider.push_environment(env.0.variable_env_mut(), s);
 
             let invalidator = WeakInvalidator {
+                performing_up: Arc::clone(&self.performing_up),
                 view: Arc::downgrade(this)
             };
             let mut subtree = Subtree {
@@ -347,7 +351,10 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
             graph: &mut self.graph,
             owner: this,
         };
+
+        self.performing_up.store(true, Ordering::SeqCst);
         let ret = self.provider.layout_up(&mut subtree, &mut handle, s);
+        self.performing_up.store(false, Ordering::SeqCst);
 
         self.needs_layout_up.set(false);
         self.needs_layout_down.set(true);
@@ -499,6 +506,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         /* init backing if necessary */
         if self.native_view().is_null() {
             let invalidator = WeakInvalidator {
+                performing_up: Arc::clone(&self.performing_up),
                 view: Arc::downgrade(this)
             };
             let mut handle = EnvRef(e);
@@ -889,6 +897,7 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
                 last_view_frame: Rect::default(),
                 last_bounding_rect: Rect::default(),
                 provider,
+                performing_up: Arc::new(false.into()),
             }, s)
         )
     }

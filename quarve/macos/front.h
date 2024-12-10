@@ -56,4 +56,7 @@ extern void front_free_bool_binding(fat_pointer box);
 extern void front_replace_textview_range(fat_pointer box, size_t start, size_t end, uint8_t const* value);
 
 // box is a page store container
+extern void front_set_textview_selection(fat_pointer box, size_t start, size_t len);
+
+// box is a page store container
 extern void front_free_textview_state(fat_pointer box);
