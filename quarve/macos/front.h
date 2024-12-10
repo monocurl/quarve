@@ -60,3 +60,14 @@ extern void front_set_textview_selection(fat_pointer box, size_t start, size_t l
 
 // box is a page store container
 extern void front_free_textview_state(fat_pointer box);
+
+// box: Box<dyn FnMut(keycode, MSlock)> -> bool
+// key code: 0 -> tab
+//           1 -> un_tab
+//           2 -> newline
+//           3 -> alt new line
+extern uint8_t front_execute_key_callback(fat_pointer box, size_t key_code);
+
+// box: Box<dyn FnMut(keycode, MSlock)> -> bool
+extern void front_free_key_callback(fat_pointer box);
+

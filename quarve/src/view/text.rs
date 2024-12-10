@@ -1878,10 +1878,25 @@ mod text_view {
 
             fn init(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock);
 
-            fn tab(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock);
-            fn untab(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock);
-            fn newline(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock);
-            fn alt_newline(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock);
+            #[allow(unused_variables)]
+            fn tab(&mut self, state: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> bool {
+                false
+            }
+
+            #[allow(unused_variables)]
+            fn untab(&mut self, state: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> bool {
+                false
+            }
+
+            #[allow(unused_variables)]
+            fn newline(&mut self, state: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> bool {
+                false
+            }
+
+            #[allow(unused_variables)]
+            fn alt_newline(&mut self, state: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> bool {
+                false
+            }
 
             fn run_decoration(
                 &self,
@@ -2445,12 +2460,15 @@ mod text_view {
             fn init_backing(&mut self, invalidator: WeakInvalidator<E>, _subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, s: MSlock) -> NativeView {
                 let backing =
                     if let Some((bs, _)) = backing_source {
-                        text_view_full_replace(bs.backing(), &self.page.build_full_content(s), s);
+                        text_view_full_replace(bs.backing(), &self.page.build_full_content(s),
+                                               self.page.clone(), self.selected_page.clone(), self.provider.clone(), s);
                         bs.backing()
                     }
                     else {
-                        let backing = text_view_init(self.page.clone(), self.selected_page.clone(), s);
-                        text_view_full_replace(backing, &self.page.build_full_content(s), s);
+                        let backing = text_view_init(s);
+                        text_view_full_replace(backing, &self.page.build_full_content(s),
+                                               self.page.clone(), self.selected_page.clone(), self.provider.clone(),
+                                               s);
                         backing
                     };
                 text_view_set_page_id(backing, self.page.id, s);

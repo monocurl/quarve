@@ -295,7 +295,6 @@ mod callbacks {
         let slock = unsafe {
             slock_force_main_owner()
         };
-        println!("Back setting range {:?}", start..start+len);
         view.set_cursor_selection(start..start + len, slock.marker());
 
         std::mem::forget(view);
@@ -308,6 +307,37 @@ mod callbacks {
             std::mem::transmute(bx)
         };
     }
+
+    pub const TEXTVIEW_CALLBACK_KEYCODE_TAB: usize = 0;
+    pub const TEXTVIEW_CALLBACK_KEYCODE_UNTAB: usize = 1;
+    pub const TEXTVIEW_CALLBACK_KEYCODE_NEWLINE: usize = 2;
+    pub const TEXTVIEW_CALLBACK_KEYCODE_ALT_NEWLINE: usize = 3;
+
+    #[no_mangle]
+    extern "C" fn front_execute_key_callback(bx: FatPointer, keycode: usize) -> u8 {
+        let old = IN_TEXTVIEW_FRONT_CALLBACK.replace(true);
+
+        let mut cb: Box<dyn FnMut(usize, MSlock) -> bool> = unsafe {
+            std::mem::transmute(bx)
+        };
+        let slock = unsafe {
+            slock_force_main_owner()
+        };
+        let res = cb(keycode, slock.marker());
+
+        std::mem::forget(cb);
+        IN_TEXTVIEW_FRONT_CALLBACK.set(old);
+
+        if (res) { 1 } else { 0 }
+    }
+
+    #[no_mangle]
+    extern "C" fn front_free_key_callback(bx: FatPointer) {
+        let _view: Box<dyn FnMut(usize, MSlock) -> bool> = unsafe {
+            std::mem::transmute(bx)
+        };
+    }
+
 }
 
 /* crate endpoints */
@@ -555,10 +585,11 @@ pub mod view {
         fn back_text_field_paste(view: *mut c_void);
 
         /* text view */
-        fn back_text_view_init(state: FatPointer, selected: FatPointer) -> *mut c_void;
+        fn back_text_view_init() -> *mut c_void;
 
         // may discard attributes
-        fn back_text_view_full_replace(tv: *mut c_void, with: *const u8);
+        fn back_text_view_full_replace(tv: *mut c_void, with: *const u8,
+                                       state: FatPointer, selected: FatPointer, key_callback: FatPointer);
 
         fn back_text_view_set_selection(tv: *mut c_void, start: usize, len: usize);
         fn back_text_view_get_selection(tv: *mut c_void, start: *mut usize, end: *mut usize);
@@ -987,16 +1018,56 @@ pub mod view {
     pub mod text_view {
         use std::ffi::{c_void, CString};
         use std::ops::Range;
-        use crate::core::{MSlock};
+        use std::sync::Arc;
+        use crate::core::{Environment, MSlock};
+        use crate::native::callbacks::{
+            TEXTVIEW_CALLBACK_KEYCODE_TAB,
+            TEXTVIEW_CALLBACK_KEYCODE_UNTAB,
+            TEXTVIEW_CALLBACK_KEYCODE_NEWLINE,
+            TEXTVIEW_CALLBACK_KEYCODE_ALT_NEWLINE
+        };
         use crate::native::view::{back_text_view_copy, back_text_view_cut, back_text_view_focus, back_text_view_full_replace, back_text_view_get_selection, back_text_view_init, back_text_view_paste, back_text_view_replace, back_text_view_select_all, back_text_view_set_page_id, back_text_view_set_selection, back_text_view_unfocus};
         use crate::state::{Binding, Filterless, SetAction, StoreContainerView};
-        use crate::view::text::{AttributeSet, Page, PageFrontCallback};
+        use crate::state::slock_cell::MainSlockCell;
+        use crate::view::text::{AttributeSet, Page, PageFrontCallback, TextViewProvider};
 
         pub fn text_view_init(
-            state: StoreContainerView<Page<impl AttributeSet, impl AttributeSet>>,
-            selected: impl Binding<Filterless<Option<i32>>>,
             _s: MSlock
         ) -> *mut c_void {
+            unsafe {
+                back_text_view_init()
+            }
+        }
+
+        pub fn text_view_full_replace<E: Environment, I: AttributeSet, D: AttributeSet>(tv: *mut c_void,
+                                      with: &str,
+                                      state: StoreContainerView<Page<I, D>>,
+                                      selected: impl Binding<Filterless<Option<i32>>>,
+                                      tv_provider: Arc<MainSlockCell<impl TextViewProvider<E, IntrinsicAttribute=I, DerivedAttribute=D>>>,
+                                      _s: MSlock) {
+            let state_c = state.clone();
+            let cb = Box::new(move |kc: usize, s: MSlock| {
+                match kc {
+                    TEXTVIEW_CALLBACK_KEYCODE_TAB => {
+                        tv_provider.borrow_mut_main(s)
+                            .tab(&state_c, s)
+                    },
+                    TEXTVIEW_CALLBACK_KEYCODE_UNTAB => {
+                        tv_provider.borrow_mut_main(s)
+                            .untab(&state_c, s)
+                    },
+                    TEXTVIEW_CALLBACK_KEYCODE_NEWLINE => {
+                        tv_provider.borrow_mut_main(s)
+                            .newline(&state_c, s)
+                    },
+                    TEXTVIEW_CALLBACK_KEYCODE_ALT_NEWLINE => {
+                        tv_provider.borrow_mut_main(s)
+                            .alt_newline(&state_c, s)
+                    },
+                    _ => unreachable!()
+                }
+            }) as Box<dyn FnMut(usize, MSlock) -> bool>;
+
             let bx: Box<dyn PageFrontCallback> = Box::new(state);
 
             let set_selected = Box::new(move |has_val, val, s: MSlock|  {
@@ -1009,15 +1080,11 @@ pub mod view {
                 }
             }) as Box<dyn Fn(bool, i32, MSlock)>;
 
-            unsafe {
-                back_text_view_init(std::mem::transmute(bx), std::mem::transmute(set_selected))
-            }
-        }
 
-        pub fn text_view_full_replace(tv: *mut c_void, with: &str, _s: MSlock) {
             let cstring = CString::new(with).unwrap();
             unsafe {
-                back_text_view_full_replace(tv, cstring.as_bytes().as_ptr())
+                back_text_view_full_replace(tv, cstring.as_bytes().as_ptr(),
+                                            std::mem::transmute(bx), std::mem::transmute(set_selected), std::mem::transmute(cb))
             }
         }
 

@@ -380,6 +380,8 @@ back_text_field_paste(void *view)
 @interface TextView : NSTextView<NSTextViewDelegate>
 @property fat_pointer state;
 @property fat_pointer selected;
+@property fat_pointer key_handler;
+
 @property int32_t page_id;
 @property BOOL executing_back;
 @end
@@ -428,7 +430,7 @@ back_text_field_paste(void *view)
 @end
 
 void *
-back_text_view_init(fat_pointer state, fat_pointer selected)
+back_text_view_init()
 {
     TextView* tv = [[TextView alloc] initWithFrame:NSMakeRect(0, 0,
                1000, 500)];
@@ -442,8 +444,7 @@ back_text_view_init(fat_pointer state, fat_pointer selected)
     [tv setAutoresizingMask:NSViewWidthSizable];
 
     tv.page_id = 0;
-    tv.selected = selected;
-    tv.state = state;
+
     tv.drawsBackground = NO;
     tv.richText = NO;
     tv.editable = YES;
@@ -462,11 +463,23 @@ back_text_view_init(fat_pointer state, fat_pointer selected)
 
 // may discard attributes
 void
-back_text_view_full_replace(void *tv, const uint8_t* with)
+back_text_view_full_replace(
+    void *tv,
+    const uint8_t* with,
+    fat_pointer selected,
+    fat_pointer state,
+    fat_pointer key_callback
+)
 {
     TextView* textView = tv;
     textView.executing_back = YES;
+
     textView.string = [NSString stringWithUTF8String:(const char*)with];
+
+    textView.selected = selected;
+    textView.state = state;
+    textView.key_handler = key_callback;
+
     textView.executing_back = NO;
 }
 
