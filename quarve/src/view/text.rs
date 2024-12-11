@@ -1,7 +1,5 @@
 mod attribute {
     mod character {
-        use crate::resource::Resource;
-        use crate::util::geo::ScreenUnit;
         use crate::view::util::Color;
 
         // For all attributes, a value of None
@@ -14,8 +12,6 @@ mod attribute {
             pub strikethrough: Option<bool>,
             pub back_color: Option<Color>,
             pub fore_color: Option<Color>,
-            pub size: Option<ScreenUnit>,
-            pub font: Option<Resource>,
         }
     }
     pub use character::*;
@@ -52,9 +48,8 @@ mod attribute {
 
     mod page {
         /// Currently, no page attributes
-        #[derive(Default, Clone, Eq, PartialEq)]
+        #[derive(Default, Clone, PartialEq)]
         pub struct PageAttribute {
-
         }
     }
     pub use page::*;
@@ -650,8 +645,6 @@ mod text_view {
 
             impl<A> RangedBasis<A> where A: ToCharAttribute {
                 fn apply(self, to: &mut RangedAttributeHolder<A>, inverse: &mut Vec<RangedBasis<A>>) {
-                    // note that an insert-delete inverse pair may not lead to an identical state
-                    // since we do not recombine
                     match self {
                         RangedBasis::Insert { at, len, attribute } => {
                             if len == 0 {
@@ -670,16 +663,31 @@ mod text_view {
                             assert!(start <= at, "Invalid index");
 
                             if at == start {
-                                // insert normally
-                                to.attributes.insert(i, (attribute, len));
+                                if (i < to.attributes.len() && to.attributes[i].0 == attribute) {
+                                    // try merge with next
+                                    to.attributes[i].1 += len
+                                }
+                                else if (i > 0 && to.attributes[i - 1].0 == attribute) {
+                                    // try merge with previous
+                                    to.attributes[i - 1].1 += len
+                                }
+                                else {
+                                    // insert normally
+                                    to.attributes.insert(i, (attribute, len));
+                                }
                             }
                             else {
-                                // if in the middle of a current one, split
-                                let right = to.attributes[i].1 - (at - start);
-                                to.attributes[i].1 = at - start;
-                                to.attributes.insert(i + 1, (to.attributes[i].0.clone(), right));
+                                // if in the middle of a current one, split (or extend if equal)
+                                if to.attributes[i].0 == attribute {
+                                    to.attributes[i].1 += len
+                                }
+                                else {
+                                    let right = to.attributes[i].1 - (at - start);
+                                    to.attributes[i].1 = at - start;
+                                    to.attributes.insert(i + 1, (to.attributes[i].0.clone(), right));
 
-                                to.attributes.insert(i + 1, (attribute, len));
+                                    to.attributes.insert(i + 1, (attribute, len));
+                                }
                             }
 
                             // inverse action
@@ -1169,48 +1177,66 @@ mod text_view {
 
                 // FIXME, these two could be more efficient (no clones or vec)
                 pub fn modify_char_intrinsic(&self, range: Range<usize>, mut f: impl FnMut(I::CharAttribute) -> I::CharAttribute, s: Slock<impl ThreadMarker>) {
-                    let subrange = self.char_intrinsic_attribute.borrow(s).subrange(range.clone()).attributes;
-                    self.char_intrinsic_attribute.apply(RangedAttributeAction {
-                        actions: vec![RangedBasis::Delete {
-                            at: range.start,
-                            len: range.len(),
-                        }],
-                    }, s);
+                    let cia = self.char_intrinsic_attribute.borrow(s);
+                    let subrange = cia.subrange(range.clone()).attributes;
+
                     let mut loc = range.start;
-                    let mapped_subrange = subrange.into_iter().map(|(a, l)| {
+                    let mut any_changed = false;
+                    let mut mapped_subrange = subrange.into_iter().map(|(a, l)| {
+                        let attribute = f(a);
+                        // purposefully short circuit
+                        any_changed = any_changed || attribute != cia.attribute_at(loc);
                         let ret = RangedBasis::Insert {
                             at: loc,
                             len: l,
-                            attribute: f(a),
+                            attribute,
                         };
                         loc += l;
                         ret
+                    }).collect();
+
+                    if !any_changed {
+                        return;
+                    }
+
+                    mapped_subrange.insert(0, RangedBasis::Delete {
+                        at: range.start,
+                        len: range.len(),
                     });
                     self.char_intrinsic_attribute.apply(RangedAttributeAction {
-                        actions: mapped_subrange.collect(),
+                        actions: mapped_subrange
                     }, s);
                 }
 
                 pub fn modify_char_derived(&self, range: Range<usize>, mut f: impl FnMut(D::CharAttribute) -> D::CharAttribute, s: Slock<impl ThreadMarker>) {
-                    let subrange = self.char_derived_attribute.borrow(s).subrange(range.clone()).attributes;
-                    self.char_derived_attribute.apply(RangedAttributeAction {
-                        actions: vec![RangedBasis::Delete {
-                            at: range.start,
-                            len: range.len(),
-                        }],
-                    }, s);
+                    let cda = self.char_intrinsic_attribute.borrow(s);
+                    let subrange = cda.subrange(range.clone()).attributes;
+
                     let mut loc = range.start;
-                    let mapped_subrange = subrange.into_iter().map(|(a, l)| {
+                    let mut any_changed = false;
+                    let mut mapped_subrange = subrange.into_iter().map(|(a, l)| {
+                        let attribute = f(a);
+                        // purposefully short circuit
+                        any_changed = any_changed || attribute != cda.attribute_at(loc);
                         let ret = RangedBasis::Insert {
                             at: loc,
                             len: l,
-                            attribute: f(a),
+                            attribute,
                         };
                         loc += l;
                         ret
+                    }).collect();
+
+                    if !any_changed {
+                        return;
+                    }
+
+                    mapped_subrange.insert(0, RangedBasis::Delete {
+                        at: range.start,
+                        len: range.len(),
                     });
                     self.char_derived_attribute.apply(RangedAttributeAction {
-                        actions: mapped_subrange.collect(),
+                        actions: mapped_subrange
                     }, s);
                 }
 
@@ -1306,7 +1332,7 @@ mod text_view {
         mod cursor_state {
             use quarve_derive::StoreContainer;
             use crate::core::{Slock};
-            use crate::state::{Bindable, Binding, Buffer, Filterless, Signal, Store};
+            use crate::state::{Binding, Buffer, Filterless, Signal, Store};
             use crate::state::SetAction::Set;
             use crate::util::marker::ThreadMarker;
 
@@ -1724,9 +1750,11 @@ mod text_view {
                 where I: AttributeSet, D: AttributeSet
             {
                 fn replace_utf16_range(&self, range: Range<usize>, with: String, s: MSlock) {
+                    println!("Start Replace Range");
                     let start = self.utf16_to_position(range.start, s.to_general_slock());
                     let end = self.utf16_to_position(range.end, s.to_general_slock());
                     self.replace_range(start.0, start.1, end.0, end.1, with, s);
+                    println!("Finish Replace Range");
                 }
 
                 fn set_cursor_selection(&self, range: Range<usize>, s: MSlock) {
@@ -1861,7 +1889,8 @@ mod text_view {
         use crate::core::{Environment, MSlock, Slock, StandardConstEnv};
         use crate::{native};
         use crate::event::{Event, EventPayload, EventResult, MouseEvent};
-        use crate::native::view::text_view::{text_view_copy, text_view_cut, text_view_focus, text_view_full_replace, text_view_get_selection, text_view_init, text_view_paste, text_view_select_all, text_view_set_char_attributes, text_view_set_page_id, text_view_set_run_attributes, text_view_set_selection, text_view_unfocus};
+        use crate::native::view::text_view::{text_view_begin_editing, text_view_copy, text_view_cut, text_view_end_editing, text_view_focus, text_view_full_replace, text_view_get_selection, text_view_init, text_view_paste, text_view_select_all, text_view_set_char_attributes, text_view_set_font, text_view_set_page_id, text_view_set_run_attributes, text_view_set_selection, text_view_unfocus};
+        use crate::resource::Resource;
         use crate::state::{ActualDiffSignal, Bindable, Binding, Buffer, Filterless, Signal, Store, StoreContainer, StoreContainerView, StringActionBasis, VecActionBasis, WeakBinding};
         use crate::state::SetAction::Set;
         use crate::state::slock_cell::MainSlockCell;
@@ -1881,6 +1910,15 @@ mod text_view {
             type DerivedAttribute: AttributeSet;
 
             const PAGE_INSET: Inset;
+
+
+            fn font() -> Option<Resource> {
+                None
+            }
+
+            fn font_size() -> ScreenUnit {
+                14.0
+            }
 
             fn init(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock);
 
@@ -2474,6 +2512,7 @@ mod text_view {
                     if let Some((bs, _)) = backing_source {
                         text_view_full_replace(bs.backing(), &self.page.build_full_content(s),
                                                self.page.clone(), self.selected_page.clone(), self.provider.clone(), s);
+                        text_view_set_font(bs.backing(), P::font(), P::font_size(), s);
                         bs.backing()
                     }
                     else {
@@ -2481,6 +2520,7 @@ mod text_view {
                         text_view_full_replace(backing, &self.page.build_full_content(s),
                                                self.page.clone(), self.selected_page.clone(), self.provider.clone(),
                                                s);
+                        text_view_set_font(backing, P::font(), P::font_size(), s);
                         backing
                     };
                 text_view_set_page_id(backing, self.page.id, s);
@@ -2513,6 +2553,7 @@ mod text_view {
             }
 
             fn layout_up(&mut self, subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, s: MSlock) -> bool {
+                println!("Start Layout Up");
                 // focus
                 let token = self.page.id;
 
@@ -2528,6 +2569,8 @@ mod text_view {
                         .unrequest_focus(view);
                 }
 
+                text_view_begin_editing(self.text_view, s);
+
                 // rewrite line numbers
                 // relay attrs of affected lines
                 // and recalculate line heights
@@ -2538,11 +2581,11 @@ mod text_view {
                     let mut gui = *run.gui_info.borrow(s);
                     let next_code_units = utf16_chars + gui.codeunits + if i < lines - 1 { 1 } else { 0 };
 
-                    if gui.dirty {
+                    if gui.dirty || true {
                         self.assign_attributes(utf16_chars..next_code_units, i, run, s);
 
                         // calculating line height
-                        gui.page_height = 600.0;
+                        gui.page_height = 20.0;
                     }
 
                     // only send flush if necessary
@@ -2555,6 +2598,8 @@ mod text_view {
                     self.total_height += gui.page_height;
                     utf16_chars = next_code_units;
                 }
+
+                text_view_end_editing(self.text_view, s);
 
                 // relay cursor information + number (easy)
                 let start = self.page.position_to_utf16(
@@ -2572,6 +2617,7 @@ mod text_view {
                 let (el, ec) = self.page.utf16_to_position(selection.end, s.to_general_slock());
                 self.page.cursor.set_range(sl, sc, el, ec, s);
 
+                println!("End Layout Up");
                 true
             }
 

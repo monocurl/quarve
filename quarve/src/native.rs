@@ -104,7 +104,6 @@ impl From<BufferEvent> for Event {
 /* back -> front call backs */
 mod callbacks {
     use std::ffi::{c_char, CStr, CString};
-    use std::panic::catch_unwind;
     use crate::core::{APP, MSlock, slock_force_main_owner, slock_main_owner, SlockOwner};
     use crate::native::{BufferEvent, FatPointer};
     use crate::util::geo::ScreenUnit;
@@ -596,6 +595,9 @@ pub mod view {
         fn back_text_view_get_selection(tv: *mut c_void, start: *mut usize, end: *mut usize);
         fn back_text_view_replace(tv: *mut c_void, start: usize, len: usize, with: *const u8);
 
+        fn back_text_view_set_font(tv: *mut c_void, font_path: *const u8, font_size: f64);
+
+        fn back_text_view_set_editing_state(tv: *mut c_void, editing: u8);
         fn back_text_view_set_line_attributes(
             tv: *mut c_void, line_no: usize, start: usize, end: usize,
             justification_sign: c_int, leading_indentation: c_double, trailing_indentation: c_double
@@ -604,9 +606,7 @@ pub mod view {
         fn back_text_view_set_char_attributes(
             tv: *mut c_void, start: usize, end: usize,
             bold: u8, italic: u8, underline: u8, strikethrough: u8,
-            back_color: Color, fore_color: Color,
-            font_size: f64,
-            font: *const u8,
+            back_color: Color, fore_color: Color
         );
 
         fn back_text_view_set_page_id(tv: *mut c_void, page_id: i32);
@@ -627,7 +627,7 @@ pub mod view {
         fn back_message_box_add_button(mb: *mut c_void, button_type: u8);
 
         // returns index that was clicked
-        fn back_message_box_run(mb: *mut c_void) -> ffi::c_int;
+        fn back_message_box_run(mb: *mut c_void) -> c_int;
     }
 
     pub fn view_clear_children(view: *mut c_void, _s: MSlock) {
@@ -1040,9 +1040,11 @@ pub mod view {
             TEXTVIEW_CALLBACK_KEYCODE_NEWLINE,
             TEXTVIEW_CALLBACK_KEYCODE_ALT_NEWLINE
         };
-        use crate::native::view::{back_text_view_copy, back_text_view_cut, back_text_view_focus, back_text_view_full_replace, back_text_view_get_selection, back_text_view_init, back_text_view_paste, back_text_view_replace, back_text_view_select_all, back_text_view_set_char_attributes, back_text_view_set_line_attributes, back_text_view_set_page_id, back_text_view_set_selection, back_text_view_unfocus};
+        use crate::native::view::{back_text_view_copy, back_text_view_cut, back_text_view_focus, back_text_view_full_replace, back_text_view_get_selection, back_text_view_init, back_text_view_paste, back_text_view_replace, back_text_view_select_all, back_text_view_set_char_attributes, back_text_view_set_editing_state, back_text_view_set_font, back_text_view_set_line_attributes, back_text_view_set_page_id, back_text_view_set_selection, back_text_view_unfocus};
+        use crate::resource::Resource;
         use crate::state::{Binding, Filterless, SetAction, StoreContainerView};
         use crate::state::slock_cell::MainSlockCell;
+        use crate::util::geo::ScreenUnit;
         use crate::view::text::{AttributeSet, CharAttribute, Justification, Page, PageFrontCallback, RunAttribute, TextViewProvider};
         use crate::view::util::Color;
 
@@ -1128,6 +1130,28 @@ pub mod view {
             }
         }
 
+        pub fn text_view_set_font(tv: *mut c_void, font: Option<Resource>, size: ScreenUnit, _s: MSlock) {
+            let font = font.map(|s| s.cstring());
+
+            unsafe {
+                back_text_view_set_font(
+                    tv, font.as_ref().map(|font| font.as_bytes().as_ptr()).unwrap_or(0 as *const u8), size
+                )
+            }
+        }
+
+        pub fn text_view_begin_editing(tv: *mut c_void, _s: MSlock) {
+            unsafe {
+                back_text_view_set_editing_state(tv, 1)
+            }
+        }
+
+        pub fn text_view_end_editing(tv: *mut c_void, _s: MSlock) {
+            unsafe {
+                back_text_view_set_editing_state(tv, 0)
+            }
+        }
+
         pub fn text_view_set_run_attributes(
             tv: *mut c_void,
             line_no: usize, char_range: Range<usize>,
@@ -1166,14 +1190,10 @@ pub mod view {
             let strikethrough = to_u8(char_intrinsic.strikethrough.or(char_derived.strikethrough).unwrap_or_default());
             let back_color = char_intrinsic.back_color.or(char_derived.back_color).unwrap_or(Color::clear());
             let front_color = char_intrinsic.fore_color.or(char_derived.fore_color).unwrap_or(Color::white());
-            let size = char_intrinsic.size.or(char_derived.size).unwrap_or(14.0);
-            let font = char_intrinsic.font.clone().or(char_derived.font.clone())
-                .map(|s| s.cstring());
 
             unsafe {
                 back_text_view_set_char_attributes(tv, char_range.start, char_range.end,
-                    bold, italic, underline, strikethrough, back_color, front_color, size,
-                    font.as_ref().map(|c| c.as_bytes().as_ptr()).unwrap_or(0 as *const u8),
+                    bold, italic, underline, strikethrough, back_color, front_color
                 );
             }
         }

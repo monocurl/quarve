@@ -201,13 +201,13 @@ fn platform_run(name_hint: Option<&str>, release: bool) {
 }
 
 fn run(name_hint: Option<&str>, release: bool) {
-    let mut build = Process::new("cargo")
-        .arg("build")
-        .arg("--all")
-        .env("RUSTFLAGS", "--cfg quarve_managed_run");
+    let mut build = Process::new("cargo");
+    build.arg("build");
+    build.arg("--all");
+    build.env("RUSTFLAGS", "--cfg quarve_managed_run");
 
     if release {
-        build = build.arg("--release");
+        build.arg("--release");
     }
 
     let status = build.status();
@@ -216,7 +216,7 @@ fn run(name_hint: Option<&str>, release: bool) {
         return
     }
 
-    platform_run(name_hint);
+    platform_run(name_hint, release);
 }
 
 #[cfg(target_os = "macos")]

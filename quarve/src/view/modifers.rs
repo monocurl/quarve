@@ -1,20 +1,19 @@
+
 use crate::core::{Environment, MSlock};
 use crate::view::{EnvRef, IntoViewProvider, Subtree, ViewProvider};
-
 // FIXME perhaps could do some better software architecture here
-
 // Conceptually, whenever the view provider is disabled
 // the scene should behave the same as if only a Modifying was in its place
 pub trait ConditionalIVPModifier<E>:
-    IntoViewProvider<E,
-        UpContext=<Self::Modifying as IntoViewProvider<E>>::UpContext,
-        DownContext=<Self::Modifying as IntoViewProvider<E>>::DownContext> where E: Environment {
+IntoViewProvider<E,
+    UpContext=<Self::Modifying as IntoViewProvider<E>>::UpContext,
+    DownContext=<Self::Modifying as IntoViewProvider<E>>::DownContext> where E: Environment {
     type Modifying: IntoViewProvider<E>;
 
     fn into_conditional_view_provider(self, e: &E::Const, s: MSlock)
-        -> impl ConditionalVPModifier<E,
-            UpContext=<Self::Modifying as IntoViewProvider<E>>::UpContext,
-            DownContext=<Self::Modifying as IntoViewProvider<E>>::DownContext>;
+                                      -> impl ConditionalVPModifier<E,
+                                          UpContext=<Self::Modifying as IntoViewProvider<E>>::UpContext,
+                                          DownContext=<Self::Modifying as IntoViewProvider<E>>::DownContext>;
 }
 
 // dont like how the syntax of the two ivp/vp is mildly different
@@ -411,7 +410,7 @@ mod provider_modifier {
         type Modifying = P::Modifying;
 
         fn into_conditional_view_provider(self, e: &E::Const, s: MSlock)
-            -> impl ConditionalVPModifier<E, UpContext=<Self::Modifying as IntoViewProvider<E>>::UpContext, DownContext=<Self::Modifying as IntoViewProvider<E>>::DownContext> {
+                                          -> impl ConditionalVPModifier<E, UpContext=<Self::Modifying as IntoViewProvider<E>>::UpContext, DownContext=<Self::Modifying as IntoViewProvider<E>>::DownContext> {
             ProviderVPModifier {
                 provider: self.provider.into_conditional_view_provider(e, s),
                 modifier: self.modifier,
@@ -542,7 +541,7 @@ mod provider_modifier {
             self.apply_general(to, false, s)
         }
     }
-    
+
     impl<E, U, D, S> ProviderModifier<E, U, D> for Padding<S> where E: Environment, U: 'static, D: 'static, S: Signal<Target=ScreenUnit> {
         fn init(&mut self, invalidator: &WeakInvalidator<E>, _source: Option<Self>, s: MSlock) {
             self.amount.add_invalidator(invalidator, s);
@@ -609,7 +608,7 @@ mod provider_modifier {
         fn padding_edge(self, amount: impl Into<ScreenUnit>, edges: u8) -> ProviderIVPModifier<E, Self, Padding<FixedSignal<ScreenUnit>>>;
         fn padding_edge_signal<S: Signal<Target=ScreenUnit>>(self, amount: S, edges: u8) -> ProviderIVPModifier<E, Self, Padding<S>>;
     }
-    
+
     impl<E, I> PaddingModifiable<E> for I where E: Environment, I: IntoViewProvider<E> {
         fn padding(self, amount: impl Into<ScreenUnit>) -> ProviderIVPModifier<E, Self, Padding<FixedSignal<ScreenUnit>>> {
             let padding = Padding {
@@ -1361,9 +1360,9 @@ mod foreback_modifier {
 
     pub trait ForeBackModifiable<E>: IntoViewProvider<E> where E: Environment {
         fn foreground<I: IntoViewProvider<E, DownContext=Self::DownContext>>(self, attraction: I)
-            -> ForeBackIVP<E, Self, I>;
+                                                                             -> ForeBackIVP<E, Self, I>;
         fn background<I: IntoViewProvider<E, DownContext=Self::DownContext>>(self, attraction: I)
-            -> ForeBackIVP<E, Self, I>;
+                                                                             -> ForeBackIVP<E, Self, I>;
     }
 
     impl<E, J> ForeBackModifiable<E> for J where E: Environment, J: IntoViewProvider<E> {
@@ -1431,7 +1430,7 @@ mod when_modifier {
         type Modifying = P::Modifying;
 
         fn into_conditional_view_provider(self, env: &E::Const, s: MSlock)
-            -> impl ConditionalVPModifier<E, UpContext=<Self::Modifying as IntoViewProvider<E>>::UpContext, DownContext=<Self::Modifying as IntoViewProvider<E>>::DownContext> {
+                                          -> impl ConditionalVPModifier<E, UpContext=<Self::Modifying as IntoViewProvider<E>>::UpContext, DownContext=<Self::Modifying as IntoViewProvider<E>>::DownContext> {
             WhenVP {
                 enabled: self.enabled,
                 last_enabled: true,
@@ -1946,7 +1945,7 @@ mod show_hide_modifier {
     }
 
     pub(crate) fn pre_show_wrap<E: Environment, I: IntoViewProvider<E>>(ivp: I, f: impl FnMut(MSlock) + 'static)
-        -> impl IntoViewProvider<E, DownContext=I::DownContext, UpContext=I::UpContext>
+                                                                        -> impl IntoViewProvider<E, DownContext=I::DownContext, UpContext=I::UpContext>
     {
         ShowHideIVP {
             wrapping: ivp,
@@ -1959,7 +1958,7 @@ mod show_hide_modifier {
     }
 
     pub(crate) fn post_show_wrap<E: Environment, I: IntoViewProvider<E>>(ivp: I, f: impl FnMut(MSlock) + 'static)
-        -> impl IntoViewProvider<E, DownContext=I::DownContext, UpContext=I::UpContext>
+                                                                         -> impl IntoViewProvider<E, DownContext=I::DownContext, UpContext=I::UpContext>
     {
         ShowHideIVP {
             wrapping: ivp,
@@ -1972,7 +1971,7 @@ mod show_hide_modifier {
     }
 
     pub(crate) fn pre_hide_wrap<E: Environment, I: IntoViewProvider<E>>(ivp: I, f: impl FnMut(MSlock) + 'static)
-        -> impl IntoViewProvider<E, DownContext=I::DownContext, UpContext=I::UpContext>
+                                                                        -> impl IntoViewProvider<E, DownContext=I::DownContext, UpContext=I::UpContext>
     {
         ShowHideIVP {
             wrapping: ivp,
@@ -1985,7 +1984,7 @@ mod show_hide_modifier {
     }
 
     pub(crate) fn post_hide_wrap<E: Environment, I: IntoViewProvider<E>>(ivp: I, f: impl FnMut(MSlock) + 'static)
-        -> impl IntoViewProvider<E, DownContext=I::DownContext, UpContext=I::UpContext>
+                                                                         -> impl IntoViewProvider<E, DownContext=I::DownContext, UpContext=I::UpContext>
     {
         ShowHideIVP {
             wrapping: ivp,
@@ -2124,7 +2123,11 @@ mod key_listener {
         }
 
         fn post_hide(&mut self, s: MSlock) {
-            self.source.post_hide(s)
+            self.source.post_hide(s);
+            if let Some(w) = self.window.as_ref().and_then(|w| w.upgrade()) {
+                w.borrow_main(s)
+                    .unrequest_key_listener(self.owner.clone().unwrap());
+            }
         }
 
         fn focused(&self, rel_depth: u32, s: MSlock) {

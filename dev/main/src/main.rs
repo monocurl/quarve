@@ -5,7 +5,7 @@ use quarve::event::EventModifiers;
 use quarve::prelude::rgb;
 use quarve::resource::{local_storage, Resource};
 use quarve::state::{Bindable, FixedSignal, SetAction, Signal, Store, StoreContainerSource, TokenStore};
-use quarve::util::geo::{Alignment, HorizontalAlignment, Inset, Size};
+use quarve::util::geo::{Alignment, HorizontalAlignment, Inset, ScreenUnit, Size};
 use quarve::view::{ViewProvider, IntoViewProvider, WeakInvalidator};
 use quarve::view::color_view::EmptyView;
 use quarve::state::Binding;
@@ -78,9 +78,7 @@ impl ToCharAttribute for FakeChar {
             underline: None,
             strikethrough: None,
             back_color: Some(Color::black()),
-            fore_color: None,
-            size: Some(24.),
-            font: Some(Resource::named("font/SignikaNegative-Regular.ttf")),
+            fore_color: Some(Color::rgb(255, 0, 0)),
         }
     }
 }
@@ -100,11 +98,19 @@ impl TextViewProvider<Env> for TVProvider {
     type IntrinsicAttribute = AttrSet;
     type DerivedAttribute = AttrSet;
     const PAGE_INSET: Inset = Inset {
-        l: 0.0,
+        l: 20.0,
         r: 10.0,
         b: 10.0,
         t: 0.0,
     };
+
+    // fn font() -> Option<Resource> {
+    //     Some(Resource::named("font/SignikaNegative-Regular.ttf"))
+    // }
+
+    fn font_size() -> ScreenUnit {
+        16.
+    }
 
     fn init(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) {
 
@@ -115,7 +121,11 @@ impl TextViewProvider<Env> for TVProvider {
     }
 
     fn run_decoration(&self, number: impl Signal<Target=usize>, run: &Run<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> impl IntoViewProvider<Env, DownContext=(), UpContext=()> + 'static {
-        EmptyView
+        Text::new("Test")
+        // Text::from_signal(number.map(|n| n.to_string(), s))
+        //     .text_color(Color::white())
+        //     .frame(Frame::default().align(Alignment::Trailing).intrinsic(100., 20))
+        //     .offset(-100, 0)
     }
 
     fn page_background(&self, page: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> impl IntoViewProvider<Env, DownContext=()> + 'static {
