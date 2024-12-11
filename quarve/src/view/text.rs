@@ -1182,10 +1182,10 @@ mod text_view {
 
                     let mut loc = range.start;
                     let mut any_changed = false;
-                    let mut mapped_subrange = subrange.into_iter().map(|(a, l)| {
+                    let mut mapped_subrange: Vec<_> = subrange.into_iter().map(|(a, l)| {
                         let attribute = f(a);
                         // purposefully short circuit
-                        any_changed = any_changed || attribute != cia.attribute_at(loc);
+                        any_changed = any_changed || attribute != *cia.attribute_at(loc);
                         let ret = RangedBasis::Insert {
                             at: loc,
                             len: l,
@@ -1209,15 +1209,15 @@ mod text_view {
                 }
 
                 pub fn modify_char_derived(&self, range: Range<usize>, mut f: impl FnMut(D::CharAttribute) -> D::CharAttribute, s: Slock<impl ThreadMarker>) {
-                    let cda = self.char_intrinsic_attribute.borrow(s);
+                    let cda = self.char_derived_attribute.borrow(s);
                     let subrange = cda.subrange(range.clone()).attributes;
 
                     let mut loc = range.start;
                     let mut any_changed = false;
-                    let mut mapped_subrange = subrange.into_iter().map(|(a, l)| {
+                    let mut mapped_subrange: Vec<_> = subrange.into_iter().map(|(a, l)| {
                         let attribute = f(a);
                         // purposefully short circuit
-                        any_changed = any_changed || attribute != cda.attribute_at(loc);
+                        any_changed = any_changed || attribute != *cda.attribute_at(loc);
                         let ret = RangedBasis::Insert {
                             at: loc,
                             len: l,
@@ -2581,7 +2581,7 @@ mod text_view {
                     let mut gui = *run.gui_info.borrow(s);
                     let next_code_units = utf16_chars + gui.codeunits + if i < lines - 1 { 1 } else { 0 };
 
-                    if gui.dirty || true {
+                    if gui.dirty {
                         self.assign_attributes(utf16_chars..next_code_units, i, run, s);
 
                         // calculating line height
