@@ -104,6 +104,7 @@ impl From<BufferEvent> for Event {
 /* back -> front call backs */
 mod callbacks {
     use std::ffi::{c_char, CStr, CString};
+    use std::panic::catch_unwind;
     use crate::core::{APP, MSlock, slock_force_main_owner, slock_main_owner, SlockOwner};
     use crate::native::{BufferEvent, FatPointer};
     use crate::util::geo::ScreenUnit;
@@ -130,7 +131,7 @@ mod callbacks {
     extern "C" fn front_window_layout(handle: FatPointer, w: f64, h: f64) {
         let s = slock_main_owner();
 
-        handle.into_window().layout_full(w, h, s.marker())
+        handle.into_window().layout_full(w, h, s.marker());
     }
 
     #[no_mangle]
@@ -328,7 +329,7 @@ mod callbacks {
         std::mem::forget(cb);
         IN_TEXTVIEW_FRONT_CALLBACK.set(old);
 
-        if (res) { 1 } else { 0 }
+        if res { 1 } else { 0 }
     }
 
     #[no_mangle]
@@ -496,7 +497,7 @@ pub mod window {
 // view methods
 pub mod view {
     use std::ffi;
-    use std::ffi::{c_ulonglong, c_void};
+    use std::ffi::{c_double, c_int, c_ulonglong, c_void};
     use crate::core::MSlock;
     use crate::native::FatPointer;
     use crate::util::geo::{Rect, Size};
@@ -568,7 +569,7 @@ pub mod view {
         fn back_text_field_update(
             view: *mut c_void,
             str: *const u8,
-            max_lines: ffi::c_int,
+            max_lines: c_int,
             bold: u8,
             italic: u8,
             underline: u8,
@@ -594,7 +595,20 @@ pub mod view {
         fn back_text_view_set_selection(tv: *mut c_void, start: usize, len: usize);
         fn back_text_view_get_selection(tv: *mut c_void, start: *mut usize, end: *mut usize);
         fn back_text_view_replace(tv: *mut c_void, start: usize, len: usize, with: *const u8);
-        // returns if it's currently focused (and thus must updated page numbers)
+
+        fn back_text_view_set_line_attributes(
+            tv: *mut c_void, line_no: usize, start: usize, end: usize,
+            justification_sign: c_int, leading_indentation: c_double, trailing_indentation: c_double
+        );
+
+        fn back_text_view_set_char_attributes(
+            tv: *mut c_void, start: usize, end: usize,
+            bold: u8, italic: u8, underline: u8, strikethrough: u8,
+            back_color: Color, fore_color: Color,
+            font_size: f64,
+            font: *const u8,
+        );
+
         fn back_text_view_set_page_id(tv: *mut c_void, page_id: i32);
         fn back_text_view_focus(tv: *mut c_void);
         fn back_text_view_unfocus(tv: *mut c_void);
@@ -1026,10 +1040,11 @@ pub mod view {
             TEXTVIEW_CALLBACK_KEYCODE_NEWLINE,
             TEXTVIEW_CALLBACK_KEYCODE_ALT_NEWLINE
         };
-        use crate::native::view::{back_text_view_copy, back_text_view_cut, back_text_view_focus, back_text_view_full_replace, back_text_view_get_selection, back_text_view_init, back_text_view_paste, back_text_view_replace, back_text_view_select_all, back_text_view_set_page_id, back_text_view_set_selection, back_text_view_unfocus};
+        use crate::native::view::{back_text_view_copy, back_text_view_cut, back_text_view_focus, back_text_view_full_replace, back_text_view_get_selection, back_text_view_init, back_text_view_paste, back_text_view_replace, back_text_view_select_all, back_text_view_set_char_attributes, back_text_view_set_line_attributes, back_text_view_set_page_id, back_text_view_set_selection, back_text_view_unfocus};
         use crate::state::{Binding, Filterless, SetAction, StoreContainerView};
         use crate::state::slock_cell::MainSlockCell;
-        use crate::view::text::{AttributeSet, Page, PageFrontCallback, TextViewProvider};
+        use crate::view::text::{AttributeSet, CharAttribute, Justification, Page, PageFrontCallback, RunAttribute, TextViewProvider};
+        use crate::view::util::Color;
 
         pub fn text_view_init(
             _s: MSlock
@@ -1113,8 +1128,54 @@ pub mod view {
             }
         }
 
-        pub fn text_view_set_attributes(tv: *mut c_void, _s: MSlock) {
+        pub fn text_view_set_run_attributes(
+            tv: *mut c_void,
+            line_no: usize, char_range: Range<usize>,
+            run_intrinsic: &RunAttribute,
+            run_derived: &RunAttribute,
+            _s: MSlock,
+        ) {
+            let justification = match run_intrinsic.justification
+                .or(run_derived.justification)
+                .unwrap_or_default() {
+                Justification::Leading => -1,
+                Justification::Center => 0,
+                Justification::Trailing => 1
+            };
 
+            let indentation = run_intrinsic.indentation
+                .or(run_derived.indentation)
+                .unwrap_or_default();
+
+            unsafe {
+                back_text_view_set_line_attributes(tv, line_no, char_range.start, char_range.end, justification, indentation.leading, indentation.trailing);
+            }
+        }
+        pub fn text_view_set_char_attributes(
+            tv: *mut c_void,
+            char_range: Range<usize>,
+            char_intrinsic: &CharAttribute,
+            char_derived: &CharAttribute,
+            _s: MSlock,
+        ) {
+            let to_u8 = |x| if x { 1 } else { 0 };
+
+            let bold = to_u8(char_intrinsic.bold.or(char_derived.bold).unwrap_or_default());
+            let italic = to_u8(char_intrinsic.italic.or(char_derived.italic).unwrap_or_default());
+            let underline = to_u8(char_intrinsic.underline.or(char_derived.underline).unwrap_or_default());
+            let strikethrough = to_u8(char_intrinsic.strikethrough.or(char_derived.strikethrough).unwrap_or_default());
+            let back_color = char_intrinsic.back_color.or(char_derived.back_color).unwrap_or(Color::clear());
+            let front_color = char_intrinsic.fore_color.or(char_derived.fore_color).unwrap_or(Color::white());
+            let size = char_intrinsic.size.or(char_derived.size).unwrap_or(14.0);
+            let font = char_intrinsic.font.clone().or(char_derived.font.clone())
+                .map(|s| s.cstring());
+
+            unsafe {
+                back_text_view_set_char_attributes(tv, char_range.start, char_range.end,
+                    bold, italic, underline, strikethrough, back_color, front_color, size,
+                    font.as_ref().map(|c| c.as_bytes().as_ptr()).unwrap_or(0 as *const u8),
+                );
+            }
         }
 
         pub fn text_view_set_selection(tv: *mut c_void, range: Range<usize>, _s: MSlock) {

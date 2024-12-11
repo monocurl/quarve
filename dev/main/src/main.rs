@@ -3,7 +3,7 @@ use std::time::Duration;
 use quarve::core::{Application, Environment, launch, MSlock, run_main_async, slock_owner, StandardConstEnv, StandardVarEnv};
 use quarve::event::EventModifiers;
 use quarve::prelude::rgb;
-use quarve::resource::local_storage;
+use quarve::resource::{local_storage, Resource};
 use quarve::state::{Bindable, FixedSignal, SetAction, Signal, Store, StoreContainerSource, TokenStore};
 use quarve::util::geo::{Alignment, HorizontalAlignment, Inset, Size};
 use quarve::view::{ViewProvider, IntoViewProvider, WeakInvalidator};
@@ -17,7 +17,7 @@ use quarve::view::modal::{OpenFilePicker, SaveFilePicker};
 use quarve::view::modifers::{Cursor, CursorModifiable, EnvironmentModifier, ForeBackModifiable, Frame, FrameModifiable, OffsetModifiable, PaddingModifiable};
 use quarve::view::portal::{Portal, PortalReceiver, PortalSendable};
 use quarve::view::scroll::ScrollView;
-use quarve::view::text::{AttributeSet, CharAttribute, Page, PageAttribute, Run, RunAttribute, Text, TextField, TextModifier, TextView, TextViewProvider, TextViewState};
+use quarve::view::text::{AttributeSet, CharAttribute, Page, PageAttribute, Run, RunAttribute, Text, TextField, TextModifier, TextView, TextViewProvider, TextViewState, ToCharAttribute};
 use quarve::view::undo_manager::{UndoManager, UndoManagerExt};
 use quarve::view::util::Color;
 use quarve_derive::StoreContainer;
@@ -65,9 +65,29 @@ struct Stores {
     text: Store<String>
 }
 
+#[derive(PartialEq, Clone, Default)]
+struct FakeChar {
+    bold: bool,
+}
+
+impl ToCharAttribute for FakeChar {
+    fn to_char_attribute(&self) -> impl AsRef<CharAttribute> {
+        CharAttribute {
+            bold: Some(self.bold),
+            italic: None,
+            underline: None,
+            strikethrough: None,
+            back_color: Some(Color::black()),
+            fore_color: None,
+            size: Some(24.),
+            font: Some(Resource::named("font/SignikaNegative-Regular.ttf")),
+        }
+    }
+}
+
 struct AttrSet;
 impl AttributeSet for AttrSet {
-    type CharAttribute = CharAttribute;
+    type CharAttribute = FakeChar;
     type RunAttribute = RunAttribute;
     type PageAttribute = PageAttribute;
 }
@@ -81,8 +101,8 @@ impl TextViewProvider<Env> for TVProvider {
     type DerivedAttribute = AttrSet;
     const PAGE_INSET: Inset = Inset {
         l: 0.0,
-        r: 0.0,
-        b: 0.0,
+        r: 10.0,
+        b: 10.0,
         t: 0.0,
     };
 
@@ -134,7 +154,7 @@ impl quarve::core::WindowProvider for WindowProvider {
 
         let tv = StoreContainerSource::new(TextViewState::new());
         let p = Page::new(s);
-        p.replace_range(0, 0, 0, 0, "test", s);
+        p.replace_range(0, 0, 0, 0, "test\nnew", s);
         tv.insert_page(p, 0, s.to_general_slock());
 
         let tv2 = tv.view();
@@ -158,122 +178,12 @@ impl quarve::core::WindowProvider for WindowProvider {
                     "Auxiliary\nTHIS IS SECOND LINE\n",
                     s
                 );
+                p.run(1, s)
+                    .set_char_intrinsic(FakeChar {
+                        bold: true,
+                    }, 2..5, s);
             })
         });
-
-        // let portal = Portal::new();
-
-        // let v1 = ScrollView::vertical(
-        //     VStack::hetero_options(VStackOptions::default().align(HorizontalAlignment::Leading))
-        //         .push(
-        //             Button::new_with_label(
-        //                 Color::black()
-        //                     .intrinsic(100, 100),
-        //                 move |s| {
-        //                     SaveFilePicker::new()
-        //                         .content_types("pdf")
-        //                         .run(|path, s| {
-        //
-        //                         });
-        //                     binding.apply(SetAction::Set(None), s);
-        //                 }
-        //             )
-        //                 .offset_signal(FixedSignal::new(0.0), offset_y.signal())
-        //         )
-        //         .push(
-        //             Button::new("Focus", move |s| {
-        //                 binding2.apply(SetAction::Set(Some(2)), s);
-        //             })
-        //         )
-        //         .push(
-        //             Dropdown::new(selected.binding())
-        //                 .option("Hello")
-        //                 .option("World")
-        //         )
-        //         .push(
-        //             Text::from_signal(focused.map(|r| format!("Selected {:?}", r), s))
-        //                 .text_backcolor(Color::rgb(255, 0, 2))
-        //                 .text_size(24.0)
-        //         )
-        //         .push(
-        //             TextField::new(text.binding())
-        //                 .unstyled()
-        //                 .focused_if_eq(focused.binding(), 2)
-        //                 .max_lines(0)
-        //                 .text_size(24.0)
-        //                 .padding(10)
-        //         )
-        //         .push(
-        //             TextField::new(text.binding())
-        //                 .focused_if_eq(focused.binding(), 3)
-        //                 .text_size(24.0)
-        //         )
-        //         .push(
-        //             TextView::new(tv.view(), TVProvider {})
-        //                 .frame(Frame::default().stretched(10000, 100))
-        //                 .border(Color::white(), 1)
-        //                 .padding(10.0)
-        //                 .bg_color(Color::rgba(0,0,0,120))
-        //         )
-        //         .push(
-        //             Dropdown::new(selected.binding())
-        //                 .option("Hello")
-        //                 .option("World")
-        //         )
-        //         .push(
-        //             (0..14)
-        //                 .vmap(|x, _s| {
-        //                     Color::white()
-        //                         .intrinsic(100, 100 + 10 * *x)
-        //                         .cursor(Cursor::Pointer)
-        //                 })
-        //                 .padding(10)
-        //                 .border(Color::black(), 1)
-        //         )
-        //         .push(
-        //             Text::new(format!("Item {:?}", 1))
-        //                 .intrinsic(100, 100)
-        //                 .bg_color(rgb(0, 0, 0))
-        //         )
-        //     // offset_y.binding()
-        // )
-        //     .frame(Frame::default()
-        //         .intrinsic(300, 300)
-        //             .unlimited_stretch()
-        //             .align(Alignment::Center)
-        //     )
-        //     .mount_undo_manager(UndoManager::new(&stores, s))
-        //     .text_color(Color::white())
-        //     .text_font("SignikaNegative-Regular.ttf")
-        //     .underline()
-        //     .bold();
-        //
-        // let v2 = ScrollView::vertical_with_binding(
-        //         VStack::hetero_options(VStackOptions::default().align(HorizontalAlignment::Leading))
-        //             .push(
-        //                 Button::new_with_label(
-        //                     Color::white()
-        //                         .intrinsic(100, 100),
-        //                     |_| println!("Clicked")
-        //                 )
-        //                     .offset_signal(FixedSignal::new(0.0), offset_y.signal())
-        //             )
-        //             .push(
-        //                 (0..14).vmap(|x, s| {
-        //                         Color::black()
-        //                             .intrinsic(100, 100 + 10 * *x)
-        //                             .cursor(Cursor::Pointer)
-        //                     })
-        //                     .padding(10)
-        //                     .border(Color::white(), 1)
-        //             ),
-        //         offset_y.binding()
-        //     )
-        //         .frame(Frame::default()
-        //             .intrinsic(300, 300)
-        //             .unlimited_stretch()
-        //             .align(Alignment::Center)
-        //         );
 
         VStack::hetero()
             .push(
@@ -288,8 +198,10 @@ impl quarve::core::WindowProvider for WindowProvider {
             .push(
                 TextField::new(text.binding())
                     // .focused_if_eq(focused.binding(), 3)
+                    .text_font("SignikaNegative-Regular.ttf")
                     .text_size(24.0)
             )
+            .mount_undo_manager(UndoManager::new(&tv, s))
         //     // .push(v1)
         //     // .push(v2)
             .into_view_provider(env, s)

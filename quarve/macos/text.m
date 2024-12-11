@@ -520,10 +520,72 @@ back_text_view_replace(void *tv, size_t start, size_t len, const uint8_t* with)
 }
 
 void
-back_text_view_set_attributes(void *tv)
+back_text_view_set_line_attributes(
+    void *tv,
+    size_t line_no, size_t start, size_t end,
+    int justification_sign,
+    double leading_indentation, double trailing_indentation
+)
 {
     TextView* textView = tv;
     textView.executing_back = YES;
+
+    NSRange range = NSMakeRange(start, end - start);
+
+    // sometimes this is kept on the new line automatically by cocoa
+    [textView.textStorage removeAttribute:NSBackgroundColorAttributeName
+                                   range:range];
+
+    textView.executing_back = NO;
+}
+
+void
+back_text_view_set_char_attributes(
+    void *tv, size_t start, size_t end,
+    uint8_t bold, uint8_t italic, uint8_t underline, uint8_t strikethrough,
+    color back, color front, double size,
+    uint8_t const* font
+)
+{
+    TextView* textView = tv;
+    textView.executing_back = YES;
+
+    NSRange range = NSMakeRange(start, end - start);
+
+    NSFont *nsFont = font_for(font, size, bold, italic);
+    [textView.textStorage addAttribute:NSFontAttributeName value:nsFont range:range];
+
+    if (underline) {
+        [textView.textStorage addAttribute:NSUnderlineStyleAttributeName
+                              value:@(NSUnderlineStyleSingle)
+                              range:range];
+    }
+    else {
+        [textView.textStorage removeAttribute:NSUnderlineStyleAttributeName
+                              range:range];
+    }
+
+    if (strikethrough) {
+        [textView.textStorage addAttribute:NSStrikethroughStyleAttributeName
+                              value:@(NSUnderlineStyleSingle)
+                              range:range];
+    }
+    else {
+        [textView.textStorage removeAttribute:NSStrikethroughStyleAttributeName
+                              range:range];
+    }
+
+    NSColor *backgroundColor = [NSColor colorWithRed:back.r/255.0
+                                               green:back.g/255.0
+                                                blue:back.b/255.0
+                                               alpha:back.a/255.0];
+    [textView.textStorage addAttribute:NSBackgroundColorAttributeName value:backgroundColor range:range];
+
+    NSColor *foregroundColor = [NSColor colorWithRed:front.r/255.0
+                                               green:front.g/255.0
+                                                blue:front.b/255.0
+                                               alpha:front.a/255.0];
+    [textView.textStorage addAttribute:NSForegroundColorAttributeName value:foregroundColor range:range];
 
     textView.executing_back = NO;
 }

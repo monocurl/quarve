@@ -8,14 +8,14 @@ mod attribute {
         // implies to leave it to the default
         #[derive(Default, Clone, Debug, PartialEq)]
         pub struct CharAttribute {
-            bold: Option<bool>,
-            italic: Option<bool>,
-            underline: Option<bool>,
-            strikethrough: Option<bool>,
-            back_color: Option<Color>,
-            fore_color: Option<Color>,
-            size: Option<ScreenUnit>,
-            font: Option<Resource>,
+            pub bold: Option<bool>,
+            pub italic: Option<bool>,
+            pub underline: Option<bool>,
+            pub strikethrough: Option<bool>,
+            pub back_color: Option<Color>,
+            pub fore_color: Option<Color>,
+            pub size: Option<ScreenUnit>,
+            pub font: Option<Resource>,
         }
     }
     pub use character::*;
@@ -30,16 +30,22 @@ mod attribute {
             Trailing
         }
 
-        #[derive(Copy, Clone, Debug, PartialEq)]
+        impl Default for Justification {
+            fn default() -> Self {
+                Justification::Leading
+            }
+        }
+
+        #[derive(Copy, Clone, Debug, PartialEq, Default)]
         pub struct Indentation {
-            leading: ScreenUnit,
-            trailing: ScreenUnit
+            pub(crate) leading: ScreenUnit,
+            pub(crate) trailing: ScreenUnit
         }
 
         #[derive(Default, Copy, Clone, Debug, PartialEq)]
         pub struct RunAttribute {
-            justification: Option<Justification>,
-            indentation: Option<Indentation>,
+            pub justification: Option<Justification>,
+            pub indentation: Option<Indentation>,
         }
     }
     pub use run::*;
@@ -864,8 +870,8 @@ mod text_view {
                 content: Store<EditingString>,
                 pub(crate) gui_info: DerivedStore<RunGUIInfo>,
 
-                char_intrinsic_attribute: Store<RangedAttributeHolder<I::CharAttribute>>,
-                char_derived_attribute: DerivedStore<RangedAttributeHolder<D::CharAttribute>>,
+                pub(crate) char_intrinsic_attribute: Store<RangedAttributeHolder<I::CharAttribute>>,
+                pub(crate) char_derived_attribute: DerivedStore<RangedAttributeHolder<D::CharAttribute>>,
 
                 intrinsic_attribute: Store<AttributeHolder<I::RunAttribute>>,
                 derived_attribute: DerivedStore<AttributeHolder<D::RunAttribute>>,
@@ -1701,7 +1707,7 @@ mod text_view {
                     let mut utf16 = 0;
                     for (i, run) in self.runs(s).iter().take(line + 1).enumerate() {
                         if i == line {
-                            utf16 += run.content(s)[0..char]
+                            utf16 += run.content(s)[0..char.min(run.content(s).len())]
                                 .encode_utf16().count()
                         }
                         else {
@@ -1855,7 +1861,7 @@ mod text_view {
         use crate::core::{Environment, MSlock, Slock, StandardConstEnv};
         use crate::{native};
         use crate::event::{Event, EventPayload, EventResult, MouseEvent};
-        use crate::native::view::text_view::{text_view_copy, text_view_cut, text_view_focus, text_view_full_replace, text_view_get_selection, text_view_init, text_view_paste, text_view_select_all, text_view_set_page_id, text_view_set_selection, text_view_unfocus};
+        use crate::native::view::text_view::{text_view_copy, text_view_cut, text_view_focus, text_view_full_replace, text_view_get_selection, text_view_init, text_view_paste, text_view_select_all, text_view_set_char_attributes, text_view_set_page_id, text_view_set_run_attributes, text_view_set_selection, text_view_unfocus};
         use crate::state::{ActualDiffSignal, Bindable, Binding, Buffer, Filterless, Signal, Store, StoreContainer, StoreContainerView, StringActionBasis, VecActionBasis, WeakBinding};
         use crate::state::SetAction::Set;
         use crate::state::slock_cell::MainSlockCell;
@@ -1864,7 +1870,7 @@ mod text_view {
         use crate::view::{EnvRef, IntoViewProvider, NativeView, NativeViewState, Subtree, TrivialContextViewRef, View, ViewProvider, ViewRef, WeakInvalidator};
         use crate::view::layout::{BindingVMap, LayoutProvider, VecBindingLayout, VecLayoutProvider, VStackOptions};
         use crate::view::menu::MenuChannel;
-        use crate::view::text::{AttributeSet, Page, Run, TextViewState};
+        use crate::view::text::{AttributeSet, Page, Run, TextViewState, ToCharAttribute, ToRunAttribute};
 
         thread_local! {
             pub(crate) static IN_TEXTVIEW_FRONT_CALLBACK: Cell<bool> = Cell::new(false)
@@ -1951,6 +1957,7 @@ mod text_view {
                 let pages = self.state.pages.binding().binding_vmap_options(move |p, s| {
                     new_page_coordinator(sp.clone(), selected_page.clone(), p.view(), s)
                 }, VStackOptions::default().spacing(0.0)).into_view_provider(env, s).into_view(s);
+
                 TextViewVP {
                     provider: shared_provider,
                     state: self.state,
@@ -2229,13 +2236,18 @@ mod text_view {
                 let inset = P::PAGE_INSET;
 
                 let page = self.page_view.layout_down(
-                    Rect::new(inset.l, inset.t, frame.w - inset.r.min(frame.w), frame.h - inset.b.min(frame.h)),
+                    Rect::new(inset.l, inset.t, frame.w - (inset.l + inset.r).min(frame.w), frame.h - (inset.b + inset.t).min(frame.h)),
                     env, s
                 );
                 self.background.layout_down(page, env, s);
                 self.decorations.layout_down(page, env, s);
 
-                page
+                Rect::new(
+                    page.x - inset.l,
+                    page.y - inset.t,
+                    page.w + inset.l + inset.r,
+                    page.h + inset.b + inset.t
+                )
             }
         }
 
@@ -2517,16 +2529,17 @@ mod text_view {
                 }
 
                 // rewrite line numbers
-                // - IMPORTANT: the dirty flag is set to false whenever we flush the changes
-                // - so we don't have to worry about recursive invalidation
                 // relay attrs of affected lines
-                // and recalculate line heights (hard)
+                // and recalculate line heights
                 self.total_height = 0.0;
+                let mut utf16_chars = 0;
+                let lines = self.page.runs.borrow(s).len();
                 for (i, run) in self.page.runs.borrow(s).iter().enumerate() {
                     let mut gui = *run.gui_info.borrow(s);
+                    let next_code_units = utf16_chars + gui.codeunits + if i < lines - 1 { 1 } else { 0 };
 
                     if gui.dirty {
-                        // adjust line attributes
+                        self.assign_attributes(utf16_chars..next_code_units, i, run, s);
 
                         // calculating line height
                         gui.page_height = 600.0;
@@ -2540,6 +2553,7 @@ mod text_view {
                     }
 
                     self.total_height += gui.page_height;
+                    utf16_chars = next_code_units;
                 }
 
                 // relay cursor information + number (easy)
@@ -2624,6 +2638,65 @@ mod text_view {
         }
 
         impl<E, P> PageVP<E, P> where E: Environment, P: TextViewProvider<E> {
+            fn assign_attributes(&self, utf16_char_range: Range<usize>, line: usize, run: &Run<P::IntrinsicAttribute, P::DerivedAttribute>, s: MSlock) {
+                // adjust line attributes
+                let run_intrinsic = run.intrinsic(s);
+                let run_derived = run.derived(s);
+                text_view_set_run_attributes(self.text_view, line, utf16_char_range.clone(),
+                                             run_intrinsic.to_run_attribute().as_ref(),
+                                             run_derived.to_run_attribute().as_ref(), s);
+
+                let string = run.content(s);
+                if string.is_empty() {
+                    return;
+                }
+
+                let derived = run.char_derived_attribute.borrow(s);
+                let intrinsic = run.char_intrinsic_attribute.borrow(s);
+
+                let derived_chars = &derived.attributes;
+                let intrinsic_chars = &intrinsic.attributes;
+
+                let mut i = 0;
+                let mut j = 0;
+
+                let mut current_derived = derived_chars[i].0.to_char_attribute();
+                let mut current_intrinsic = intrinsic_chars[j].0.to_char_attribute();
+
+                let mut d_utf8_offset = 0;
+                let mut i_utf8_offset = 0;
+                let mut utf16_offset = utf16_char_range.start;
+
+                while i < derived_chars.len() || j < intrinsic_chars.len() {
+                    // can't have it so only one is at the end
+                    debug_assert!(i < derived_chars.len() && j < intrinsic_chars.len());
+
+                    let next_utf8 = (d_utf8_offset + derived_chars[i].1).min(i_utf8_offset + intrinsic_chars[j].1);
+
+                    let utf16_len = string[d_utf8_offset.max(i_utf8_offset)..next_utf8].encode_utf16().count();
+                    text_view_set_char_attributes(self.text_view, utf16_offset..utf16_offset + utf16_len, current_intrinsic.as_ref(), current_derived.as_ref(), s);
+
+                    // advance i and j
+                    if next_utf8 == d_utf8_offset + derived_chars[i].1 {
+                        d_utf8_offset = next_utf8;
+                        i += 1;
+                        if i < derived_chars.len() {
+                            current_derived = derived_chars[i].0.to_char_attribute();
+                        }
+                    }
+
+                    if next_utf8 == i_utf8_offset + intrinsic_chars[j].1 {
+                        i_utf8_offset = next_utf8;
+                        j += 1;
+                        if j < intrinsic_chars.len() {
+                            current_intrinsic = intrinsic_chars[j].0.to_char_attribute();
+                        }
+                    }
+
+                    utf16_offset += utf16_len;
+                }
+            }
+
             fn run_listen(&mut self, invalidator: WeakInvalidator<E>, s: MSlock, backing_id: usize) {
                 let weak_runs = self.page.runs.weak_binding();
                 let weak_inv = invalidator.clone();
