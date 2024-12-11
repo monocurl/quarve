@@ -421,11 +421,36 @@ back_text_field_paste(void *view)
     return [super resignFirstResponder];
 }
 
+- (void)insertTab:(id)sender {
+    if (!front_execute_key_callback(self.key_handler, 0)) {
+        [super insertTab: sender];
+    }
+}
+
+- (void)insertBacktab:(id) sender {
+    if (!front_execute_key_callback(self.key_handler, 1)) {
+        [super insertBacktab:sender];
+    }
+}
+
+- (void)insertNewline:(id) sender {
+    if (!front_execute_key_callback(self.key_handler, 2)) {
+        [super insertNewline:sender];
+    }
+}
+
+- (void)insertNewlineIgnoringFieldEditor:(id) sender {
+    if (!front_execute_key_callback(self.key_handler, 3)) {
+        [super insertNewlineIgnoringFieldEditor:sender];
+    }
+}
+
 - (void)dealloc {
     [super dealloc];
 
     front_free_token_binding(self.selected);
     front_free_textview_state(self.state);
+    front_free_key_callback(self.key_handler);
 }
 @end
 
@@ -466,8 +491,8 @@ void
 back_text_view_full_replace(
     void *tv,
     const uint8_t* with,
-    fat_pointer selected,
     fat_pointer state,
+    fat_pointer selected,
     fat_pointer key_callback
 )
 {

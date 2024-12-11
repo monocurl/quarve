@@ -91,7 +91,6 @@ impl TextViewProvider<Env> for TVProvider {
     }
 
     fn tab(&mut self, state: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> bool {
-        println!("Pressed Tab");
         false
     }
 
