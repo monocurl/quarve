@@ -17,7 +17,7 @@ use quarve::view::modal::{OpenFilePicker, SaveFilePicker};
 use quarve::view::modifers::{Cursor, CursorModifiable, EnvironmentModifier, ForeBackModifiable, Frame, FrameModifiable, OffsetModifiable, PaddingModifiable};
 use quarve::view::portal::{Portal, PortalReceiver, PortalSendable};
 use quarve::view::scroll::ScrollView;
-use quarve::view::text::{AttributeSet, CharAttribute, Page, PageAttribute, Run, RunAttribute, Text, TextField, TextModifier, TextView, TextViewProvider, TextViewState, ToCharAttribute};
+use quarve::view::text::{AttributeSet, CharAttribute, Indentation, Justification, Page, PageAttribute, Run, RunAttribute, Text, TextField, TextModifier, TextView, TextViewProvider, TextViewState, ToCharAttribute};
 use quarve::view::undo_manager::{UndoManager, UndoManagerExt};
 use quarve::view::util::Color;
 use quarve_derive::StoreContainer;
@@ -182,6 +182,14 @@ impl quarve::core::WindowProvider for WindowProvider {
                     .set_char_intrinsic(FakeChar {
                         bold: true,
                     }, 2..5, s);
+                p.run(1, s)
+                    .set_intrinsic(RunAttribute {
+                        justification: Some(Justification::Center),
+                        indentation: Some(Indentation {
+                            leading: 10.0,
+                            trailing: 20.0,
+                        }),
+                    }, s);
             })
         });
 

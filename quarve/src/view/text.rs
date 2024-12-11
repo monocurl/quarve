@@ -38,8 +38,8 @@ mod attribute {
 
         #[derive(Copy, Clone, Debug, PartialEq, Default)]
         pub struct Indentation {
-            pub(crate) leading: ScreenUnit,
-            pub(crate) trailing: ScreenUnit
+            pub leading: ScreenUnit,
+            pub trailing: ScreenUnit
         }
 
         #[derive(Default, Copy, Clone, Debug, PartialEq)]
@@ -2672,8 +2672,8 @@ mod text_view {
                     debug_assert!(i < derived_chars.len() && j < intrinsic_chars.len());
 
                     let next_utf8 = (d_utf8_offset + derived_chars[i].1).min(i_utf8_offset + intrinsic_chars[j].1);
-
                     let utf16_len = string[d_utf8_offset.max(i_utf8_offset)..next_utf8].encode_utf16().count();
+
                     text_view_set_char_attributes(self.text_view, utf16_offset..utf16_offset + utf16_len, current_intrinsic.as_ref(), current_derived.as_ref(), s);
 
                     // advance i and j

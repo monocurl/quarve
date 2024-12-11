@@ -536,6 +536,24 @@ back_text_view_set_line_attributes(
     [textView.textStorage removeAttribute:NSBackgroundColorAttributeName
                                    range:range];
 
+    NSMutableParagraphStyle *paragraphStyle = [[NSMutableParagraphStyle alloc] init];
+
+    if (justification_sign < 0) {
+        paragraphStyle.alignment = NSTextAlignmentLeft;
+    } else if (justification_sign == 0) {
+        paragraphStyle.alignment = NSTextAlignmentCenter;
+    } else {
+        paragraphStyle.alignment = NSTextAlignmentRight;
+    }
+
+    paragraphStyle.firstLineHeadIndent = leading_indentation;
+    paragraphStyle.headIndent = leading_indentation;
+    paragraphStyle.tailIndent = -trailing_indentation;
+
+    [textView.textStorage addAttribute:NSParagraphStyleAttributeName
+                                 value:paragraphStyle
+                                 range:range];
+
     textView.executing_back = NO;
 }
 
