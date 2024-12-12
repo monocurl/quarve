@@ -583,6 +583,18 @@ mod text_view {
             }
 
             impl<A> RangedAttributeHolder<A> where A: ToCharAttribute {
+                // note that even if returns false, may actually be true
+                // this is just for optimization purposes
+                pub fn range_equals(&self, range: Range<usize>, attribute: &A) -> bool {
+                    let mut at = 0;
+                    for (a, len) in &self.attributes {
+                        if at >= range.start {
+                            return range.end <= at + len && a == attribute;
+                        }
+                    }
+                    false
+                }
+
                 pub fn attribute_at(&self, mut at: usize) -> &A {
                     // FIXME maybe bin search this if size is greater than threshold
                     self.attributes.iter()
@@ -1144,6 +1156,10 @@ mod text_view {
                 }
 
                 pub fn set_char_intrinsic(&self, attribute: I::CharAttribute, for_range: Range<usize>, s: Slock<impl ThreadMarker>) {
+                    if self.char_intrinsic_attribute.borrow(s).range_equals(for_range.clone(), &attribute) {
+                        return
+                    }
+
                     self.char_intrinsic_attribute.apply(RangedAttributeAction {
                         actions: vec![
                             RangedBasis::Delete {
@@ -1160,6 +1176,10 @@ mod text_view {
                 }
 
                 pub fn set_char_derived(&self, attribute: D::CharAttribute, for_range: Range<usize>, s: Slock<impl ThreadMarker>) {
+                    if self.char_derived_attribute.borrow(s).range_equals(for_range.clone(), &attribute) {
+                        return
+                    }
+
                     self.char_derived_attribute.apply(RangedAttributeAction {
                         actions: vec![
                             RangedBasis::Delete {
