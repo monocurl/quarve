@@ -283,7 +283,7 @@ mod group {
                 }
             }
 
-            pub fn iter(&self) -> impl Iterator<Item=&T> {
+            pub fn iter(&self) -> impl DoubleEndedIterator<Item=&T> {
                 self.items.iter()
                     .rev()
             }
@@ -560,7 +560,7 @@ mod group {
             use crate::state::{GeneralListener, GroupBasis, InverseListener, Stateful, StoreContainer, Word};
             use crate::util::marker::{ThreadMarker, TrueMarker};
 
-            #[derive(Clone)]
+            #[derive(Clone, Debug)]
             pub enum VecActionBasis<T> {
                 /* indices */
                 Insert(T, usize),
@@ -2478,7 +2478,7 @@ mod signal {
             }, s)
         }
     }
-    impl<S> ActualDiffSignal for S where S::Target: Send + Clone + Eq + 'static, S: Signal { }
+    impl<S> ActualDiffSignal for S where S::Target: Send + Clone + PartialEq + 'static, S: Signal { }
 
     trait InnerSignal {
         type Target: Send + 'static;

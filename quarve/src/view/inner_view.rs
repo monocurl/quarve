@@ -541,7 +541,9 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         }
         self.provider.post_show(s);
 
-        self.invalidate(Arc::downgrade(this), s.to_general_slock());
+        if self.needs_layout_up.get() {
+            self.invalidate(Arc::downgrade(this), s.to_general_slock());
+        }
 
         /* pop environment */
         self.pop_environment(e, s);
@@ -569,15 +571,15 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
     }
 
     fn invalidate(&self, this: Weak<MainSlockCell<dyn InnerViewBase<E>>>, s: Slock) {
+        self.needs_layout_up.set(true);
+        self.needs_layout_down.set(true);
+
         // currently unmounted
         if self.graph.depth == u32::MAX {
             return;
         }
 
         if let Some(window) = self.graph.window.as_ref().and_then(|window| window.upgrade()) {
-            self.needs_layout_up.set(true);
-            self.needs_layout_down.set(true);
-
             // safety:
             // the only part of window we're touching
             // is send (guaranteed by protocol)
@@ -888,10 +890,8 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
                     subviews: vec![],
                     unsend_unsync: Default::default(),
                 },
-                // note that upon initial mount
-                // this will be set to true
-                needs_layout_down: Cell::new(false),
-                needs_layout_up: Cell::new(false),
+                needs_layout_down: Cell::new(true),
+                needs_layout_up: Cell::new(true),
                 last_suggested: Rect::default(),
                 last_exclusion: Rect::default(),
                 last_view_frame: Rect::default(),

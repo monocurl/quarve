@@ -4,7 +4,7 @@ use quarve::core::{Application, Environment, launch, MSlock, run_main_async, slo
 use quarve::event::EventModifiers;
 use quarve::prelude::rgb;
 use quarve::resource::{local_storage, Resource};
-use quarve::state::{Bindable, FixedSignal, SetAction, Signal, Store, StoreContainerSource, TokenStore};
+use quarve::state::{Bindable, FixedSignal, JoinedSignal, SetAction, Signal, Store, StoreContainerSource, TokenStore};
 use quarve::util::geo::{Alignment, HorizontalAlignment, Inset, ScreenUnit, Size};
 use quarve::view::{ViewProvider, IntoViewProvider, WeakInvalidator};
 use quarve::view::color_view::EmptyView;
@@ -121,12 +121,16 @@ impl TextViewProvider<Env> for TVProvider {
     }
 
     fn run_decoration(&self, number: impl Signal<Target=usize>, run: &Run<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> impl IntoViewProvider<Env, DownContext=(), UpContext=()> + 'static {
-        Text::new("Test")
-        // Text::from_signal(number.map(|n| n.to_string(), s))
-        //     .text_color(Color::white())
-        //     .frame(Frame::default().align(Alignment::Trailing).intrinsic(100., 20))
-        //     .offset(-100, 0)
+        // Text::new("Test")
+        let sig =
+            JoinedSignal::join(&number, &run.content_signal(), s)
+                .map(|(n, r)| format!("{}", n), s);
+        Text::from_signal(sig)
+            .text_color(Color::white())
+            .frame(Frame::default().align(Alignment::Trailing).intrinsic(100., 20))
+            .offset(-100, 0)
     }
+
 
     fn page_background(&self, page: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> impl IntoViewProvider<Env, DownContext=()> + 'static {
         EmptyView

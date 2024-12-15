@@ -185,7 +185,7 @@ mod button {
         }
     }
 
-    pub trait ButtonLabel<E>: Sized where E: Environment {
+    pub trait ButtonLabel<E>: 'static + Sized where E: Environment {
         type UpContext: 'static;
         type DownContext: 'static;
 

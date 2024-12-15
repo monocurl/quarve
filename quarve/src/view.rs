@@ -16,10 +16,10 @@ mod into_view_provider {
     // TAIT but in the meantime it's not so bad
     // since 99% of the time intoviewprovider is only called
     // from intoviewprovider methods, which means capturing
-    // rules arent that bad. Otherwise, it's fine to elide
+    // rules arent that bad. Otherwise, it's to elide
     // the capture rules anyways since ViewProvider references static data
     // (does require unsafe still though)
-    pub trait IntoViewProvider<E: Environment>: Sized {
+    pub trait IntoViewProvider<E: Environment>: 'static + Sized {
         type UpContext: 'static;
         type DownContext: 'static;
 
