@@ -1922,13 +1922,13 @@ mod text_view {
         use crate::event::{Event, EventPayload, EventResult, MouseEvent};
         use crate::native::view::text_view::{text_view_begin_editing, text_view_copy, text_view_cut, text_view_end_editing, text_view_focus, text_view_full_replace, text_view_get_selection, text_view_init, text_view_paste, text_view_select_all, text_view_set_char_attributes, text_view_set_font, text_view_set_page_id, text_view_set_run_attributes, text_view_set_selection, text_view_unfocus};
         use crate::resource::Resource;
-        use crate::state::{ActualDiffSignal, Bindable, Binding, Buffer, Filterless, GroupAction, Signal, Store, StoreContainer, StoreContainerView, StringActionBasis, VecActionBasis, WeakBinding, Word};
+        use crate::state::{ActualDiffSignal, Bindable, Binding, Buffer, Filterless, Signal, Store, StoreContainer, StoreContainerView, StringActionBasis, VecActionBasis, WeakBinding, Word};
         use crate::state::SetAction::Set;
         use crate::state::slock_cell::MainSlockCell;
-        use crate::util::{FromOptions, geo};
+        use crate::util::{geo};
         use crate::util::geo::{Inset, Rect, ScreenUnit, Size};
         use crate::view::{EnvRef, IntoViewProvider, NativeView, NativeViewState, Subtree, TrivialContextViewRef, View, ViewProvider, ViewRef, WeakInvalidator};
-        use crate::view::layout::{BindingVMap, LayoutProvider, VecLayoutProvider, VStackOptions};
+        use crate::view::layout::{BindingVMap, LayoutProvider, VStackOptions};
         use crate::view::menu::MenuChannel;
         use crate::view::text::{AttributeSet, Page, Run, TextViewState, ToCharAttribute, ToRunAttribute};
 
@@ -1942,6 +1942,12 @@ mod text_view {
 
             const PAGE_INSET: Inset;
 
+
+            // the range of y coordinates to have
+            // items such as run decorations be loaded in
+            fn buffered_y_range() -> Range<ScreenUnit> {
+                -100.0 ..1500.0
+            }
 
             fn font() -> Option<Resource> {
                 None
@@ -2097,7 +2103,7 @@ mod text_view {
                     }
                     else {
                         unsafe {
-                            NativeView::new(native::view::scroll::init_scroll_view(true, false, self.scroll_y.clone(), Store::new(0.0), s), s)
+                            NativeView::new(native::view::scroll::init_scroll_view(true, false, self.scroll_y.clone(), Store::new(0.0).binding(), subtree.window().unwrap(), s), s)
                         }
                     }
                 };
@@ -2216,7 +2222,8 @@ mod text_view {
                             _run_decoration(long_run, long_s, static_provider)
                         },
                         env: Default::default(),
-                    };
+                    phantom: PhantomData::<P>
+                };
 
                 (background, decorations)
             };
@@ -2324,23 +2331,24 @@ mod text_view {
             }
         }
 
-        struct RunDecorationsIVP<E, I, D, Y, V, M>
-            where E: Environment, I: AttributeSet, D: AttributeSet,
+        struct RunDecorationsIVP<E, P, Y, V, M>
+            where E: Environment, P: TextViewProvider<E>,
                   Y: Binding<Filterless<ScreenUnit>>,
                   V: IntoViewProvider<E, DownContext=()>,
-                  M: FnMut(&Run<I, D>, MSlock) -> V + Send + 'static,
+                  M: FnMut(&Run<P::IntrinsicAttribute, P::DerivedAttribute>, MSlock) -> V + Send + 'static,
         {
-            page: StoreContainerView<Page<I, D>>,
+            page: StoreContainerView<Page<P::IntrinsicAttribute, P::DerivedAttribute>>,
             scroll_y: Y,
             map: M,
-            env: PhantomData<(E, fn() -> V)>
+            env: PhantomData<(E, fn() -> V)>,
+            phantom: PhantomData<P>
         }
 
-        impl<E, I, D, Y, V, M> IntoViewProvider<E> for RunDecorationsIVP<E, I, D, Y, V, M>
-            where E: Environment, I: AttributeSet, D: AttributeSet,
+        impl<E, P, Y, V, M> IntoViewProvider<E> for RunDecorationsIVP<E, P, Y, V, M>
+            where E: Environment, P: TextViewProvider<E>,
                   Y: Binding<Filterless<ScreenUnit>>,
                   V: IntoViewProvider<E, DownContext=()>,
-                  M: FnMut(&Run<I, D>, MSlock) -> V + Send + 'static
+                  M: FnMut(&Run<P::IntrinsicAttribute, P::DerivedAttribute>, MSlock) -> V + Send + 'static
         {
             type UpContext = ();
             type DownContext = ();
@@ -2362,19 +2370,20 @@ mod text_view {
                         };
                         ivp.into_view_provider(static_e, static_s)
                     },
+                    phantom: PhantomData::<P>
                 }
             }
         }
 
-        struct RunDecorations<E, I, D, Y, V, VP, M, F>
-            where E: Environment, I: AttributeSet, D: AttributeSet,
+        struct RunDecorations<E, P, Y, V, VP, M, F>
+            where E: Environment, P: TextViewProvider<E>,
                   Y: Binding<Filterless<ScreenUnit>>,
                   V: IntoViewProvider<E, DownContext=()>,
                   VP: ViewProvider<E, DownContext=()>,
-                  M: FnMut(&Run<I, D>, MSlock) -> V + Send + 'static,
+                  M: FnMut(&Run<P::IntrinsicAttribute, P::DerivedAttribute>, MSlock) -> V + Send + 'static,
                   F: Fn(V, &E::Const, MSlock) -> VP + Send + 'static
         {
-            page: StoreContainerView<Page<I, D>>,
+            page: StoreContainerView<Page<P::IntrinsicAttribute, P::DerivedAttribute>>,
             scroll_y: Y,
             map: Option<M>,
             buffered_views: Arc<MainSlockCell<Word<VecActionBasis<V>>>>,
@@ -2383,14 +2392,15 @@ mod text_view {
             // displayed
             view_displayed: Vec<bool>,
             to_vp: F,
+            phantom: PhantomData<P>
         }
 
-        impl<E, I, D, Y, V, VP, M, F> ViewProvider<E> for RunDecorations<E, I, D, Y, V, VP, M, F>
-            where E: Environment, I: AttributeSet, D: AttributeSet,
+        impl<E, P, Y, V, VP, M, F> ViewProvider<E> for RunDecorations<E, P, Y, V, VP, M, F>
+            where E: Environment, P: TextViewProvider<E>,
                   Y: Binding<Filterless<ScreenUnit>>,
                   V: IntoViewProvider<E, DownContext=()>,
                   VP: ViewProvider<E, DownContext=()>,
-                  M: FnMut(&Run<I, D>, MSlock) -> V + Send + 'static,
+                  M: FnMut(&Run<P::IntrinsicAttribute, P::DerivedAttribute>, MSlock) -> V + Send + 'static,
                   F: Fn(V, &E::Const, MSlock) -> VP + Send + 'static
         {
             type UpContext = ();
@@ -2445,7 +2455,7 @@ mod text_view {
                         let s = s.try_to_main_slock().unwrap();
 
                         for action in a.iter() {
-                            let handle_run = |run: &Run<I, D>| {
+                            let handle_run = |run: &Run<P::IntrinsicAttribute, P::DerivedAttribute>| {
                                 let mut curr = *run.gui_info.borrow(s);
                                 if !curr.added_decoration_listener {
                                     curr.added_decoration_listener = true;
@@ -2467,7 +2477,7 @@ mod text_view {
                             };
 
                             match action {
-                                VecActionBasis::Insert(run, at) => {
+                                VecActionBasis::Insert(run, _) => {
                                     handle_run(run);
                                 }
                                 VecActionBasis::InsertMany(runs, _) => {
@@ -2533,8 +2543,12 @@ mod text_view {
                     take(&mut *b)
                 };
 
+                let mut updated = false;
+
                 // add new views and in some cases remove old ones
                 for a in action.into_iter() {
+                    updated = true;
+
                     let handle_insertion = |views: &mut Vec<View<E, VP>>, view_displayed: & mut Vec<bool>, view, env: &E::Const, at| {
                         views.insert(at, (self.to_vp)(view, env, s).into_view(s));
                         view_displayed.insert(at, false);
@@ -2566,31 +2580,44 @@ mod text_view {
                     }
                 }
 
-                for (view, is_visible) in self.views.iter().zip(self.view_displayed.iter_mut()) {
-                    let now_visible = true;
+
+                let scroll_y = *self.scroll_y.borrow(s);
+                let mut effective_y_pos = self.page.gui_info.borrow(s).start_y_pos - scroll_y;
+                for (view, (run, is_visible)) in self.views.iter().zip(self.page.runs.borrow(s).iter().zip(self.view_displayed.iter_mut())) {
+                    let height = run.gui_info.borrow(s).page_height;
+                    let want_range = P::buffered_y_range();
+                    let now_visible = effective_y_pos < want_range.end &&  (effective_y_pos + height) > want_range.start;
+
                     if *is_visible && !now_visible {
                         // remove (slightly inefficient full scan)
                         subtree.remove_subview(view, env, s);
+                        updated = true;
                     }
                     else if !*is_visible && now_visible {
                         // add
                         subtree.push_subview(view, env, s);
+                        updated = true;
                     }
 
                     *is_visible = now_visible;
+                    effective_y_pos += height;
                 }
 
-                true
+                updated
             }
 
             fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, _context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
                 // run gui filled by PageVP
                 let runs = &self.page.runs;
 
+
+                let mut debug = 0;
+
                 let mut y = 0.0;
                 for ((run, view), displayed) in runs.borrow(s).iter().zip(self.views.iter()).zip(self.view_displayed.iter()) {
                     let h = run.gui_info.borrow(s).page_height;
                     if *displayed {
+                        debug += 1;
                         view.layout_down(Rect::new(0.0, y, frame.w, h), env, s);
                     }
                     y += h;

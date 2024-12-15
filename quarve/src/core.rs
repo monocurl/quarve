@@ -376,6 +376,9 @@ mod window {
     }
 
     pub(crate) trait WindowViewCallback<E> where E: Environment {
+
+        fn performing_layout_down(&self) -> bool;
+
         // depth = only consider nodes with strictly greater depth (use -1 for all)
         fn layout_up(&self, env: &mut E, right_below: Option<Arc<MainSlockCell<dyn InnerViewBase<E>>>>, depth: i32, s: MSlock);
 
@@ -923,6 +926,10 @@ mod window {
     }
 
     impl<P> WindowViewCallback<P::Env> for Window<P> where P: WindowProvider {
+        fn performing_layout_down(&self) -> bool {
+            self.performing_layout_down.get()
+        }
+
         fn layout_up(&self, env: &mut P::Env, right_below: Option<Arc<MainSlockCell<dyn InnerViewBase<P::Env>>>>, depth: i32, s: MSlock) {
             // the environment is right above this node
             let mut env_spot = right_below.clone();
