@@ -77,7 +77,7 @@ impl ToCharAttribute for FakeChar {
             italic: None,
             underline: None,
             strikethrough: None,
-            back_color: Some(Color::black()),
+            back_color: None,
             fore_color: Some(Color::rgb(255, 0, 0)),
         }
     }

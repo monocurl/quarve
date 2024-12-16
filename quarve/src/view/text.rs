@@ -2846,7 +2846,7 @@ mod text_view {
                 let rect = Rect::new(0.0, 0.0, frame.w, total_height);
 
                 // very ugly, but cold branch anyways
-                if (rect.w - self.last_size.w).abs() < 1e-3 {
+                if (rect.w - self.last_size.w).abs() > 1e-3 {
                     let inv = self.invalidator.clone().unwrap();
                     run_main_async(move |s| {
                         let Some(invalidator) = inv.upgrade() else {
