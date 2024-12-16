@@ -3,7 +3,7 @@
 #import "util.h"
 #import "front.h"
 
-/* internal state */
+/* internal _state */
 int performing_subview_insertion = 0;
 
 @interface AppDelegate : NSObject<NSApplicationDelegate>

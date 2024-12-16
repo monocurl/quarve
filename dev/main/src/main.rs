@@ -100,7 +100,7 @@ impl TextViewProvider<Env> for TVProvider {
     const PAGE_INSET: Inset = Inset {
         l: 20.0,
         r: 10.0,
-        b: 10.0,
+        b: 100.0,
         t: 0.0,
     };
 
@@ -112,12 +112,8 @@ impl TextViewProvider<Env> for TVProvider {
         16.
     }
 
-    fn init(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) {
+    fn init(&mut self, _state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) {
 
-    }
-
-    fn tab(&mut self, state: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> bool {
-        false
     }
 
     fn run_decoration(&self, number: impl Signal<Target=usize>, run: &Run<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> impl IntoViewProvider<Env, DownContext=(), UpContext=()> + 'static {
@@ -170,6 +166,9 @@ impl quarve::core::WindowProvider for WindowProvider {
         let p = Page::new(s);
         p.replace_range(0, 0, 0, 0, "test\nnew", s);
         tv.insert_page(p, 0, s.to_general_slock());
+        let p = Page::new(s);
+        p.replace_range(0, 0, 0, 0, "test\nnew", s);
+        tv.insert_page(p, 1, s.to_general_slock());
 
         let tv2 = tv.view();
         {

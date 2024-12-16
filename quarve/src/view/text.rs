@@ -1,4 +1,14 @@
+pub use attribute::*;
+pub use env::*;
+pub use text::*;
+pub use text_field::*;
+pub use text_view::*;
+
 mod attribute {
+    pub use character::*;
+    pub use page::*;
+    pub use run::*;
+
     mod character {
         use crate::view::util::Color;
 
@@ -14,7 +24,6 @@ mod attribute {
             pub fore_color: Option<Color>,
         }
     }
-    pub use character::*;
 
     mod run {
         use crate::util::geo::ScreenUnit;
@@ -44,7 +53,6 @@ mod attribute {
             pub indentation: Option<Indentation>,
         }
     }
-    pub use run::*;
 
     mod page {
         /// Currently, no page attributes
@@ -52,12 +60,11 @@ mod attribute {
         pub struct PageAttribute {
         }
     }
-    pub use page::*;
 }
-pub use attribute::*;
 
 mod text {
     use std::ffi::c_void;
+
     use crate::core::{Environment, MSlock, StandardVarEnv};
     use crate::native::view::text::{text_init, text_size, text_update};
     use crate::state::{FixedSignal, Signal};
@@ -188,11 +195,11 @@ mod text {
         }
     }
 }
-pub use text::*;
 
 mod text_field {
     use std::ffi::c_void;
     use std::sync::Arc;
+
     use crate::core::{Environment, MSlock, StandardConstEnv, StandardVarEnv};
     use crate::event::{Event, EventPayload, EventResult, MouseEvent};
     use crate::native::view::text_field::{text_field_copy, text_field_cut, text_field_focus, text_field_init, text_field_paste, text_field_select_all, text_field_size, text_field_unfocus, text_field_update};
@@ -496,10 +503,20 @@ mod text_field {
         }
     }
 }
-pub use text_field::*;
 
 mod text_view {
+    pub use state::*;
+    pub use text_view::*;
+
     mod state {
+        pub use attribute_holder::*;
+        pub use attribute_set::*;
+        pub use cursor_state::*;
+        pub use page::*;
+        pub use run::*;
+        pub use runs::*;
+        pub use text_view_state::*;
+
         mod attribute_set {
             use crate::view::text::{CharAttribute, PageAttribute, RunAttribute};
 
@@ -559,10 +576,10 @@ mod text_view {
                 type PageAttribute: ToPageAttribute;
             }
         }
-        pub use attribute_set::*;
 
         mod attribute_holder {
             use std::ops::{Mul, Range};
+
             use crate::state::{GroupAction, GroupBasis, SetAction, Stateful};
             use crate::util::marker::FalseMarker;
             use crate::view::text::text_view::state::ToCharAttribute;
@@ -843,8 +860,6 @@ mod text_view {
                 type HasInnerStores = FalseMarker;
             }
         }
-        pub use attribute_holder::*;
-
 
         mod run_gui_info {
             use crate::state::{SetAction, Stateful};
@@ -877,14 +892,16 @@ mod text_view {
 
         mod run {
             use std::ops::{Deref, Range};
+
             use quarve_derive::StoreContainer;
+
             use crate::core::{MSlock, Slock};
             use crate::state::{Bindable, Binding, DerivedStore, EditingString, GroupAction, SetAction, Signal, Store, StringActionBasis, Word};
             use crate::state::SetAction::Set;
             use crate::util::marker::ThreadMarker;
             use crate::util::rust_util::DerefMap;
-            use crate::view::text::text_view::state::{AttributeSet};
             use crate::view::text::text_view::state::attribute_holder::{AttributeHolder, RangedAttributeAction, RangedAttributeHolder, RangedBasis};
+            use crate::view::text::text_view::state::AttributeSet;
             use crate::view::text::text_view::state::run_gui_info::RunGUIInfo;
 
             #[derive(StoreContainer)]
@@ -1347,17 +1364,16 @@ mod text_view {
                 }
             }
         }
-        pub use run::*;
 
         mod runs {
             // The type that stores a list of runs
             pub type RunsContainer<T> = Vec<T>;
         }
-        pub use runs::*;
-        
+
         mod cursor_state {
             use quarve_derive::StoreContainer;
-            use crate::core::{Slock};
+
+            use crate::core::Slock;
             use crate::state::{Binding, Buffer, Signal, Store};
             use crate::state::SetAction::Set;
             use crate::util::marker::ThreadMarker;
@@ -1445,12 +1461,13 @@ mod text_view {
                 }
             }
         }
-        pub use cursor_state::*;
 
         mod page {
             use std::ops::{Deref, Range};
             use std::sync::atomic::{AtomicI32, Ordering};
+
             use quarve_derive::StoreContainer;
+
             use crate::core::{MSlock, Slock};
             use crate::state::{Binding, DerivedStore, SetAction, Signal, Stateful, Store, StoreContainerView, VecActionBasis, Word};
             use crate::state::SetAction::Set;
@@ -1459,7 +1476,7 @@ mod text_view {
             use crate::util::rust_util::DerefMap;
             use crate::view::text::CursorState;
             use crate::view::text::text_view::state::{AttributeSet, Run, RunsContainer};
-            use crate::view::text::text_view::state::attribute_holder::{AttributeHolder};
+            use crate::view::text::text_view::state::attribute_holder::AttributeHolder;
 
             static PAGE_ID_COUNTER: AtomicI32 = AtomicI32::new(1);
 
@@ -1798,13 +1815,14 @@ mod text_view {
                 }
             }
         }
-        pub use page::*;
 
         mod text_view_state {
             use std::ops::Deref;
+
             use quarve_derive::StoreContainer;
+
             use crate::core::{MSlock, Slock};
-            use crate::state::{Signal, Binding, Store, VecActionBasis, Word, StoreContainerSource, SetAction};
+            use crate::state::{Binding, SetAction, Signal, Store, StoreContainerSource, VecActionBasis, Word};
             use crate::util::marker::ThreadMarker;
             use crate::util::rust_util::DerefMap;
             use crate::view::text::text_view::state::{AttributeSet, Page};
@@ -1906,9 +1924,7 @@ mod text_view {
                 }
             }
         }
-        pub use text_view_state::*;
     }
-    pub use state::*;
 
     mod text_view {
         use std::cell::Cell;
@@ -1917,17 +1933,18 @@ mod text_view {
         use std::mem::take;
         use std::ops::{Deref, Range};
         use std::sync::Arc;
+
         use crate::core::{Environment, MSlock, run_main_async, Slock, StandardConstEnv};
-        use crate::{native};
         use crate::event::{Event, EventPayload, EventResult, MouseEvent};
+        use crate::native;
         use crate::native::view::text_view::{text_view_begin_editing, text_view_copy, text_view_cut, text_view_end_editing, text_view_focus, text_view_full_replace, text_view_get_line_height, text_view_get_selection, text_view_init, text_view_paste, text_view_select_all, text_view_set_char_attributes, text_view_set_font, text_view_set_page_id, text_view_set_run_attributes, text_view_set_selection, text_view_unfocus};
         use crate::resource::Resource;
         use crate::state::{ActualDiffSignal, Bindable, Binding, Buffer, Filterless, Signal, Store, StoreContainer, StoreContainerView, StringActionBasis, VecActionBasis, WeakBinding, Word};
         use crate::state::SetAction::Set;
         use crate::state::slock_cell::MainSlockCell;
-        use crate::util::{geo};
+        use crate::util::geo;
         use crate::util::geo::{Inset, Rect, ScreenUnit, Size};
-        use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, NativeViewState, Subtree, TrivialContextViewRef, View, ViewProvider, ViewRef, WeakInvalidator};
+        use crate::view::{EnvRef, IntoViewProvider, NativeView, NativeViewState, Subtree, TrivialContextViewRef, View, ViewProvider, ViewRef, WeakInvalidator};
         use crate::view::layout::{BindingVMap, LayoutProvider, VStackOptions};
         use crate::view::menu::MenuChannel;
         use crate::view::text::{AttributeSet, Page, Run, TextViewState, ToCharAttribute, ToRunAttribute};
@@ -1960,22 +1977,63 @@ mod text_view {
             fn init(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock);
 
             #[allow(unused_variables)]
-            fn tab(&mut self, state: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> bool {
+            fn tab(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, page: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> bool {
                 false
             }
 
             #[allow(unused_variables)]
-            fn untab(&mut self, state: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> bool {
+            fn untab(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, page: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> bool {
                 false
             }
 
             #[allow(unused_variables)]
-            fn newline(&mut self, state: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> bool {
+            fn newline(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, page: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> bool {
                 false
             }
 
             #[allow(unused_variables)]
-            fn alt_newline(&mut self, state: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> bool {
+            fn alt_newline(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, page: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> bool {
+                false
+            }
+
+            #[allow(unused_variables)]
+            fn escape(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, page: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> bool {
+                false
+            }
+
+            #[allow(unused_variables)]
+            fn left_arrow(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, page: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> bool {
+                false
+            }
+
+            #[allow(unused_variables)]
+            fn right_arrow(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, page: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> bool {
+                false
+            }
+
+            #[allow(unused_variables)]
+            fn down_arrow(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, page: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> bool {
+                if page.cursor.end_run(s) == page.runs.borrow(s).len() - 1 {
+                    let curr = state.selected_page(s);
+                    if curr.is_some_and(|c| c != state.pages.borrow(s).len() as i32 - 1) {
+                        state.set_selected_page(Some(curr.unwrap() + 1), s);
+                        return true;
+                    }
+                }
+
+                false
+            }
+
+            #[allow(unused_variables)]
+            fn up_arrow(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, page: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> bool {
+                if page.cursor.end_run(s) == 0 {
+                    let curr = state.selected_page(s);
+                    if curr.is_some_and(|c| c != 0) {
+                        state.set_selected_page(Some(curr.unwrap() - 1), s);
+                        return true;
+                    }
+                }
+
                 false
             }
 
@@ -2026,14 +2084,14 @@ mod text_view {
 
                 self.provider.init(self.state.deref(), s);
                 let shared_provider = Arc::new(MainSlockCell::new_main(self.provider, s));
-                let selected_page = self.state.selected_page.binding();
 
                 let y = Store::new(0.0);
 
                 let sp = shared_provider.clone();
                 let yb = y.binding();
+                let state_clone = self.state.clone();
                 let pages = self.state.pages.binding().binding_vmap_options(move |p, s| {
-                    new_page_coordinator(sp.clone(), selected_page.clone(), p.view(), yb.clone(), s)
+                    new_page_coordinator(sp.clone(), state_clone.clone(), p.view(), yb.clone(), s)
                 }, VStackOptions::default().spacing(0.0)).into_view_provider(env, s).into_view(s);
 
                 TextViewVP {
@@ -2167,7 +2225,7 @@ mod text_view {
 
         fn new_page_coordinator<E, P>(
             provider: Arc<MainSlockCell<P>>,
-            selected_page: <Store<Option<i32>> as Bindable<Filterless<Option<i32>>>>::Binding,
+            full_state: StoreContainerView<TextViewState<P::IntrinsicAttribute, P::DerivedAttribute>>,
             page: StoreContainerView<Page<P::IntrinsicAttribute, P::DerivedAttribute>>,
             y: impl Binding<Filterless<ScreenUnit>>,
             s: MSlock
@@ -2232,7 +2290,7 @@ mod text_view {
                 provider: provider.clone(),
                 background,
                 page_view: PageIVP {
-                    selected_page,
+                    full_state,
                     page,
                     provider,
                 },
@@ -2439,7 +2497,7 @@ mod text_view {
                 self.views = self.page.runs.borrow(s)
                     .iter()
                     .map(|r| {
-                        (self.to_vp)((map)(r, s), env.const_env(), s).into_view(s)
+                        (self.to_vp)(map(r, s), env.const_env(), s).into_view(s)
                     })
                     .collect();
                 self.view_displayed = vec![false; self.views.len()];
@@ -2493,12 +2551,12 @@ mod text_view {
                             a.iter().map(|action| {
                                 match action {
                                     VecActionBasis::Insert(run, at) => {
-                                        VecActionBasis::Insert((map)(run, s), *at)
+                                        VecActionBasis::Insert(map(run, s), *at)
                                     }
                                     VecActionBasis::Remove(at) => VecActionBasis::Remove(*at),
                                     VecActionBasis::InsertMany(runs, at) => {
                                         VecActionBasis::InsertMany(runs.iter().map(|run| {
-                                            (map)(run, s)
+                                            map(run, s)
                                         }).collect(), *at)
                                     }
                                     VecActionBasis::RemoveMany(range) => VecActionBasis::RemoveMany(range.clone()),
@@ -2610,14 +2668,10 @@ mod text_view {
                 // run gui filled by PageVP
                 let runs = &self.page.runs;
 
-
-                let mut debug = 0;
-
                 let mut y = 0.0;
                 for ((run, view), displayed) in runs.borrow(s).iter().zip(self.views.iter()).zip(self.view_displayed.iter()) {
                     let h = run.gui_info.borrow(s).page_height;
                     if *displayed {
-                        debug += 1;
                         view.layout_down(Rect::new(0.0, y, frame.w, h), env, s);
                     }
                     y += h;
@@ -2633,7 +2687,7 @@ mod text_view {
                   E: Environment,
                   E::Const: AsRef<StandardConstEnv>
         {
-            selected_page: <Store<Option<i32>> as Bindable<Filterless<Option<i32>>>>::Binding,
+            full_state: StoreContainerView<TextViewState<P::IntrinsicAttribute, P::DerivedAttribute>>,
             page: StoreContainerView<Page<P::IntrinsicAttribute, P::DerivedAttribute>>,
             provider: Arc<MainSlockCell<P>>,
         }
@@ -2648,7 +2702,7 @@ mod text_view {
             fn into_view_provider(self, env: &E::Const, _s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
                 let env = env.as_ref();
                 PageVP {
-                    selected_page: self.selected_page,
+                    full_state: self.full_state,
                     page: self.page,
                     provider: self.provider,
                     text_view: 0 as *mut c_void,
@@ -2664,7 +2718,7 @@ mod text_view {
         }
 
         struct PageVP<E, P> where P: TextViewProvider<E>, E: Environment {
-            selected_page: <Store<Option<i32>> as Bindable<Filterless<Option<i32>>>>::Binding,
+            full_state: StoreContainerView<TextViewState<P::IntrinsicAttribute, P::DerivedAttribute>>,
             page: StoreContainerView<Page<P::IntrinsicAttribute, P::DerivedAttribute>>,
             provider: Arc<MainSlockCell<P>>,
             text_view: *mut c_void,
@@ -2712,15 +2766,15 @@ mod text_view {
             fn init_backing(&mut self, invalidator: WeakInvalidator<E>, _subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, s: MSlock) -> NativeView {
                 let backing =
                     if let Some((bs, _)) = backing_source {
-                        text_view_full_replace(bs.backing(), &self.page.build_full_content(s),
-                                               self.page.clone(), self.selected_page.clone(), self.provider.clone(), s);
+                        text_view_full_replace(bs.backing(), &self.page.build_full_content(s), self.full_state.clone(),
+                                               self.page.clone(), self.full_state.selected_page.binding(), self.provider.clone(), s);
                         text_view_set_font(bs.backing(), P::font(), P::font_size(), s);
                         bs.backing()
                     }
                     else {
                         let backing = text_view_init(s);
-                        text_view_full_replace(backing, &self.page.build_full_content(s),
-                                               self.page.clone(), self.selected_page.clone(), self.provider.clone(),
+                        text_view_full_replace(backing, &self.page.build_full_content(s), self.full_state.clone(),
+                                               self.page.clone(), self.full_state.selected_page.binding(), self.provider.clone(),
                                                s);
                         text_view_set_font(backing, P::font(), P::font_size(), s);
                         backing
@@ -2737,7 +2791,7 @@ mod text_view {
 
                 // cursor changes
                 let inv = invalidator.clone();
-                self.selected_page.diff_listen(move |_l, s| {
+                self.full_state.selected_page.diff_listen(move |_l, s| {
                     inv.try_upgrade_invalidate(s)
                 }, s);
 
@@ -2760,7 +2814,7 @@ mod text_view {
                 let token = self.page.id;
 
                 let view = Arc::downgrade(subtree.owner());
-                if *self.selected_page.borrow(s) == Some(token) {
+                if *self.full_state.selected_page.borrow(s) == Some(token) {
                     subtree.window().and_then(|w| w.upgrade()).unwrap()
                         .borrow_main(s)
                         .request_focus(view);
@@ -2778,7 +2832,7 @@ mod text_view {
                     let mut utf16_chars = 0;
                     text_view_begin_editing(self.text_view, s);
                     for (i, run) in self.page.runs.borrow(s).iter().enumerate() {
-                        let mut gui = *run.gui_info.borrow(s);
+                        let gui = *run.gui_info.borrow(s);
                         let next_code_units = utf16_chars + gui.codeunits + if i < lines - 1 { 1 } else { 0 };
 
                         if gui.dirty {
@@ -2862,8 +2916,8 @@ mod text_view {
 
             fn focused(&self, _rel_depth: u32, s: MSlock) {
                 let token = self.page.id;
-                if *self.selected_page.borrow(s) != Some(token) {
-                    self.selected_page.apply(Set(Some(token)), s);
+                if *self.full_state.selected_page.borrow(s) != Some(token) {
+                    self.full_state.selected_page.apply(Set(Some(token)), s);
                 }
 
                 text_view_focus(self.text_view, s);
@@ -2885,8 +2939,8 @@ mod text_view {
 
             fn unfocused(&self, _rel_depth: u32, s: MSlock) {
                 let token = self.page.id;
-                if *self.selected_page.borrow(s) == Some(token) {
-                    self.selected_page.apply(Set(None), s);
+                if *self.full_state.selected_page.borrow(s) == Some(token) {
+                    self.full_state.selected_page.apply(Set(None), s);
                 }
 
                 text_view_unfocus(self.text_view, s);
@@ -3180,18 +3234,17 @@ mod text_view {
             }
         }
     }
-    pub use text_view::*;
 }
-pub use text_view::*;
 
 mod env {
     use std::ops::Deref;
     use std::path::Path;
+
     use crate::core::{Environment, MSlock, StandardVarEnv, TextEnv};
     use crate::resource::Resource;
     use crate::util::geo::ScreenUnit;
-    use crate::view::modifers::{EnvironmentModifier, EnvModifiable, EnvModifierIVP};
     use crate::view::{IntoViewProvider, WeakInvalidator};
+    use crate::view::modifers::{EnvironmentModifier, EnvModifiable, EnvModifierIVP};
     use crate::view::util::Color;
 
     // FIXME unnecessary clones for many operations
@@ -3303,4 +3356,3 @@ mod env {
         }
     }
 }
-pub use env::*;

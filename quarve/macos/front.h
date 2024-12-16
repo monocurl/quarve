@@ -66,6 +66,8 @@ extern void front_free_textview_state(fat_pointer box);
 //           1 -> un_tab
 //           2 -> newline
 //           3 -> alt new line
+//           4 -> escape
+//           5 -> left 6 -> right 7 -> down 8 -> up
 extern uint8_t front_execute_key_callback(fat_pointer box, size_t key_code);
 
 // box: Box<dyn FnMut(keycode, MSlock)> -> bool

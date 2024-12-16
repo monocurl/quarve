@@ -312,6 +312,11 @@ mod callbacks {
     pub const TEXTVIEW_CALLBACK_KEYCODE_UNTAB: usize = 1;
     pub const TEXTVIEW_CALLBACK_KEYCODE_NEWLINE: usize = 2;
     pub const TEXTVIEW_CALLBACK_KEYCODE_ALT_NEWLINE: usize = 3;
+    pub const TEXTVIEW_CALLBACK_KEYCODE_ESCAPE: usize = 4;
+    pub const TEXTVIEW_CALLBACK_KEYCODE_LEFT: usize = 5;
+    pub const TEXTVIEW_CALLBACK_KEYCODE_RIGHT: usize = 6;
+    pub const TEXTVIEW_CALLBACK_KEYCODE_DOWN: usize = 7;
+    pub const TEXTVIEW_CALLBACK_KEYCODE_UP: usize = 8;
 
     #[no_mangle]
     extern "C" fn front_execute_key_callback(bx: FatPointer, keycode: usize) -> u8 {
@@ -1069,18 +1074,13 @@ pub mod view {
         use std::ops::Range;
         use std::sync::Arc;
         use crate::core::{Environment, MSlock};
-        use crate::native::callbacks::{
-            TEXTVIEW_CALLBACK_KEYCODE_TAB,
-            TEXTVIEW_CALLBACK_KEYCODE_UNTAB,
-            TEXTVIEW_CALLBACK_KEYCODE_NEWLINE,
-            TEXTVIEW_CALLBACK_KEYCODE_ALT_NEWLINE
-        };
+        use crate::native::callbacks::{TEXTVIEW_CALLBACK_KEYCODE_TAB, TEXTVIEW_CALLBACK_KEYCODE_UNTAB, TEXTVIEW_CALLBACK_KEYCODE_NEWLINE, TEXTVIEW_CALLBACK_KEYCODE_ALT_NEWLINE, TEXTVIEW_CALLBACK_KEYCODE_ESCAPE, TEXTVIEW_CALLBACK_KEYCODE_LEFT, TEXTVIEW_CALLBACK_KEYCODE_UP, TEXTVIEW_CALLBACK_KEYCODE_DOWN, TEXTVIEW_CALLBACK_KEYCODE_RIGHT};
         use crate::native::view::{back_text_view_copy, back_text_view_cut, back_text_view_focus, back_text_view_full_replace, back_text_view_get_line_height, back_text_view_get_selection, back_text_view_init, back_text_view_paste, back_text_view_replace, back_text_view_select_all, back_text_view_set_char_attributes, back_text_view_set_editing_state, back_text_view_set_font, back_text_view_set_line_attributes, back_text_view_set_page_id, back_text_view_set_selection, back_text_view_unfocus};
         use crate::resource::Resource;
         use crate::state::{Binding, Filterless, SetAction, StoreContainerView};
         use crate::state::slock_cell::MainSlockCell;
         use crate::util::geo::ScreenUnit;
-        use crate::view::text::{AttributeSet, CharAttribute, Justification, Page, PageFrontCallback, RunAttribute, TextViewProvider};
+        use crate::view::text::{AttributeSet, CharAttribute, Justification, Page, PageFrontCallback, RunAttribute, TextViewProvider, TextViewState};
         use crate::view::util::Color;
 
         pub fn text_view_init(
@@ -1091,36 +1091,60 @@ pub mod view {
             }
         }
 
-        pub fn text_view_full_replace<E: Environment, I: AttributeSet, D: AttributeSet>(tv: *mut c_void,
-                                      with: &str,
-                                      state: StoreContainerView<Page<I, D>>,
-                                      selected: impl Binding<Filterless<Option<i32>>>,
-                                      tv_provider: Arc<MainSlockCell<impl TextViewProvider<E, IntrinsicAttribute=I, DerivedAttribute=D>>>,
-                                      _s: MSlock) {
-            let state_c = state.clone();
+        pub fn text_view_full_replace<E: Environment, I: AttributeSet, D: AttributeSet>(
+            tv: *mut c_void,
+            with: &str,
+            global_state: StoreContainerView<TextViewState<I, D>>,
+            page: StoreContainerView<Page<I, D>>,
+            selected: impl Binding<Filterless<Option<i32>>>,
+            tv_provider: Arc<MainSlockCell<impl TextViewProvider<E, IntrinsicAttribute=I, DerivedAttribute=D>>>,
+            _s: MSlock
+        ) {
+            let state_c = global_state.clone();
+            let page_c = page.clone();
             let cb = Box::new(move |kc: usize, s: MSlock| {
                 match kc {
                     TEXTVIEW_CALLBACK_KEYCODE_TAB => {
                         tv_provider.borrow_mut_main(s)
-                            .tab(&state_c, s)
+                            .tab(&state_c, &page_c, s)
                     },
                     TEXTVIEW_CALLBACK_KEYCODE_UNTAB => {
                         tv_provider.borrow_mut_main(s)
-                            .untab(&state_c, s)
+                            .untab(&state_c, &page_c, s)
                     },
                     TEXTVIEW_CALLBACK_KEYCODE_NEWLINE => {
                         tv_provider.borrow_mut_main(s)
-                            .newline(&state_c, s)
+                            .newline(&state_c, &page_c, s)
                     },
                     TEXTVIEW_CALLBACK_KEYCODE_ALT_NEWLINE => {
                         tv_provider.borrow_mut_main(s)
-                            .alt_newline(&state_c, s)
+                            .alt_newline(&state_c, &page_c, s)
+                    },
+                    TEXTVIEW_CALLBACK_KEYCODE_ESCAPE => {
+                        tv_provider.borrow_mut_main(s)
+                            .escape(&state_c, &page_c, s)
+                    },
+                    TEXTVIEW_CALLBACK_KEYCODE_LEFT => {
+                        tv_provider.borrow_mut_main(s)
+                            .left_arrow(&state_c, &page_c, s)
+                    },
+                    TEXTVIEW_CALLBACK_KEYCODE_RIGHT => {
+                        tv_provider.borrow_mut_main(s)
+                            .right_arrow(&state_c, &page_c, s)
+                    },
+                    TEXTVIEW_CALLBACK_KEYCODE_DOWN => {
+                        tv_provider.borrow_mut_main(s)
+                            .down_arrow(&state_c, &page_c, s)
+                    },
+                    TEXTVIEW_CALLBACK_KEYCODE_UP => {
+                        tv_provider.borrow_mut_main(s)
+                            .up_arrow(&state_c, &page_c, s)
                     },
                     _ => unreachable!()
                 }
             }) as Box<dyn FnMut(usize, MSlock) -> bool>;
 
-            let bx: Box<dyn PageFrontCallback> = Box::new(state);
+            let bx: Box<dyn PageFrontCallback> = Box::new(page);
 
             let set_selected = Box::new(move |has_val, val, s: MSlock|  {
                 if has_val {

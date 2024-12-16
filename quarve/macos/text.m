@@ -260,7 +260,6 @@ back_text_size(void* view, size suggested)
 }
 @end
 
-
 void*
 back_text_field_init(
     fat_pointer text_binding,
@@ -378,7 +377,7 @@ back_text_field_paste(void *view)
 
 // MARK: textview
 @interface TextView : NSTextView<NSTextViewDelegate>
-@property fat_pointer state;
+@property fat_pointer _state;
 @property fat_pointer selected;
 @property fat_pointer key_handler;
 
@@ -387,16 +386,47 @@ back_text_field_paste(void *view)
 @end
 
 @implementation TextView
+- (BOOL)textView:(NSTextView *)textView doCommandBySelector:(SEL)commandSelector {
+    if (commandSelector == @selector(cancelOperation:)) {
+        if (!front_execute_key_callback(self.key_handler, 4)) {
+            [textView.window makeFirstResponder:nil];
+        }
+        return YES;
+    }
+    else if (commandSelector == @selector(moveUp:)) {
+        if (front_execute_key_callback(self.key_handler, 8)) {
+            return YES;
+        }
+    }
+    else if (commandSelector == @selector(moveDown:)) {
+        if (front_execute_key_callback(self.key_handler, 7)) {
+            return YES;
+        }
+    }
+    else if (commandSelector == @selector(moveLeft:)) {
+        if (front_execute_key_callback(self.key_handler, 5)) {
+            return YES;
+        }
+    }
+    else if (commandSelector == @selector(moveRight:)) {
+        if (front_execute_key_callback(self.key_handler, 6)) {
+            return YES;
+        }
+    }
+
+    return NO;
+}
+
 - (BOOL)shouldChangeTextInRange:(NSRange)affectedCharRange
               replacementString:(NSString *)replacementString {
     if (!self.executing_back) {
         if (replacementString) {
             uint8_t const* const str = (uint8_t const*) [replacementString UTF8String];
-            front_replace_textview_range(self.state, affectedCharRange.location, affectedCharRange.length, str);
+            front_replace_textview_range(self._state, affectedCharRange.location, affectedCharRange.length, str);
         }
         else {
             uint8_t const* const str = (uint8_t const*) "";
-            front_replace_textview_range(self.state, affectedCharRange.location, affectedCharRange.length, str);
+            front_replace_textview_range(self._state, affectedCharRange.location, affectedCharRange.length, str);
         }
     }
 
@@ -407,7 +437,7 @@ back_text_field_paste(void *view)
 {
     if (!self.executing_back) {
         NSRange range = [self selectedRange];
-        front_set_textview_selection(self.state, range.location, range.length);
+        front_set_textview_selection(self._state, range.location, range.length);
     }
 }
 
@@ -449,7 +479,7 @@ back_text_field_paste(void *view)
     [super dealloc];
 
     front_free_token_binding(self.selected);
-    front_free_textview_state(self.state);
+    front_free_textview_state(self._state);
     front_free_key_callback(self.key_handler);
 }
 @end
@@ -481,6 +511,8 @@ back_text_view_init()
     tv.automaticDashSubstitutionEnabled = NO;
     tv.automaticLinkDetectionEnabled = NO;
     tv.automaticDataDetectionEnabled = NO;
+    [tv turnOffKerning:nil];
+    [tv turnOffLigatures:nil];
     tv.delegate = tv;
 
     return tv;
@@ -491,7 +523,7 @@ void
 back_text_view_full_replace(
     void *tv,
     const uint8_t* with,
-    fat_pointer state,
+    fat_pointer _state,
     fat_pointer selected,
     fat_pointer key_callback
 )
@@ -502,7 +534,7 @@ back_text_view_full_replace(
     textView.string = [NSString stringWithUTF8String:(const char*)with];
 
     textView.selected = selected;
-    textView.state = state;
+    textView._state = _state;
     textView.key_handler = key_callback;
 
     textView.executing_back = NO;
@@ -550,7 +582,7 @@ back_text_view_set_editing_state(void *tv, uint8_t editing)
 void
 back_text_view_set_line_attributes(
     void *tv,
-    size_t line_no, size_t start, size_t end,
+    size_t _line_no, size_t start, size_t end,
     int justification_sign,
     double leading_indentation, double trailing_indentation
 )
@@ -565,7 +597,6 @@ back_text_view_set_line_attributes(
     [textView.textStorage removeAttribute:NSUnderlineStyleAttributeName range:range];
     [textView.textStorage removeAttribute:NSStrikethroughStyleAttributeName range:range];
     [textView.textStorage applyFontTraits:0 range:range];
-
 
     NSMutableParagraphStyle *paragraphStyle = [[NSMutableParagraphStyle alloc] init];
 
@@ -664,7 +695,7 @@ back_text_view_get_selection(void *tv, size_t *restrict start, size_t* restrict 
 }
 
 double
-back_text_view_get_line_height(void *tv, size_t line, size_t start, size_t end, double width)
+back_text_view_get_line_height(void *tv, size_t _line, size_t start, size_t end, double _width)
 {
     TextView* textView = tv;
     textView.executing_back = YES;
