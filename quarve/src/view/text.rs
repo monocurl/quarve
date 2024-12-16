@@ -3019,6 +3019,8 @@ mod text_view {
                 let rect = Rect::new(0.0, 0.0, frame.w, total_height);
 
                 // very ugly, but cold branch anyways
+                // note that we can't invalidate right now
+                // as that's a double borrow. Might find way to relax this in future
                 if (rect.w - self.last_size.w).abs() > 1e-3 {
                     let inv = self.invalidator.clone().unwrap();
                     run_main_async(move |s| {

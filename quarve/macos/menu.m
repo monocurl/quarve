@@ -101,6 +101,9 @@ void
 back_menu_button_set_action(void *_button, fat_pointer action)
 {
     Button* button = _button;
+    if (button.callback.p0 != NULL) {
+        front_free_fn_mut(button.callback);
+    }
     button.callback = action;
 }
 

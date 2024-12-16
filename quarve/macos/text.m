@@ -614,6 +614,8 @@ back_text_view_set_line_attributes(
 
     [textView.textStorage addAttribute:NSParagraphStyleAttributeName value:paragraphStyle range:range];
 
+    [paragraphStyle release];
+
     textView.executing_back = NO;
 }
 
