@@ -205,7 +205,7 @@ impl<E, P, BX, BY> ViewProvider<E> for ScrollViewVP<E, P, BX, BY>
                     // note that window is not none
                     // since it's only none when we are taking the backing from
                     // another view
-                    NativeView::new(native::view::scroll::init_scroll_view(self.vertical, self.horizontal, self.binding_y.clone(), self.binding_x.clone(), subtree.window().unwrap(), s), s)
+                    NativeView::new(native::view::scroll::init_scroll_view(self.vertical, self.horizontal, self.binding_y.clone(), self.binding_x.clone(), s), s)
                 }
             }
         };

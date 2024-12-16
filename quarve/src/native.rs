@@ -758,11 +758,9 @@ pub mod view {
 
     pub mod scroll {
         use std::ffi::c_void;
-        use std::sync::Weak;
-        use crate::core::{Environment, MSlock, run_main_async, WindowViewCallback};
+        use crate::core::{MSlock};
         use crate::native::view::{back_view_scroll_init, back_view_scroll_set_x, back_view_scroll_set_y};
         use crate::state::{Binding, Filterless, SetAction};
-        use crate::state::slock_cell::MainSlockCell;
         use crate::util::geo::ScreenUnit;
 
         pub fn init_scroll_view(
@@ -770,48 +768,16 @@ pub mod view {
             horizontal: bool,
             binding_y: impl Binding<Filterless<ScreenUnit>> + Clone,
             binding_x: impl Binding<Filterless<ScreenUnit>> + Clone,
-            window: Weak<MainSlockCell<dyn WindowViewCallback<impl Environment>>>,
             _s: MSlock
         ) -> *mut c_void {
             unsafe {
-                let win = window.clone();
                 let set_x = Box::new(move |val, s: MSlock|  {
-                    // theres some timing issues where this is needed
-                    // specifically if the document view does a layout that makes the old scroll invalid
-                    // it's not nice that we have to do next layout iteration
-                    // TODO maybe we eventually do allow invalidation during layout down for reasons like this?
-                    if let Some(win) = win.upgrade() {
-                        if win.borrow_mut_main(s).performing_layout_down() {
-                            let binding_x = binding_x.clone();
-                            run_main_async(move |s| {
-                                binding_x.apply(SetAction::Set(val), s);
-                            })
-                        }
-                        else {
-                            binding_x.apply(SetAction::Set(val), s);
-                        }
-                    }
-                    else {
-                        binding_x.apply(SetAction::Set(val), s);
-                    }
+                    binding_x.apply(SetAction::Set(val), s);
                 }) as Box<dyn Fn(ScreenUnit, MSlock)>;
                 let set_x = std::mem::transmute(set_x);
 
                 let set_y= Box::new(move |val, s: MSlock|  {
-                    if let Some(win) = window.upgrade() {
-                        if win.borrow_mut_main(s).performing_layout_down() {
-                            let binding_y = binding_y.clone();
-                            run_main_async(move |s| {
-                                binding_y.apply(SetAction::Set(val), s);
-                            })
-                        }
-                        else {
-                            binding_y.apply(SetAction::Set(val), s);
-                        }
-                    }
-                    else {
-                        binding_y.apply(SetAction::Set(val), s);
-                    }
+                    binding_y.apply(SetAction::Set(val), s);
                 }) as Box<dyn Fn(ScreenUnit, MSlock)>;
                 let set_y= std::mem::transmute(set_y);
 

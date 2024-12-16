@@ -376,9 +376,6 @@ mod window {
     }
 
     pub(crate) trait WindowViewCallback<E> where E: Environment {
-
-        fn performing_layout_down(&self) -> bool;
-
         // depth = only consider nodes with strictly greater depth (use -1 for all)
         fn layout_up(&self, env: &mut E, right_below: Option<Arc<MainSlockCell<dyn InnerViewBase<E>>>>, depth: i32, s: MSlock);
 
@@ -809,6 +806,12 @@ mod window {
                             depth: curr.depth + 1
                         });
                 }
+
+                // new invalidation
+                // break and we'll ask for a relayout
+                if !self.up_views.borrow().is_empty() {
+                    break
+                }
             }
 
             // it has not parent so we must finalize it
@@ -821,6 +824,7 @@ mod window {
 
             self.clear_focus_request(s);
             // theoretically there can be another invalidation requested
+            // by the clearing of focus (or during the layout down)
             let relayout = !self.up_views.borrow().is_empty();
             if relayout {
                 self.layout_full(w, h, s);
@@ -926,10 +930,6 @@ mod window {
     }
 
     impl<P> WindowViewCallback<P::Env> for Window<P> where P: WindowProvider {
-        fn performing_layout_down(&self) -> bool {
-            self.performing_layout_down.get()
-        }
-
         fn layout_up(&self, env: &mut P::Env, right_below: Option<Arc<MainSlockCell<dyn InnerViewBase<P::Env>>>>, depth: i32, s: MSlock) {
             // the environment is right above this node
             let mut env_spot = right_below.clone();
@@ -1016,8 +1016,6 @@ mod window {
         }
 
         fn invalidate_view(&self, handle: Weak<MainSlockCell<dyn WindowViewCallback<P::Env>>>, view: Weak<MainSlockCell<dyn InnerViewBase<P::Env>>>, depth: u32, s: Slock) {
-            assert!(!self.performing_layout_down.get(), "Cannot call invalidator while performing layout down (try to move to layout_up instead)!");
-
             // note that we're only touching send parts of self
             let mut borrow = self.up_views.borrow_mut();
             if borrow.is_empty() {

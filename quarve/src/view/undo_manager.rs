@@ -11,7 +11,11 @@ use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, ViewProvider, W
 use crate::view::menu::MenuChannel;
 use crate::view::undo_manager::GroupState::Closed;
 
-#[derive(PartialEq, Eq)]
+thread_local! {
+    static ELIDE_INVERSE: Cell<bool> = Cell::new(false);
+}
+
+#[derive(PartialEq, Eq, Debug)]
 enum GroupState {
     // after slock closes open -> open_prev_it, partially_closed -> closed
     Open,
@@ -126,6 +130,7 @@ impl UndoManagerInner {
                     }
                 }), None, s);
             }
+
         }
 
         {
@@ -192,10 +197,17 @@ impl UndoManagerInner {
         }
         self.is_redoing.set(false);
 
+        // after a redo, events should become part of a new group
+        self.undo.borrow_mut(s).last_group_state = Closed;
+
         assert_eq!(expected_undo_count, self.undo.borrow(s).callbacks.len());
     }
 
     fn register_inverter(&self, action: Box<dyn DirectlyInvertible>, bucket: UndoBucket, s: Slock) {
+        if ELIDE_INVERSE.get() {
+            return;
+        }
+
         if self.is_undoing.get() {
             self.redo.borrow_mut(s)
                 .register(action, bucket);
@@ -214,13 +226,12 @@ impl UndoManagerInner {
     }
 }
 
-
 #[derive(Clone)]
 pub struct UndoManager {
     inner: Arc<SlockCell<UndoManagerInner>>
 }
 
-#[derive(Default, Copy, Clone, PartialEq, Eq)]
+#[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
 pub struct UndoBucket(usize);
 
 impl UndoBucket {
@@ -513,4 +524,22 @@ impl<E, P> ViewProvider<E> for UndoManagerVP<E, P>
     fn handle_event(&self, e: &Event, s: MSlock) -> EventResult {
         self.source.handle_event(e, s)
     }
+}
+
+
+/// When performing an undo
+pub fn history_hook(
+    forward_hook: impl FnMut(),
+    transaction: impl FnOnce(),
+    inverse_hook: impl FnMut(),
+) {
+
+}
+
+// all transactions will not incur an undo
+// to the undo manager
+pub fn history_elide(transaction: impl FnOnce()) {
+    let old = ELIDE_INVERSE.replace(true);
+    transaction();
+    ELIDE_INVERSE.set(old);
 }

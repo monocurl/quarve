@@ -136,7 +136,6 @@ mod listener {
         Weak, Strong
     }
 
-    #[allow(private_bounds)]
     pub trait DirectlyInvertible: Send {
         // This function must only be called once per instance
         // (We cannot take ownership since the caller is often unsized)
@@ -559,6 +558,7 @@ mod group {
             use crate::core::{Slock};
             use crate::state::{GeneralListener, GroupBasis, InverseListener, Stateful, StoreContainer, Word};
             use crate::util::marker::{ThreadMarker, TrueMarker};
+            use crate::view::undo_manager::UndoBucket;
 
             #[derive(Clone, Debug)]
             pub enum VecActionBasis<T> {
@@ -658,6 +658,30 @@ mod group {
                                 VecActionBasis::Insert(store, _) => {
                                     /* make sure it is updated of the inverse listener */
                                     store.subtree_inverse_listener(f.clone(), s);
+                                }
+                                _ => {
+                                    /* nothing necessary here either (only care about updates) */
+                                }
+                            }
+                        }
+
+                        // no way around this, must subscribe forever (??)
+                        // realistically not a huge issue though anyways
+                        true
+                    })
+                }
+
+                fn subtree_undo_bucket(&self, bucket: UndoBucket, s: Slock<impl ThreadMarker>)
+                                       -> Option<impl Send + FnMut(&Self, &Self::Action, Slock) -> bool + 'static> {
+                    for store in self {
+                        store.subtree_undo_bucket(bucket, s);
+                    }
+
+                    Some(move |_v: &Vec<T>, w: &Word<VecActionBasis<T>>, s: Slock| {
+                        for a in w.iter() {
+                            match a {
+                                VecActionBasis::Insert(store, _) => {
+                                    store.subtree_undo_bucket(bucket, s);
                                 }
                                 _ => {
                                     /* nothing necessary here either (only care about updates) */
@@ -1437,7 +1461,6 @@ mod store {
             }
 
             fn invoke_listener(&mut self, _action: impl FnOnce() -> Box<dyn DirectlyInvertible>, _s: Slock) {
-
             }
 
             fn undo_barrier(&mut self, _ubt: UndoBarrier, _s: Slock) {

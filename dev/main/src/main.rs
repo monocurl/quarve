@@ -65,7 +65,7 @@ struct Stores {
     text: Store<String>
 }
 
-#[derive(PartialEq, Clone, Default)]
+#[derive(PartialEq, Clone, Default, Debug)]
 struct FakeChar {
     bold: bool,
 }
@@ -98,7 +98,7 @@ impl TextViewProvider<Env> for TVProvider {
     type IntrinsicAttribute = AttrSet;
     type DerivedAttribute = AttrSet;
     const PAGE_INSET: Inset = Inset {
-        l: 20.0,
+        l: 30.0,
         r: 10.0,
         b: 100.0,
         t: 0.0,
@@ -123,10 +123,9 @@ impl TextViewProvider<Env> for TVProvider {
                 .map(|(n, r)| format!("{}", n), s);
         Text::from_signal(sig)
             .text_color(Color::white())
-            .frame(Frame::default().align(Alignment::Trailing).intrinsic(100., 20))
-            .offset(-100, 0)
+            .frame(Frame::default().align(Alignment::Trailing).intrinsic(120., 20))
+            .offset(-120, 0)
     }
-
 
     fn page_background(&self, page: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> impl IntoViewProvider<Env, DownContext=()> + 'static {
         EmptyView
@@ -181,7 +180,7 @@ impl quarve::core::WindowProvider for WindowProvider {
             // )
         }
         thread::spawn(move || {
-            thread::sleep(Duration::from_secs(3));
+            thread::sleep(Duration::from_secs(2));
 
             run_main_async(move |s| {
                 let p = tv2.page(0, s);
@@ -211,17 +210,17 @@ impl quarve::core::WindowProvider for WindowProvider {
                 TextView::new(tv.view(), TVProvider {})
                     .frame(Frame::default()
                         .intrinsic(100, 400)
-                        .stretched(10000, 400)
+                        .stretched(10000, 10000)
                     )
                     .border(Color::white(), 1)
 
             )
-            .push(
-                TextField::new(text.binding())
-                    // .focused_if_eq(focused.binding(), 3)
-                    .text_font("SignikaNegative-Regular.ttf")
-                    .text_size(24.0)
-            )
+            // .push(
+            //     TextField::new(text.binding())
+            //         // .focused_if_eq(focused.binding(), 3)
+            //         .text_font("SignikaNegative-Regular.ttf")
+            //         .text_size(24.0)
+            // )
             .mount_undo_manager(UndoManager::new(&tv, s))
         //     // .push(v1)
         //     // .push(v2)

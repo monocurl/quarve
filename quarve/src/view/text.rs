@@ -518,9 +518,10 @@ mod text_view {
         pub use text_view_state::*;
 
         mod attribute_set {
+            use std::fmt::Debug;
             use crate::view::text::{CharAttribute, PageAttribute, RunAttribute};
 
-            pub trait ToCharAttribute: Default + Send + PartialEq + Clone + 'static {
+            pub trait ToCharAttribute: Debug + Default + Send + PartialEq + Clone + 'static {
                 fn to_char_attribute(&self) -> impl AsRef<CharAttribute>;
             }
 
@@ -662,6 +663,7 @@ mod text_view {
             }
 
             // cant exactly use a word since a single modification doesnt always have a single inverse
+            #[derive(Debug)]
             pub enum RangedBasis<A> where A: ToCharAttribute {
                 Insert {
                     at: usize,
@@ -805,7 +807,7 @@ mod text_view {
                             // possibly rejoin i - 1 with j (which has now become i) if the attributes are now equal
                             if i > 0 && i < to.attributes.len() && to.attributes[i - 1] == to.attributes[i] {
                                 to.attributes[i - 1].1 += to.attributes[i].1;
-                                to.attributes.remove(j);
+                                to.attributes.remove(i);
                             }
                         }
                     }
@@ -822,8 +824,8 @@ mod text_view {
                     for action in self.actions {
                         action.apply(to, &mut inverse);
                     }
-
                     inverse.reverse();
+
                     RangedAttributeAction {
                         actions: inverse,
                     }
@@ -903,6 +905,7 @@ mod text_view {
             use crate::view::text::text_view::state::attribute_holder::{AttributeHolder, RangedAttributeAction, RangedAttributeHolder, RangedBasis};
             use crate::view::text::text_view::state::AttributeSet;
             use crate::view::text::text_view::state::run_gui_info::RunGUIInfo;
+            use crate::view::undo_manager::history_elide;
 
             #[derive(StoreContainer)]
             pub struct Run<I, D> where I: AttributeSet, D: AttributeSet {
@@ -910,7 +913,11 @@ mod text_view {
                 pub(crate) gui_info: DerivedStore<RunGUIInfo>,
 
                 pub(crate) char_intrinsic_attribute: Store<RangedAttributeHolder<I::CharAttribute>>,
-                pub(crate) char_derived_attribute: DerivedStore<RangedAttributeHolder<D::CharAttribute>>,
+                // we can't actually make it derived store
+                // since we still want that for actual insertions or deletions, the inverse action to be applied
+                // all changes that shouldn't result in an undo
+                // are manually carried out
+                pub(crate) char_derived_attribute: Store<RangedAttributeHolder<D::CharAttribute>>,
 
                 intrinsic_attribute: Store<AttributeHolder<I::RunAttribute>>,
                 derived_attribute: DerivedStore<AttributeHolder<D::RunAttribute>>,
@@ -935,10 +942,11 @@ mod text_view {
                             page_height: 0.0,
                         }),
                         char_intrinsic_attribute: Store::new(intrinsic),
-                        char_derived_attribute: DerivedStore::new(derived),
+                        char_derived_attribute: Store::new(derived),
                         intrinsic_attribute: Store::default(),
                         derived_attribute: DerivedStore::default(),
                     };
+                    run.debug_assertions(s);
 
                     // upon change, set dirty flag to true
                     let gui = run.gui_info.binding();
@@ -1009,15 +1017,16 @@ mod text_view {
                         .subrange(at..len);
 
                     self.replace(at..len, "", s);
-                    #[cfg(debug_assertions)]
-                    {
-                        let i = intrinsic.attributes.iter().fold(0, |a,b| a+b.1);
-                        let j = derived.attributes.iter().fold(0, |a,b| a+b.1);
-                        let k =  content.len();
-                        debug_assert!(i == j && j == k);
-                    }
+                    self.debug_assertions(s);
 
                     Run::new_with(content, intrinsic, derived, s)
+                }
+
+                pub(crate) fn debug_assertions(&self, s: Slock<impl ThreadMarker>) {
+                    let i = self.char_intrinsic_attribute.borrow(s).attributes.iter().fold(0, |a,b| a+b.1);
+                    let j = self.char_derived_attribute.borrow(s).attributes.iter().fold(0, |a,b| a+b.1);
+                    let k = self.content.borrow(s).0.len();
+                    debug_assert!(i == j && j == k);
                 }
 
                 pub(super) fn merge_from(&self, run: &Run<I, D>, s: Slock<impl ThreadMarker>) {
@@ -1055,6 +1064,8 @@ mod text_view {
                     }
 
                     self.char_intrinsic_attribute.apply(actions, s);
+
+                    self.debug_assertions(s);
                 }
 
                 pub fn content_signal(&self) -> impl Signal<Target=EditingString> {
@@ -1176,6 +1187,8 @@ mod text_view {
                             }],
                         }, s);
                     }
+
+                    self.debug_assertions(s);
                 }
 
                 pub fn set_char_intrinsic(&self, attribute: I::CharAttribute, for_range: Range<usize>, s: Slock<impl ThreadMarker>) {
@@ -1183,19 +1196,23 @@ mod text_view {
                         return
                     }
 
-                    self.char_intrinsic_attribute.apply(RangedAttributeAction {
-                        actions: vec![
-                            RangedBasis::Delete {
-                                at: for_range.start,
-                                len: for_range.len(),
-                            },
-                            RangedBasis::Insert {
-                                at: for_range.start,
-                                len: for_range.len(),
-                                attribute
-                            }
-                        ],
-                    }, s);
+                    history_elide(|| {
+                        self.char_intrinsic_attribute.apply(RangedAttributeAction {
+                            actions: vec![
+                                RangedBasis::Delete {
+                                    at: for_range.start,
+                                    len: for_range.len(),
+                                },
+                                RangedBasis::Insert {
+                                    at: for_range.start,
+                                    len: for_range.len(),
+                                    attribute
+                                }
+                            ],
+                        }, s);
+                    });
+
+                    self.debug_assertions(s);
                 }
 
                 pub fn set_char_derived(&self, attribute: D::CharAttribute, for_range: Range<usize>, s: Slock<impl ThreadMarker>) {
@@ -1203,19 +1220,23 @@ mod text_view {
                         return
                     }
 
-                    self.char_derived_attribute.apply(RangedAttributeAction {
-                        actions: vec![
-                            RangedBasis::Delete {
-                                at: for_range.start,
-                                len: for_range.len(),
-                            },
-                            RangedBasis::Insert {
-                                at: for_range.start,
-                                len: for_range.len(),
-                                attribute
-                            }
-                        ],
-                    }, s);
+                    history_elide(|| {
+                        self.char_derived_attribute.apply(RangedAttributeAction {
+                            actions: vec![
+                                RangedBasis::Delete {
+                                    at: for_range.start,
+                                    len: for_range.len(),
+                                },
+                                RangedBasis::Insert {
+                                    at: for_range.start,
+                                    len: for_range.len(),
+                                    attribute
+                                }
+                            ],
+                        }, s);
+                    });
+
+                    self.debug_assertions(s);
                 }
 
                 // FIXME, these two could be more efficient (no clones or vec)
@@ -1246,9 +1267,14 @@ mod text_view {
                         at: range.start,
                         len: range.len(),
                     });
-                    self.char_intrinsic_attribute.apply(RangedAttributeAction {
-                        actions: mapped_subrange
-                    }, s);
+
+                    history_elide(|| {
+                        self.char_intrinsic_attribute.apply(RangedAttributeAction {
+                            actions: mapped_subrange
+                        }, s);
+                    });
+
+                    self.debug_assertions(s);
                 }
 
                 pub fn modify_char_derived(&self, range: Range<usize>, mut f: impl FnMut(D::CharAttribute) -> D::CharAttribute, s: Slock<impl ThreadMarker>) {
@@ -1278,9 +1304,13 @@ mod text_view {
                         at: range.start,
                         len: range.len(),
                     });
-                    self.char_derived_attribute.apply(RangedAttributeAction {
-                        actions: mapped_subrange
-                    }, s);
+                    history_elide(|| {
+                        self.char_derived_attribute.apply(RangedAttributeAction {
+                            actions: mapped_subrange
+                        }, s);
+                    });
+
+                    self.debug_assertions(s);
                 }
 
                 pub fn content_action_listen(
@@ -1371,20 +1401,35 @@ mod text_view {
         }
 
         mod cursor_state {
-            use quarve_derive::StoreContainer;
-
             use crate::core::Slock;
-            use crate::state::{Binding, Buffer, Signal, Store};
+            use crate::state::{Binding, Buffer, GeneralListener, InverseListener, Signal, Store, StoreContainer};
             use crate::state::SetAction::Set;
             use crate::util::marker::ThreadMarker;
+            use crate::view::undo_manager::UndoBucket;
 
-            #[derive(StoreContainer)]
             pub struct CursorState {
                 start_run: Store<usize>,
                 start_char: Store<usize>,
 
                 end_run: Store<usize>,
                 end_char: Store<usize>,
+            }
+
+            impl StoreContainer for CursorState {
+                fn subtree_general_listener<F: GeneralListener + Clone>(&self, f: F, s: Slock<impl ThreadMarker>) {
+                    self.start_run.subtree_general_listener(f.clone(), s);
+                    self.start_char.subtree_general_listener(f.clone(), s);
+                    self.end_run.subtree_general_listener(f.clone(), s);
+                    self.end_char.subtree_general_listener(f.clone(), s);
+                }
+
+                fn subtree_inverse_listener<F: InverseListener + Clone>(&self, _f: F, _s: Slock<impl ThreadMarker>) {
+
+                }
+
+                fn subtree_undo_bucket(&self, _bucket: UndoBucket, _s: Slock<impl ThreadMarker>) {
+
+                }
             }
 
             impl CursorState {
@@ -1469,7 +1514,7 @@ mod text_view {
             use quarve_derive::StoreContainer;
 
             use crate::core::{MSlock, Slock};
-            use crate::state::{Binding, DerivedStore, SetAction, Signal, Stateful, Store, StoreContainerView, VecActionBasis, Word};
+            use crate::state::{Binding, DerivedStore, SetAction, Signal, Stateful, Store, StoreContainerView, UndoBarrier, VecActionBasis, Word};
             use crate::state::SetAction::Set;
             use crate::util::geo::ScreenUnit;
             use crate::util::marker::{FalseMarker, ThreadMarker};
@@ -1483,6 +1528,7 @@ mod text_view {
             #[derive(Copy, Clone)]
             pub(crate) struct PageGUIInfo {
                 // maintained by textviewvp
+                pub added_text_view_listener: bool,
                 pub page_num: usize,
                 pub start_y_pos: ScreenUnit,
                 // maintained by individual pages (ignores insets)
@@ -1515,6 +1561,7 @@ mod text_view {
                     Page {
                         id: PAGE_ID_COUNTER.fetch_add(1, Ordering::SeqCst),
                         gui_info: DerivedStore::new(PageGUIInfo {
+                            added_text_view_listener: false,
                             page_num: 0,
                             start_y_pos: 0.0,
                             content_height: 0.0,
@@ -1551,7 +1598,9 @@ mod text_view {
                 /// may only be performed on the main thread
                 // (technically an undo could be called on other threads, but this wont happen in practice)
                 pub fn insert_run<'a>(&'a self, at: usize, s: MSlock<'a>) -> impl Deref<Target=Run<I, D>> + 'a {
+                    self.runs.undo_barrier(UndoBarrier::Weak, s);
                     self.runs.apply(VecActionBasis::Insert(Run::new(s), at), s);
+                    self.runs.undo_barrier(UndoBarrier::Weak, s);
                     self.run(at, s)
                 }
 
@@ -1560,7 +1609,9 @@ mod text_view {
                 // (technically an undo could be called on other threads, but this wont happen in practice)
                 pub fn remove_run(&self, at: usize, s: MSlock) {
                     assert!(self.runs.borrow(s).len() > 1);
+                    self.runs.undo_barrier(UndoBarrier::Weak, s);
                     self.runs.apply(VecActionBasis::Remove(at), s);
+                    self.runs.undo_barrier(UndoBarrier::Weak, s);
                 }
 
                 pub fn intrinsic<'a>(&'a self, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=I::PageAttribute> + 'a {
@@ -1605,6 +1656,12 @@ mod text_view {
                     let segments: Vec<_> = with
                         .split('\n')
                         .collect();
+
+                    let own_undo_group = end_run > start_run || segments.len() > 1;
+
+                    if own_undo_group {
+                        self.runs.undo_barrier(UndoBarrier::Weak, s);
+                    }
 
                     // strategy:
                     // 1) delete tips + intermediate runs
@@ -1663,6 +1720,10 @@ mod text_view {
                         .collect();
                     if !intermediate_runs.is_empty() {
                         self.runs.apply(VecActionBasis::InsertMany(intermediate_runs, start_run + 1), s);
+                    }
+
+                    if own_undo_group {
+                        self.runs.undo_barrier(UndoBarrier::Weak, s);
                     }
                 }
 
@@ -1822,7 +1883,7 @@ mod text_view {
             use quarve_derive::StoreContainer;
 
             use crate::core::{MSlock, Slock};
-            use crate::state::{Binding, SetAction, Signal, Store, StoreContainerSource, VecActionBasis, Word};
+            use crate::state::{Binding, DerivedStore, SetAction, Signal, Store, StoreContainerSource, UndoBarrier, VecActionBasis, Word};
             use crate::util::marker::ThreadMarker;
             use crate::util::rust_util::DerefMap;
             use crate::view::text::text_view::state::{AttributeSet, Page};
@@ -1833,14 +1894,15 @@ mod text_view {
 
                 // i32 so it matches the focus
                 // maybe change this in the future? usize is better...
-                pub(crate) selected_page: Store<Option<i32>>
+                // derived store so that outside of history
+                pub(crate) selected_page: DerivedStore<Option<i32>>
             }
 
             impl<I, D> TextViewState<I, D> where I: AttributeSet, D: AttributeSet {
                 pub fn new() -> Self {
                     TextViewState {
                         pages: Store::new(vec![]),
-                        selected_page: Store::new(None)
+                        selected_page: DerivedStore::new(None)
                     }
                 }
 
@@ -1856,15 +1918,19 @@ mod text_view {
                 }
 
                 pub fn insert_page(&self, page: Page<I, D>, at: usize, s: Slock<impl ThreadMarker>) {
+                    self.pages.undo_barrier(UndoBarrier::Weak, s);
                     self.pages.apply(
                         VecActionBasis::Insert(StoreContainerSource::new(page), at), s
-                    )
+                    );
+                    self.pages.undo_barrier(UndoBarrier::Weak, s);
                 }
 
                 pub fn remove_page(&self, at: usize, s: Slock<impl ThreadMarker>) {
+                    self.pages.undo_barrier(UndoBarrier::Weak, s);
                     self.pages.apply(
                         VecActionBasis::Remove(at), s
-                    )
+                    );
+                    self.pages.undo_barrier(UndoBarrier::Weak, s);
                 }
 
                 /// To avoid race conditions, any text modification must be done on main thread
@@ -1944,7 +2010,7 @@ mod text_view {
         use crate::state::slock_cell::MainSlockCell;
         use crate::util::geo;
         use crate::util::geo::{Inset, Rect, ScreenUnit, Size};
-        use crate::view::{EnvRef, IntoViewProvider, NativeView, NativeViewState, Subtree, TrivialContextViewRef, View, ViewProvider, ViewRef, WeakInvalidator};
+        use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, NativeViewState, Subtree, TrivialContextViewRef, View, ViewProvider, ViewRef, WeakInvalidator};
         use crate::view::layout::{BindingVMap, LayoutProvider, VStackOptions};
         use crate::view::menu::MenuChannel;
         use crate::view::text::{AttributeSet, Page, Run, TextViewState, ToCharAttribute, ToRunAttribute};
@@ -1958,13 +2024,6 @@ mod text_view {
             type DerivedAttribute: AttributeSet;
 
             const PAGE_INSET: Inset;
-
-
-            // the range of y coordinates to have
-            // items such as run decorations be loaded in
-            fn buffered_y_range() -> Range<ScreenUnit> {
-                -100.0 ..1500.0
-            }
 
             fn font() -> Option<Resource> {
                 None
@@ -2086,42 +2145,44 @@ mod text_view {
                 let shared_provider = Arc::new(MainSlockCell::new_main(self.provider, s));
 
                 let y = Store::new(0.0);
+                let h = Store::new(0.0);
 
                 let sp = shared_provider.clone();
                 let yb = y.binding();
+                let hb = h.binding();
                 let state_clone = self.state.clone();
                 let pages = self.state.pages.binding().binding_vmap_options(move |p, s| {
-                    new_page_coordinator(sp.clone(), state_clone.clone(), p.view(), yb.clone(), s)
+                    new_page_coordinator(sp.clone(), state_clone.clone(), p.view(), yb.clone(), hb.clone(), s)
                 }, VStackOptions::default().spacing(0.0)).into_view_provider(env, s).into_view(s);
 
                 TextViewVP {
                     provider: shared_provider,
                     state: self.state,
-                    scroll_y: y.binding(),
+                    scroll_y: y,
+                    height: h,
                     scroll_view: 0 as *mut c_void,
                     pages,
                 }
             }
         }
 
-        struct TextViewVP<E, P, B, VP>
+        struct TextViewVP<E, P, VP>
             where P: TextViewProvider<E>,
-                  B: Binding<Filterless<ScreenUnit>> + Clone,
                   VP: ViewProvider<E, DownContext=()>,
                   E: Environment
         {
             provider: Arc<MainSlockCell<P>>,
             state: StoreContainerView<TextViewState<P::IntrinsicAttribute, P::DerivedAttribute>>,
-            scroll_y: B,
+            scroll_y: Store<ScreenUnit>,
+            height: Store<ScreenUnit>,
             scroll_view: *mut c_void,
             pages: View<E, VP>,
         }
 
-        impl<E, P, B, VP> ViewProvider<E> for TextViewVP<E, P, B, VP>
+        impl<E, P, VP> ViewProvider<E> for TextViewVP<E, P, VP>
             where E: Environment,
                   E::Const: AsRef<StandardConstEnv>,
                   P: TextViewProvider<E>,
-                  B: Binding<Filterless<ScreenUnit>> + Clone,
                   VP: ViewProvider<E, DownContext=()>
         {
             type UpContext = ();
@@ -2151,7 +2212,7 @@ mod text_view {
                 ()
             }
 
-            fn init_backing(&mut self, _invalidator: WeakInvalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+            fn init_backing(&mut self, invalidator: WeakInvalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
                 let state = Buffer::new(NativeViewState::default());
 
                 let mut nv = {
@@ -2161,7 +2222,7 @@ mod text_view {
                     }
                     else {
                         unsafe {
-                            NativeView::new(native::view::scroll::init_scroll_view(true, false, self.scroll_y.clone(), Store::new(0.0).binding(), subtree.window().unwrap(), s), s)
+                            NativeView::new(native::view::scroll::init_scroll_view(true, false, self.scroll_y.binding(), Store::new(0.0).binding(), s), s)
                         }
                     }
                 };
@@ -2175,6 +2236,48 @@ mod text_view {
                     };
 
                     strong.borrow_mut(s).offset_y = *y;
+                    true
+                }, s);
+
+                let handle_page = |page: &Page<P::IntrinsicAttribute, P::DerivedAttribute>, inv: WeakInvalidator<E>, s: Slock| {
+                    let mut curr = *page.gui_info.borrow(s);
+                    if !curr.added_text_view_listener {
+                        curr.added_text_view_listener = true;
+                        page.gui_info.apply(Set(curr), s);
+
+                        let mut last_height = 0.0;
+                        page.gui_info.listen(move |gui, s| {
+                            let Some(invalidator) = inv.upgrade() else {
+                                return false;
+                            };
+                            if gui.content_height != last_height {
+                                last_height = gui.content_height;
+                                invalidator.invalidate(s);
+                            }
+                            true
+                        }, s);
+                    }
+                };
+                self.state.pages.borrow(s).iter().for_each(|p| handle_page(&*p, invalidator.clone(), s.to_general_slock()));
+
+                self.state.pages.action_listen(move |_, a, s| {
+                    let Some(inv) = invalidator.upgrade() else {
+                        return false;
+                    };
+                    inv.invalidate(s);
+
+                    for action in a.iter() {
+                        match action {
+                            VecActionBasis::Insert(page, _) => {
+                                handle_page(&*page, invalidator.clone(), s);
+                            }
+                            VecActionBasis::InsertMany(pages, _) => {
+                                pages.iter().for_each(|page| handle_page(&*page, invalidator.clone(), s));
+                            }
+                            _ => { }
+                        }
+                    }
+
                     true
                 }, s);
 
@@ -2200,6 +2303,8 @@ mod text_view {
             fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
                 let w = frame.w;
                 let h = geo::UNBOUNDED;
+
+                self.height.apply(Set(frame.h), s);
 
                 let unbounded = Rect::new(0.0, 0.0, w, h);
 
@@ -2228,6 +2333,7 @@ mod text_view {
             full_state: StoreContainerView<TextViewState<P::IntrinsicAttribute, P::DerivedAttribute>>,
             page: StoreContainerView<Page<P::IntrinsicAttribute, P::DerivedAttribute>>,
             y: impl Binding<Filterless<ScreenUnit>>,
+            height: impl Binding<Filterless<ScreenUnit>>,
             s: MSlock
         ) -> PageCoordinator<E, impl IntoViewProvider<E, DownContext=()>, P, impl IntoViewProvider<E, DownContext=()>>
             where E: Environment,
@@ -2262,24 +2368,25 @@ mod text_view {
 
                 let background = _background(long_page, long_s, static_provider);
                 let decorations = RunDecorationsIVP {
-                        page: page.clone(),
-                        scroll_y: y,
-                        map: move |run, s| {
-                            // TODO dont like this unsafe
-                            // safety:
-                            // we require that .run_decoration gives a static reference
-                            // so that it cannot borrow from
-                            // (see layout.rs _into_view_provider for detailed proof)
-                            let provider_borrow = provider_clone.borrow_main(s);
-                            let (static_provider, long_s, long_run):
-                                (&'static P, MSlock<'static>, &'static Run<P::IntrinsicAttribute, P::DerivedAttribute>)
-                                = unsafe {
-                                std::mem::transmute((provider_borrow.deref(), s, run))
-                            };
+                    page: page.clone(),
+                    scroll_y: y,
+                    scroll_h: height,
+                    map: move |run, s| {
+                        // TODO dont like this unsafe
+                        // safety:
+                        // we require that .run_decoration gives a static reference
+                        // so that it cannot borrow from
+                        // (see layout.rs _into_view_provider for detailed proof)
+                        let provider_borrow = provider_clone.borrow_main(s);
+                        let (static_provider, long_s, long_run):
+                            (&'static P, MSlock<'static>, &'static Run<P::IntrinsicAttribute, P::DerivedAttribute>)
+                            = unsafe {
+                            std::mem::transmute((provider_borrow.deref(), s, run))
+                        };
 
-                            _run_decoration(long_run, long_s, static_provider)
-                        },
-                        env: Default::default(),
+                        _run_decoration(long_run, long_s, static_provider)
+                    },
+                    env: Default::default(),
                     phantom: PhantomData::<P>
                 };
 
@@ -2389,22 +2496,25 @@ mod text_view {
             }
         }
 
-        struct RunDecorationsIVP<E, P, Y, V, M>
+        struct RunDecorationsIVP<E, P, Y, H, V, M>
             where E: Environment, P: TextViewProvider<E>,
                   Y: Binding<Filterless<ScreenUnit>>,
+                  H: Binding<Filterless<ScreenUnit>>,
                   V: IntoViewProvider<E, DownContext=()>,
                   M: FnMut(&Run<P::IntrinsicAttribute, P::DerivedAttribute>, MSlock) -> V + Send + 'static,
         {
             page: StoreContainerView<Page<P::IntrinsicAttribute, P::DerivedAttribute>>,
             scroll_y: Y,
+            scroll_h: H,
             map: M,
             env: PhantomData<(E, fn() -> V)>,
             phantom: PhantomData<P>
         }
 
-        impl<E, P, Y, V, M> IntoViewProvider<E> for RunDecorationsIVP<E, P, Y, V, M>
+        impl<E, P, Y, H, V, M> IntoViewProvider<E> for RunDecorationsIVP<E, P, Y, H, V, M>
             where E: Environment, P: TextViewProvider<E>,
                   Y: Binding<Filterless<ScreenUnit>>,
+                  H: Binding<Filterless<ScreenUnit>>,
                   V: IntoViewProvider<E, DownContext=()>,
                   M: FnMut(&Run<P::IntrinsicAttribute, P::DerivedAttribute>, MSlock) -> V + Send + 'static
         {
@@ -2415,6 +2525,7 @@ mod text_view {
                 RunDecorations {
                     page: self.page,
                     scroll_y: self.scroll_y,
+                    scroll_h: self.scroll_h,
                     map: Some(self.map),
                     buffered_views: Arc::new(MainSlockCell::new_main(Word::default(), s)),
                     views: vec![],
@@ -2433,9 +2544,10 @@ mod text_view {
             }
         }
 
-        struct RunDecorations<E, P, Y, V, VP, M, F>
+        struct RunDecorations<E, P, Y, H, V, VP, M, F>
             where E: Environment, P: TextViewProvider<E>,
                   Y: Binding<Filterless<ScreenUnit>>,
+                  H: Binding<Filterless<ScreenUnit>>,
                   V: IntoViewProvider<E, DownContext=()>,
                   VP: ViewProvider<E, DownContext=()>,
                   M: FnMut(&Run<P::IntrinsicAttribute, P::DerivedAttribute>, MSlock) -> V + Send + 'static,
@@ -2443,6 +2555,7 @@ mod text_view {
         {
             page: StoreContainerView<Page<P::IntrinsicAttribute, P::DerivedAttribute>>,
             scroll_y: Y,
+            scroll_h: H,
             map: Option<M>,
             buffered_views: Arc<MainSlockCell<Word<VecActionBasis<V>>>>,
             views: Vec<View<E, VP>>,
@@ -2453,9 +2566,10 @@ mod text_view {
             phantom: PhantomData<P>
         }
 
-        impl<E, P, Y, V, VP, M, F> ViewProvider<E> for RunDecorations<E, P, Y, V, VP, M, F>
+        impl<E, P, Y, H, V, VP, M, F> ViewProvider<E> for RunDecorations<E, P, Y, H, V, VP, M, F>
             where E: Environment, P: TextViewProvider<E>,
                   Y: Binding<Filterless<ScreenUnit>>,
+                  H: Binding<Filterless<ScreenUnit>>,
                   V: IntoViewProvider<E, DownContext=()>,
                   VP: ViewProvider<E, DownContext=()>,
                   M: FnMut(&Run<P::IntrinsicAttribute, P::DerivedAttribute>, MSlock) -> V + Send + 'static,
@@ -2502,8 +2616,29 @@ mod text_view {
                     .collect();
                 self.view_displayed = vec![false; self.views.len()];
 
-                // additional runs
+                // run listeners
                 let buffered_views = self.buffered_views.clone();
+                let handle_run = |run: &Run<P::IntrinsicAttribute, P::DerivedAttribute>, inv: WeakInvalidator<E>, s: MSlock| {
+                    let mut curr = *run.gui_info.borrow(s);
+                    if !curr.added_decoration_listener {
+                        curr.added_decoration_listener = true;
+                        run.gui_info.apply(Set(curr), s);
+
+                        let mut last_height = 0.0;
+                        run.gui_info.listen(move |gui, s| {
+                            let Some(invalidator) = inv.upgrade() else {
+                                return false;
+                            };
+                            if gui.page_height != last_height {
+                                last_height = gui.page_height;
+                                invalidator.invalidate(s);
+                            }
+                            true
+                        }, s);
+                    }
+                };
+                self.page.runs.borrow(s).iter().for_each(|r| handle_run(r, invalidator.clone(), s));
+
                 self.page.runs
                     .action_listen(move |_r, a, s| {
                         let Some(invalidator) = inv.upgrade() else {
@@ -2513,33 +2648,12 @@ mod text_view {
                         let s = s.try_to_main_slock().unwrap();
 
                         for action in a.iter() {
-                            let handle_run = |run: &Run<P::IntrinsicAttribute, P::DerivedAttribute>| {
-                                let mut curr = *run.gui_info.borrow(s);
-                                if !curr.added_decoration_listener {
-                                    curr.added_decoration_listener = true;
-                                    run.gui_info.apply(Set(curr), s);
-
-                                    let invalidator_copy = inv.clone();
-                                    let mut last_height = 0.0;
-                                    run.gui_info.listen(move |gui, s| {
-                                        let Some(invalidator) = invalidator_copy.upgrade() else {
-                                            return false;
-                                        };
-                                        if gui.page_height != last_height {
-                                            last_height = gui.page_height;
-                                            invalidator.invalidate(s);
-                                        }
-                                        true
-                                    }, s);
-                                }
-                            };
-
                             match action {
                                 VecActionBasis::Insert(run, _) => {
-                                    handle_run(run);
+                                    handle_run(run, inv.clone(), s);
                                 }
                                 VecActionBasis::InsertMany(runs, _) => {
-                                    runs.iter().for_each(handle_run);
+                                    runs.iter().for_each(|run| handle_run(run, inv.clone(), s));
                                 }
                                 _ => { }
                             }
@@ -2582,6 +2696,11 @@ mod text_view {
                     inv.try_upgrade_invalidate(s)
                 }, s);
 
+                // invalidate whenever the scroll view becomes larger
+                let inv = invalidator.clone();
+                self.scroll_h.diff_listen(move |_, s| {
+                    inv.try_upgrade_invalidate(s)
+                }, s);
 
                 if let Some((native, provider)) = backing_source {
                     for (dst, src) in std::iter::zip(self.views.iter(), provider.views.into_iter()) {
@@ -2641,9 +2760,9 @@ mod text_view {
 
                 let scroll_y = *self.scroll_y.borrow(s);
                 let mut effective_y_pos = self.page.gui_info.borrow(s).start_y_pos - scroll_y;
+                let want_range = 0.0 .. *self.scroll_h.borrow(s);
                 for (view, (run, is_visible)) in self.views.iter().zip(self.page.runs.borrow(s).iter().zip(self.view_displayed.iter_mut())) {
                     let height = run.gui_info.borrow(s).page_height;
-                    let want_range = P::buffered_y_range();
                     let now_visible = effective_y_pos < want_range.end &&  (effective_y_pos + height) > want_range.start;
 
                     if *is_visible && !now_visible {
@@ -2990,6 +3109,8 @@ mod text_view {
 
                 let derived_chars = &derived.attributes;
                 let intrinsic_chars = &intrinsic.attributes;
+
+                assert_eq!(derived_chars.iter().fold(0usize,|u,v|u + v.1), intrinsic_chars.iter().fold(0usize,|u,v|u + v.1));
 
                 let mut i = 0;
                 let mut j = 0;
