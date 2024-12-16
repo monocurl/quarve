@@ -664,14 +664,19 @@ back_text_view_get_selection(void *tv, size_t *restrict start, size_t* restrict 
 }
 
 double
-back_text_view_get_line_height(void *tv, size_t pos)
+back_text_view_get_line_height(void *tv, size_t line, size_t start, size_t end, double width)
 {
     TextView* textView = tv;
     textView.executing_back = YES;
 
+    NSRange charRange = NSMakeRange(start, end - start);
+    NSRange glyphRange = [textView.layoutManager glyphRangeForCharacterRange:charRange
+                                                 actualCharacterRange:nil];
+    CGFloat ret = [textView.layoutManager boundingRectForGlyphRange:glyphRange
+                                          inTextContainer:textView.textContainer].size.height;
 
     textView.executing_back = NO;
-    return -1;
+    return ret;
 }
 
 void

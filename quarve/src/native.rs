@@ -612,6 +612,7 @@ pub mod view {
         fn back_text_view_set_page_id(tv: *mut c_void, page_id: i32);
         fn back_text_view_focus(tv: *mut c_void);
         fn back_text_view_unfocus(tv: *mut c_void);
+        fn back_text_view_get_line_height(tv: *mut c_void, line: usize, start: usize, end: usize, width: f64) -> f64;
 
         fn back_text_view_copy(tv: *mut c_void);
 
@@ -1074,7 +1075,7 @@ pub mod view {
             TEXTVIEW_CALLBACK_KEYCODE_NEWLINE,
             TEXTVIEW_CALLBACK_KEYCODE_ALT_NEWLINE
         };
-        use crate::native::view::{back_text_view_copy, back_text_view_cut, back_text_view_focus, back_text_view_full_replace, back_text_view_get_selection, back_text_view_init, back_text_view_paste, back_text_view_replace, back_text_view_select_all, back_text_view_set_char_attributes, back_text_view_set_editing_state, back_text_view_set_font, back_text_view_set_line_attributes, back_text_view_set_page_id, back_text_view_set_selection, back_text_view_unfocus};
+        use crate::native::view::{back_text_view_copy, back_text_view_cut, back_text_view_focus, back_text_view_full_replace, back_text_view_get_line_height, back_text_view_get_selection, back_text_view_init, back_text_view_paste, back_text_view_replace, back_text_view_select_all, back_text_view_set_char_attributes, back_text_view_set_editing_state, back_text_view_set_font, back_text_view_set_line_attributes, back_text_view_set_page_id, back_text_view_set_selection, back_text_view_unfocus};
         use crate::resource::Resource;
         use crate::state::{Binding, Filterless, SetAction, StoreContainerView};
         use crate::state::slock_cell::MainSlockCell;
@@ -1209,6 +1210,7 @@ pub mod view {
                 back_text_view_set_line_attributes(tv, line_no, char_range.start, char_range.end, justification, indentation.leading, indentation.trailing);
             }
         }
+
         pub fn text_view_set_char_attributes(
             tv: *mut c_void,
             char_range: Range<usize>,
@@ -1247,8 +1249,10 @@ pub mod view {
             start..end
         }
 
-        pub fn text_view_get_line_height(tv: *mut c_void, _s : MSlock) {
-
+        pub fn text_view_get_line_height(tv: *mut c_void, line: usize, range: Range<usize>, width: f64, _s : MSlock) -> f64 {
+            unsafe {
+                back_text_view_get_line_height(tv, line, range.start, range.end, width)
+            }
         }
 
         pub fn text_view_copy(tv: *mut c_void, _s: MSlock) {

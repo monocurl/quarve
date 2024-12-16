@@ -1917,17 +1917,17 @@ mod text_view {
         use std::mem::take;
         use std::ops::{Deref, Range};
         use std::sync::Arc;
-        use crate::core::{Environment, MSlock, Slock, StandardConstEnv};
+        use crate::core::{Environment, MSlock, run_main_async, Slock, StandardConstEnv};
         use crate::{native};
         use crate::event::{Event, EventPayload, EventResult, MouseEvent};
-        use crate::native::view::text_view::{text_view_begin_editing, text_view_copy, text_view_cut, text_view_end_editing, text_view_focus, text_view_full_replace, text_view_get_selection, text_view_init, text_view_paste, text_view_select_all, text_view_set_char_attributes, text_view_set_font, text_view_set_page_id, text_view_set_run_attributes, text_view_set_selection, text_view_unfocus};
+        use crate::native::view::text_view::{text_view_begin_editing, text_view_copy, text_view_cut, text_view_end_editing, text_view_focus, text_view_full_replace, text_view_get_line_height, text_view_get_selection, text_view_init, text_view_paste, text_view_select_all, text_view_set_char_attributes, text_view_set_font, text_view_set_page_id, text_view_set_run_attributes, text_view_set_selection, text_view_unfocus};
         use crate::resource::Resource;
         use crate::state::{ActualDiffSignal, Bindable, Binding, Buffer, Filterless, Signal, Store, StoreContainer, StoreContainerView, StringActionBasis, VecActionBasis, WeakBinding, Word};
         use crate::state::SetAction::Set;
         use crate::state::slock_cell::MainSlockCell;
         use crate::util::{geo};
         use crate::util::geo::{Inset, Rect, ScreenUnit, Size};
-        use crate::view::{EnvRef, IntoViewProvider, NativeView, NativeViewState, Subtree, TrivialContextViewRef, View, ViewProvider, ViewRef, WeakInvalidator};
+        use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, NativeViewState, Subtree, TrivialContextViewRef, View, ViewProvider, ViewRef, WeakInvalidator};
         use crate::view::layout::{BindingVMap, LayoutProvider, VStackOptions};
         use crate::view::menu::MenuChannel;
         use crate::view::text::{AttributeSet, Page, Run, TextViewState, ToCharAttribute, ToRunAttribute};
@@ -2652,7 +2652,9 @@ mod text_view {
                     page: self.page,
                     provider: self.provider,
                     text_view: 0 as *mut c_void,
+                    last_up_width: -1.0,
                     last_size: Default::default(),
+                    invalidator: None,
                     select_all_menu: env.channels.select_all_menu.clone(),
                     cut_menu: env.channels.cut_menu.clone(),
                     copy_menu: env.channels.copy_menu.clone(),
@@ -2667,7 +2669,9 @@ mod text_view {
             provider: Arc<MainSlockCell<P>>,
             text_view: *mut c_void,
 
+            last_up_width: ScreenUnit,
             last_size: Size,
+            invalidator: Option<WeakInvalidator<E>>,
 
             select_all_menu: MenuChannel,
             cut_menu: MenuChannel,
@@ -2742,7 +2746,8 @@ mod text_view {
                     inv.try_upgrade_invalidate(s)
                 }, s);
 
-                self.run_listen(invalidator, s, backing_id);
+                self.run_listen(invalidator.clone(), s, backing_id);
+                self.invalidator = Some(invalidator);
 
                 self.text_view = backing;
                 unsafe {
@@ -2766,41 +2771,56 @@ mod text_view {
                         .unrequest_focus(view);
                 }
 
-                text_view_begin_editing(self.text_view, s);
 
-                // rewrite line numbers
-                // relay attrs of affected lines
-                // and recalculate line heights
-                let mut total_height = 0.0;
-                let mut utf16_chars = 0;
                 let lines = self.page.runs.borrow(s).len();
-                for (i, run) in self.page.runs.borrow(s).iter().enumerate() {
-                    let mut gui = *run.gui_info.borrow(s);
-                    let next_code_units = utf16_chars + gui.codeunits + if i < lines - 1 { 1 } else { 0 };
+                // relay attrs of affected lines
+                {
+                    let mut utf16_chars = 0;
+                    text_view_begin_editing(self.text_view, s);
+                    for (i, run) in self.page.runs.borrow(s).iter().enumerate() {
+                        let mut gui = *run.gui_info.borrow(s);
+                        let next_code_units = utf16_chars + gui.codeunits + if i < lines - 1 { 1 } else { 0 };
 
-                    if gui.dirty {
-                        self.assign_attributes(utf16_chars..next_code_units, i, run, s);
+                        if gui.dirty {
+                            self.assign_attributes(utf16_chars..next_code_units, i, run, s);
+                        }
 
-                        // calculating line height
-                        gui.page_height = 20.0;
+                        utf16_chars = next_code_units;
                     }
-
-                    // only send flush if necessary
-                    if gui.line != i || gui.dirty {
-                        gui.dirty = false;
-                        gui.line = i;
-                        run.gui_info.apply(Set(gui), s);
-                    }
-
-                    total_height += gui.page_height;
-                    utf16_chars = next_code_units;
+                    text_view_end_editing(self.text_view, s);
                 }
 
-                text_view_end_editing(self.text_view, s);
+                // rewrite line numbers
+                // and recalculate line heights
+                {
+                    let mut utf16_chars = 0;
+                    let mut total_height = 0.0;
+                    for (i, run) in self.page.runs.borrow(s).iter().enumerate() {
+                        let mut gui = *run.gui_info.borrow(s);
+                        let next_code_units = utf16_chars + gui.codeunits + if i < lines - 1 { 1 } else { 0 };
 
-                let mut gui = *self.page.gui_info.borrow(s);
-                gui.content_height = total_height;
-                self.page.gui_info.apply(Set(gui), s);
+                        if gui.dirty || self.last_up_width != self.last_size.w {
+                            // calculating line height
+                            gui.page_height = text_view_get_line_height(self.text_view, i, utf16_chars..utf16_chars + gui.codeunits, self.last_size.w, s);
+                        }
+
+                        // only send flush if necessary
+                        if gui.line != i || gui.dirty {
+                            gui.dirty = false;
+                            gui.line = i;
+                            run.gui_info.apply(Set(gui), s);
+                        }
+
+                        total_height += gui.page_height;
+                        utf16_chars = next_code_units;
+                    }
+
+                    let mut gui = *self.page.gui_info.borrow(s);
+                    gui.content_height = total_height;
+                    self.page.gui_info.apply(Set(gui), s);
+
+                    self.last_up_width = self.last_size.w;
+                }
 
                 // relay cursor information + number (easy)
                 let start = self.page.position_to_utf16(
@@ -2824,6 +2844,19 @@ mod text_view {
             fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, _layout_context: &Self::DownContext, _env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
                 let total_height = self.page.gui_info.borrow(s).content_height;
                 let rect = Rect::new(0.0, 0.0, frame.w, total_height);
+
+                // very ugly, but cold branch anyways
+                if (rect.w - self.last_size.w).abs() < 1e-3 {
+                    let inv = self.invalidator.clone().unwrap();
+                    run_main_async(move |s| {
+                        let Some(invalidator) = inv.upgrade() else {
+                            return;
+                        };
+                        invalidator.invalidate(s);
+                    });
+                }
+                self.last_size = rect.size();
+
                 (rect, rect)
             }
 
