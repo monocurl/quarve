@@ -1,6 +1,5 @@
 pub mod state;
 pub mod event;
-pub mod channel;
 pub mod view;
 pub mod util;
 pub mod core;

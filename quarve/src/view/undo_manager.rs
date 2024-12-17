@@ -1,6 +1,7 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{VecDeque};
 use std::marker::PhantomData;
+use std::mem::take;
 use std::sync::{Arc, Weak};
 use crate::core::{Environment, MSlock, run_main_async, Slock, slock_drop_listener, StandardConstEnv, StandardVarEnv};
 use crate::event::{Event, EventResult};
@@ -13,6 +14,8 @@ use crate::view::undo_manager::GroupState::Closed;
 
 thread_local! {
     static ELIDE_INVERSE: Cell<bool> = Cell::new(false);
+    static FORWARD_HOOKS: RefCell<Vec<Box<dyn FnMut(MSlock) + Send>>> = RefCell::new(vec![]);
+    static INVERSE_HOOKS: RefCell<Vec<Box<dyn FnMut(MSlock) + Send>>> = RefCell::new(vec![]);
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -252,6 +255,29 @@ impl InverseListener for UMListener {
         let Some(strong) = self.weak.upgrade() else {
             return false;
         };
+
+        // if theres any hooks
+        if FORWARD_HOOKS.with_borrow(|f| !f.is_empty()) {
+            FORWARD_HOOKS.with_borrow_mut(|f| {
+                let f = take(f);
+                INVERSE_HOOKS.with_borrow_mut(|i| {
+                    let i = take(i);
+                    debug_assert!(f.len() == i.len());
+
+                    for (fh, ih) in f.into_iter().zip(i.into_iter()) {
+                        let hook = Box::new(Hook {
+                            um: self.weak.clone(),
+                            // note that it is reversed as we are doing an undo
+                            forward: Some(ih),
+                            inverse: Some(fh),
+                            bucket,
+                        }) as Box<dyn DirectlyInvertible>;
+                        strong.borrow(s)
+                            .register_inverter(hook, bucket, s);
+                    }
+                });
+            })
+        }
 
         strong.borrow(s)
             .register_inverter(inverse_action, bucket, s.to_general_slock());
@@ -526,14 +552,76 @@ impl<E, P> ViewProvider<E> for UndoManagerVP<E, P>
     }
 }
 
+struct Hook {
+    um: Weak<SlockCell<UndoManagerInner>>,
+    forward: Option<Box<dyn FnMut(MSlock) + Send>>,
+    inverse: Option<Box<dyn FnMut(MSlock) + Send>>,
+    bucket: UndoBucket,
+}
+
+impl DirectlyInvertible for Hook {
+    fn invert(&mut self, s: MSlock) {
+        let Some(um) = self.um.upgrade() else {
+            return;
+        };
+
+        let mut f = self.forward.take();
+        f.as_mut().unwrap()(s);
+
+        let inverse = Hook {
+            um: self.um.clone(),
+            forward: self.inverse.take(),
+            inverse: f,
+            bucket: self.bucket
+        };
+
+        um.borrow(s)
+            .register_inverter(
+                Box::new(inverse) as Box<dyn DirectlyInvertible>,
+                self.bucket,
+                s.to_general_slock());
+    }
+
+    unsafe fn right_multiply(&mut self, _by: Box<dyn DirectlyInvertible>, _s: MSlock) {
+        unreachable!()
+    }
+
+    unsafe fn action_pointer(&self, _s: MSlock) -> *const () {
+        unreachable!()
+    }
+
+    unsafe fn forget_action(&mut self, _s: MSlock) {
+        unreachable!()
+    }
+
+    fn id(&self) -> usize {
+        0
+    }
+}
 
 /// When performing an undo
+/// the inverse hook will be called
+/// when performing a redo
+/// the forward hook will be called
+/// Note that the forward hook will
+/// not be called initially.
+/// Also, make sure that the undo manager will be invoked
+/// some way or another in the transaction block
 pub fn history_hook(
-    forward_hook: impl FnMut(),
+    forward_hook: impl FnMut(MSlock) + Send + 'static,
     transaction: impl FnOnce(),
-    inverse_hook: impl FnMut(),
+    inverse_hook: impl FnMut(MSlock) + Send + 'static,
 ) {
+    FORWARD_HOOKS.with_borrow_mut(move |f| {
+        f.push(Box::new(forward_hook));
+    });
+    INVERSE_HOOKS.with_borrow_mut(move |i| {
+        i.push(Box::new(inverse_hook));
+    });
 
+    transaction();
+
+    assert!(FORWARD_HOOKS.with_borrow(|f| f.is_empty()), "Transaction must invoke an undoable action");
 }
 
 // all transactions will not incur an undo

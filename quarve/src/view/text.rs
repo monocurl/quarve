@@ -1126,7 +1126,7 @@ mod text_view {
                 /// Due to a race condition, modification of text contents
                 /// may only be performed on the main thread
                 // (technically an undo could be called on other threads, but this wont happen in practice)
-                pub fn replace(&self, range: Range<usize>, with: impl Into<String>, s: MSlock) {
+                pub(crate) fn replace(&self, range: Range<usize>, with: impl Into<String>, s: MSlock) {
                     self.replace_with_attributes(
                         range, with,
                         Default::default(), Default::default(),
@@ -1136,7 +1136,7 @@ mod text_view {
 
                 /// Due to a race condition, modification of text contents
                 /// may only be performed on the main thread
-                pub fn replace_with_attributes(
+                pub(crate) fn replace_with_attributes(
                     &self,
                     range: Range<usize>,
                     with: impl Into<String>,
@@ -1514,7 +1514,7 @@ mod text_view {
             use quarve_derive::StoreContainer;
 
             use crate::core::{MSlock, Slock};
-            use crate::state::{Binding, DerivedStore, SetAction, Signal, Stateful, Store, StoreContainerView, UndoBarrier, VecActionBasis, Word};
+            use crate::state::{Bindable, Binding, DerivedStore, Filterless, SetAction, Signal, Stateful, Store, StoreContainer, StoreContainerSource, StoreContainerView, UndoBarrier, VecActionBasis, Word};
             use crate::state::SetAction::Set;
             use crate::util::geo::ScreenUnit;
             use crate::util::marker::{FalseMarker, ThreadMarker};
@@ -1522,6 +1522,7 @@ mod text_view {
             use crate::view::text::CursorState;
             use crate::view::text::text_view::state::{AttributeSet, Run, RunsContainer};
             use crate::view::text::text_view::state::attribute_holder::AttributeHolder;
+            use crate::view::undo_manager::history_hook;
 
             static PAGE_ID_COUNTER: AtomicI32 = AtomicI32::new(1);
 
@@ -1547,10 +1548,13 @@ mod text_view {
 
             #[derive(StoreContainer)]
             pub struct Page<I, D> where I: AttributeSet, D: AttributeSet {
+                #[quarve(ignore)]
                 pub(crate) id: i32,
                 pub(crate) gui_info: DerivedStore<PageGUIInfo>,
 
-                pub(crate) cursor: CursorState,
+                #[quarve(ignore)]
+                pub(crate) selected_page: Option<<Store<Option<i32>> as Bindable<Filterless<Option<i32>>>>::Binding>,
+                pub(crate) cursor: StoreContainerSource<CursorState>,
                 pub(crate) runs: Store<Vec<Run<I, D>>>,
                 pub(crate) page_intrinsic_attribute: Store<AttributeHolder<I::PageAttribute>>,
                 pub(crate) page_derived_attribute: DerivedStore<AttributeHolder<D::PageAttribute>>
@@ -1566,7 +1570,8 @@ mod text_view {
                             start_y_pos: 0.0,
                             content_height: 0.0,
                         }),
-                        cursor: CursorState::new(),
+                        selected_page: None,
+                        cursor: StoreContainerSource::new(CursorState::new()),
                         runs: Store::new(vec![
                             Run::new(s)
                         ]),
@@ -1594,23 +1599,78 @@ mod text_view {
                     )
                 }
 
-                /// Due to a race condition, modification of text contents
-                /// may only be performed on the main thread
-                // (technically an undo could be called on other threads, but this wont happen in practice)
-                pub fn insert_run<'a>(&'a self, at: usize, s: MSlock<'a>) -> impl Deref<Target=Run<I, D>> + 'a {
-                    self.runs.undo_barrier(UndoBarrier::Weak, s);
+                fn with_hook(&self, start_end: (usize, usize), end_end: (usize, usize), transaction: impl FnOnce()) {
+                    if let Some(page) = self.selected_page.clone() {
+                        let id = self.id;
+                        let cursor = self.cursor.view();
+                        let cursor2 = self.cursor.view();
+                        let page2 = page.clone();
+
+                        history_hook(
+                            move |s| {
+                                page.apply(Set(Some(id)), s);
+                                cursor.set_range(
+                                    end_end.0, end_end.1,
+                                    end_end.0, end_end.1, s
+                                );
+                            },
+                            transaction,
+                            move |s| {
+                                page2.apply(Set(Some(id)), s);
+                                cursor2.set_range(
+                                    start_end.0, start_end.1,
+                                    start_end.0, start_end.1, s
+                                );
+                            },
+                        )
+                    }
+                    else {
+                        transaction()
+                    }
+                }
+
+                fn insert_run_helper(&self, at: usize, s: MSlock) {
                     self.runs.apply(VecActionBasis::Insert(Run::new(s), at), s);
-                    self.runs.undo_barrier(UndoBarrier::Weak, s);
-                    self.run(at, s)
                 }
 
                 /// Due to a race condition, modification of text contents
                 /// may only be performed on the main thread
-                // (technically an undo could be called on other threads, but this wont happen in practice)
-                pub fn remove_run(&self, at: usize, s: MSlock) {
-                    assert!(self.runs.borrow(s).len() > 1);
+                pub fn insert_run<'a>(&'a self, at: usize, s: MSlock<'a>) -> impl Deref<Target=Run<I, D>> + 'a {
+                    // hook
+                    let org = if at == 0 { (0, 0) } else {
+                        (at - 1, self.run(at - 1, s).len(s))
+                    };
+
                     self.runs.undo_barrier(UndoBarrier::Weak, s);
+                    self.with_hook(
+                        org,
+                        (at, 0),
+                        || {
+                            self.insert_run_helper(at, s);
+                        });
+                    self.runs.undo_barrier(UndoBarrier::Weak, s);
+
+                    self.run(at, s)
+                }
+
+                fn remove_run_helper(&self, at: usize, s: MSlock) {
+                    assert!(self.runs.borrow(s).len() > 1);
                     self.runs.apply(VecActionBasis::Remove(at), s);
+                }
+
+                pub fn remove_run(&self, at: usize, s: MSlock) {
+                    // hook
+                    let next = if at == 0 { (0, 0) } else {
+                        (at - 1, self.run(at - 1, s).len(s))
+                    };
+
+                    self.runs.undo_barrier(UndoBarrier::Weak, s);
+                    self.with_hook(
+                        (at, self.run(at, s).len(s)),
+                        next,
+                        || {
+                            self.remove_run_helper(at, s);
+                        });
                     self.runs.undo_barrier(UndoBarrier::Weak, s);
                 }
 
@@ -1642,7 +1702,6 @@ mod text_view {
 
                 /// Due to a race condition, modification of text contents
                 /// may only be performed on the main thread
-                // (technically an undo could be called on other threads, but this wont happen in practice)
                 pub fn replace_range(
                     &self,
                     start_run: usize, start_char: usize,
@@ -1659,72 +1718,85 @@ mod text_view {
 
                     let own_undo_group = end_run > start_run || segments.len() > 1;
 
-                    if own_undo_group {
-                        self.runs.undo_barrier(UndoBarrier::Weak, s);
-                    }
-
-                    // strategy:
-                    // 1) delete tips + intermediate runs
-
-                    if start_run == end_run {
-                        let range = start_char..end_char;
-                        self.run(start_run, s)
-                            .replace(range, "", s);
+                    // hook
+                    let end = if segments.len() == 1 {
+                        (start_run, start_char + with.len() + 1)
                     } else {
-                        let start = self.run(start_run, s);
-                        start.replace(start_char..start.len(s), "", s);
+                        (start_run + segments.len() - 1, segments[segments.len() - 1].len())
+                    };
+                    dbg!((end_run, end_char + 1), end);
 
-                        self.run(end_run, s)
-                            .replace(0..end_char, "", s);
-                    }
-
-                    if end_run > start_run + 1 {
-                        self.runs.apply(VecActionBasis::RemoveMany(start_run + 1..end_run), s);
-                    }
-
-                    // 2) if there was only one line and there's multiple segments, split this one run
-                    if start_run == end_run && segments.len() > 1 {
-                        let next = self.run(start_run, s).split_trail(start_char, s);
-                        self.runs.apply(VecActionBasis::Insert(next, start_run + 1), s);
-                    }
-
-                    // 3) if there were multiple lines and there's only one segment, merge the first and last
-                    if start_run < end_run && segments.len() == 1 {
-                        {
-                            let curr = self.run(start_run, s);
-                            let next = self.run(start_run + 1, s);
-                            curr.merge_from(next.deref(), s);
+                    self.with_hook(
+                        (end_run, end_char + 1),
+                        end,
+                        move || {
+                        if own_undo_group {
+                            self.runs.undo_barrier(UndoBarrier::Weak, s);
                         }
-                        self.remove_run(start_run + 1, s);
-                    }
 
-                    // 4) handle insertion end points
-                    if segments.len() == 1 {
-                        self.run(start_run, s)
-                            .replace(start_char..start_char, segments[0], s);
-                    } else {
-                        self.run(start_run, s)
-                            .replace(start_char..start_char, segments[0], s);
+                        // strategy:
+                        // 1) delete tips + intermediate runs
 
-                        self.run(start_run + 1, s)
-                            .replace(0..0, segments[segments.len() - 1], s);
-                    }
+                        if start_run == end_run {
+                            let range = start_char..end_char;
+                            self.run(start_run, s)
+                                .replace(range, "", s);
+                        } else {
+                            let start = self.run(start_run, s);
+                            start.replace(start_char..start.len(s), "", s);
 
-                    // 5) handle intermediate runs relatively normally
-                    let intermediate_runs: Vec<Run<I, D>> = segments[1..(segments.len() - 1).max(1)].iter()
-                        .map(|seg| {
-                            let run = Run::new(s);
-                            run.replace(0..0, *seg, s);
-                            run
-                        })
-                        .collect();
-                    if !intermediate_runs.is_empty() {
-                        self.runs.apply(VecActionBasis::InsertMany(intermediate_runs, start_run + 1), s);
-                    }
+                            self.run(end_run, s)
+                                .replace(0..end_char, "", s);
+                        }
 
-                    if own_undo_group {
-                        self.runs.undo_barrier(UndoBarrier::Weak, s);
-                    }
+                        if end_run > start_run + 1 {
+                            self.runs.apply(VecActionBasis::RemoveMany(start_run + 1..end_run), s);
+                        }
+
+                        // 2) if there was only one line and there's multiple segments, split this one run
+                        if start_run == end_run && segments.len() > 1 {
+                            let next = self.run(start_run, s).split_trail(start_char, s);
+                            self.runs.apply(VecActionBasis::Insert(next, start_run + 1), s);
+                        }
+
+                        // 3) if there were multiple lines and there's only one segment, merge the first and last
+                        if start_run < end_run && segments.len() == 1 {
+                            {
+                                let curr = self.run(start_run, s);
+                                let next = self.run(start_run + 1, s);
+                                curr.merge_from(next.deref(), s);
+                            }
+                            self.remove_run_helper(start_run + 1, s);
+                        }
+
+                        // 4) handle insertion end points
+                        if segments.len() == 1 {
+                            self.run(start_run, s)
+                                .replace(start_char..start_char, segments[0], s);
+                        } else {
+                            self.run(start_run, s)
+                                .replace(start_char..start_char, segments[0], s);
+
+                            self.run(start_run + 1, s)
+                                .replace(0..0, segments[segments.len() - 1], s);
+                        }
+
+                        // 5) handle intermediate runs relatively normally
+                        let intermediate_runs: Vec<Run<I, D>> = segments[1..(segments.len() - 1).max(1)].iter()
+                            .map(|seg| {
+                                let run = Run::new(s);
+                                run.replace(0..0, *seg, s);
+                                run
+                            })
+                            .collect();
+                        if !intermediate_runs.is_empty() {
+                            self.runs.apply(VecActionBasis::InsertMany(intermediate_runs, start_run + 1), s);
+                        }
+
+                        if own_undo_group {
+                            self.runs.undo_barrier(UndoBarrier::Weak, s);
+                        }
+                    });
                 }
 
                 pub fn build_full_content(&self, s: Slock<impl ThreadMarker>) -> String {
@@ -1879,11 +1951,11 @@ mod text_view {
 
         mod text_view_state {
             use std::ops::Deref;
-
+            use std::sync::atomic::{AtomicBool, Ordering};
             use quarve_derive::StoreContainer;
 
             use crate::core::{MSlock, Slock};
-            use crate::state::{Binding, DerivedStore, SetAction, Signal, Store, StoreContainerSource, UndoBarrier, VecActionBasis, Word};
+            use crate::state::{Bindable, Binding, SetAction, Signal, Store, StoreContainerSource, UndoBarrier, VecActionBasis, Word};
             use crate::util::marker::ThreadMarker;
             use crate::util::rust_util::DerefMap;
             use crate::view::text::text_view::state::{AttributeSet, Page};
@@ -1892,18 +1964,27 @@ mod text_view {
             pub struct TextViewState<I, D> where I: AttributeSet, D: AttributeSet {
                 pub(crate) pages: Store<Vec<StoreContainerSource<Page<I, D>>>>,
 
+                #[quarve(ignore)]
+                pub(crate) currently_mounted: AtomicBool,
                 // i32 so it matches the focus
                 // maybe change this in the future? usize is better...
-                // derived store so that outside of history
-                pub(crate) selected_page: DerivedStore<Option<i32>>
+                // explicitly excluded from undo history
+                #[quarve(ignore)]
+                pub(crate) selected_page: Store<Option<i32>>
             }
 
             impl<I, D> TextViewState<I, D> where I: AttributeSet, D: AttributeSet {
                 pub fn new() -> Self {
                     TextViewState {
                         pages: Store::new(vec![]),
-                        selected_page: DerivedStore::new(None)
+                        currently_mounted: AtomicBool::new(false),
+                        selected_page: Store::new(None)
                     }
+                }
+
+                pub(crate) fn mount(&self) {
+                    assert!(!self.currently_mounted.load(Ordering::SeqCst), "Currently, a TextViewState can only be associated with a single TextView in its life");
+                    self.currently_mounted.store(true, Ordering::SeqCst);
                 }
 
                 pub fn pages<'a>(&'a self, s: Slock<'a, impl ThreadMarker>) -> impl Deref<Target=Vec<StoreContainerSource<Page<I, D>>>> + 'a {
@@ -1917,8 +1998,9 @@ mod text_view {
                     )
                 }
 
-                pub fn insert_page(&self, page: Page<I, D>, at: usize, s: Slock<impl ThreadMarker>) {
+                pub fn insert_page(&self, mut page: Page<I, D>, at: usize, s: Slock<impl ThreadMarker>) {
                     self.pages.undo_barrier(UndoBarrier::Weak, s);
+                    page.selected_page = Some(self.selected_page.binding());
                     self.pages.apply(
                         VecActionBasis::Insert(StoreContainerSource::new(page), at), s
                     );
@@ -2010,7 +2092,7 @@ mod text_view {
         use crate::state::slock_cell::MainSlockCell;
         use crate::util::geo;
         use crate::util::geo::{Inset, Rect, ScreenUnit, Size};
-        use crate::view::{EnvRef, IntoViewProvider, Invalidator, NativeView, NativeViewState, Subtree, TrivialContextViewRef, View, ViewProvider, ViewRef, WeakInvalidator};
+        use crate::view::{EnvRef, IntoViewProvider, NativeView, NativeViewState, Subtree, TrivialContextViewRef, View, ViewProvider, ViewRef, WeakInvalidator};
         use crate::view::layout::{BindingVMap, LayoutProvider, VStackOptions};
         use crate::view::menu::MenuChannel;
         use crate::view::text::{AttributeSet, Page, Run, TextViewState, ToCharAttribute, ToRunAttribute};
@@ -2123,6 +2205,8 @@ mod text_view {
                   E: Environment
         {
             pub fn new(state: StoreContainerView<TextViewState<P::IntrinsicAttribute, P::DerivedAttribute>>, provider: P) -> Self {
+                state.mount();
+
                 TextView {
                     provider,
                     state,

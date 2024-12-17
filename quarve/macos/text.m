@@ -582,11 +582,13 @@ back_text_view_set_editing_state(void *tv, uint8_t editing)
 void
 back_text_view_set_line_attributes(
     void *tv,
-    size_t _line_no, size_t start, size_t end,
+    size_t line_no, size_t start, size_t end,
     int justification_sign,
     double leading_indentation, double trailing_indentation
 )
 {
+    (void) line_no;
+
     TextView* textView = tv;
     textView.needsDisplay = YES;
     textView.executing_back = YES;
@@ -697,8 +699,11 @@ back_text_view_get_selection(void *tv, size_t *restrict start, size_t* restrict 
 }
 
 double
-back_text_view_get_line_height(void *tv, size_t _line, size_t start, size_t end, double _width)
+back_text_view_get_line_height(void *tv, size_t line, size_t start, size_t end, double width)
 {
+    (void) line;
+    (void) width;
+
     TextView* textView = tv;
     textView.executing_back = YES;
 

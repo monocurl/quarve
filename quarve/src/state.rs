@@ -153,6 +153,7 @@ mod listener {
         // forgets the reference action without dropping it
         unsafe fn forget_action(&mut self, s: MSlock);
 
+        // id = 0 implies that it cannot be combined at all
         fn id(&self) -> usize;
     }
 

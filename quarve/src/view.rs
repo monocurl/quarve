@@ -78,7 +78,6 @@ pub mod portal;
 pub mod conditional;
 pub mod image_view;
 pub mod view_match;
-pub mod monotonic_text_view;
 pub mod text;
 pub mod control;
 pub mod scroll;
