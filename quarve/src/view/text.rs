@@ -1657,13 +1657,14 @@ mod text_view {
 
                 pub fn remove_run(&self, at: usize, s: MSlock) {
                     // hook
+                    let start = (at, self.run(at, s).len(s));
                     let next = if at == 0 { (0, 0) } else {
                         (at - 1, self.run(at - 1, s).len(s))
                     };
 
                     self.runs.undo_barrier(UndoBarrier::Weak, s);
                     self.with_hook(
-                        (at, self.run(at, s).len(s)),
+                        start,
                         next,
                         || {
                             self.remove_run_helper(at, s);
@@ -1717,14 +1718,13 @@ mod text_view {
 
                     // hook
                     let end = if segments.len() == 1 {
-                        (start_run, start_char + with.len() + 1)
+                        (start_run, start_char + with.len())
                     } else {
                         (start_run + segments.len() - 1, segments[segments.len() - 1].len())
                     };
-                    dbg!((end_run, end_char + 1), end);
 
                     self.with_hook(
-                        (end_run, end_char + 1),
+                        (end_run, end_char),
                         end,
                         move || {
                         if own_undo_group {

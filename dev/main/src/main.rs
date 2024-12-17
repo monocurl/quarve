@@ -190,12 +190,13 @@ impl quarve::core::WindowProvider for WindowProvider {
                 //     "Auxiliary\nTHIS IS SECOND LINE\n",
                 //     s
                 // );
+                p.remove_run(1, s);
                 // p.insert_run(0, s);
-                p.run(1, s)
+                p.run(0, s)
                     .set_char_intrinsic(FakeChar {
                         bold: true,
                     }, 2..3, s);
-                p.run(1, s)
+                p.run(0, s)
                     .set_intrinsic(RunAttribute {
                         justification: Some(Justification::Center),
                         indentation: Some(Indentation {
