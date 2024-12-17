@@ -598,7 +598,8 @@ back_text_view_set_line_attributes(
     [textView.textStorage removeAttribute:NSBackgroundColorAttributeName range:range];
     [textView.textStorage removeAttribute:NSUnderlineStyleAttributeName range:range];
     [textView.textStorage removeAttribute:NSStrikethroughStyleAttributeName range:range];
-    [textView.textStorage applyFontTraits:0 range:range];
+    NSFontTraitMask fontTraits = NSUnboldFontMask | NSUnitalicFontMask;
+    [textView.textStorage applyFontTraits:fontTraits range:range];
 
     NSMutableParagraphStyle *paragraphStyle = [[NSMutableParagraphStyle alloc] init];
 

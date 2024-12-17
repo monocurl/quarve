@@ -73,12 +73,12 @@ struct FakeChar {
 impl ToCharAttribute for FakeChar {
     fn to_char_attribute(&self) -> impl AsRef<CharAttribute> {
         CharAttribute {
-            bold: Some(self.bold),
-            italic: None,
-            underline: None,
+            bold: None,
+            italic: Some(self.bold),
+            underline: Some(self.bold),
             strikethrough: None,
             back_color: None,
-            fore_color: Some(Color::rgb(255, 0, 0)),
+            fore_color: Some(if self.bold { Color::rgb(255, 0, 0) } else { Color::white() }),
         }
     }
 }
@@ -184,16 +184,17 @@ impl quarve::core::WindowProvider for WindowProvider {
 
             run_main_async(move |s| {
                 let p = tv2.page(0, s);
-                p.replace_range(
-                    0, 1,
-                    0, 2,
-                    "Auxiliary\nTHIS IS SECOND LINE\n",
-                    s
-                );
+                // p.replace_range(
+                //     0, 1,
+                //     0, 2,
+                //     "Auxiliary\nTHIS IS SECOND LINE\n",
+                //     s
+                // );
+                // p.insert_run(0, s);
                 p.run(1, s)
                     .set_char_intrinsic(FakeChar {
                         bold: true,
-                    }, 2..5, s);
+                    }, 2..3, s);
                 p.run(1, s)
                     .set_intrinsic(RunAttribute {
                         justification: Some(Justification::Center),

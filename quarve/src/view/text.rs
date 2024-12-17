@@ -518,10 +518,9 @@ mod text_view {
         pub use text_view_state::*;
 
         mod attribute_set {
-            use std::fmt::Debug;
             use crate::view::text::{CharAttribute, PageAttribute, RunAttribute};
 
-            pub trait ToCharAttribute: Debug + Default + Send + PartialEq + Clone + 'static {
+            pub trait ToCharAttribute: Default + Send + PartialEq + Clone + 'static {
                 fn to_char_attribute(&self) -> impl AsRef<CharAttribute>;
             }
 
@@ -749,6 +748,8 @@ mod text_view {
                                 end += to.attributes[j].1;
                                 j += 1;
                             }
+
+                            assert!(j < to.attributes.len() || end >= at + len, "Invalid Index");
 
                             // (we go right to left to avoid index issues)
                             if start > at + len {
@@ -1196,21 +1197,19 @@ mod text_view {
                         return
                     }
 
-                    history_elide(|| {
-                        self.char_intrinsic_attribute.apply(RangedAttributeAction {
-                            actions: vec![
-                                RangedBasis::Delete {
-                                    at: for_range.start,
-                                    len: for_range.len(),
-                                },
-                                RangedBasis::Insert {
-                                    at: for_range.start,
-                                    len: for_range.len(),
-                                    attribute
-                                }
-                            ],
-                        }, s);
-                    });
+                    self.char_intrinsic_attribute.apply(RangedAttributeAction {
+                        actions: vec![
+                            RangedBasis::Delete {
+                                at: for_range.start,
+                                len: for_range.len(),
+                            },
+                            RangedBasis::Insert {
+                                at: for_range.start,
+                                len: for_range.len(),
+                                attribute
+                            }
+                        ],
+                    }, s);
 
                     self.debug_assertions(s);
                 }
@@ -1268,11 +1267,9 @@ mod text_view {
                         len: range.len(),
                     });
 
-                    history_elide(|| {
-                        self.char_intrinsic_attribute.apply(RangedAttributeAction {
-                            actions: mapped_subrange
-                        }, s);
-                    });
+                    self.char_intrinsic_attribute.apply(RangedAttributeAction {
+                        actions: mapped_subrange
+                    }, s);
 
                     self.debug_assertions(s);
                 }
@@ -1514,7 +1511,7 @@ mod text_view {
             use quarve_derive::StoreContainer;
 
             use crate::core::{MSlock, Slock};
-            use crate::state::{Bindable, Binding, DerivedStore, Filterless, SetAction, Signal, Stateful, Store, StoreContainer, StoreContainerSource, StoreContainerView, UndoBarrier, VecActionBasis, Word};
+            use crate::state::{Bindable, Binding, DerivedStore, Filterless, SetAction, Signal, Stateful, Store, StoreContainerSource, StoreContainerView, UndoBarrier, VecActionBasis, Word};
             use crate::state::SetAction::Set;
             use crate::util::geo::ScreenUnit;
             use crate::util::marker::{FalseMarker, ThreadMarker};
