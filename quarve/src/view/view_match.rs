@@ -1,10 +1,9 @@
-// TODO
-
 use std::marker::PhantomData;
+
 use crate::core::{Environment, MSlock};
 use crate::state::{ActualDiffSignal, Buffer};
 use crate::util::geo::{Rect, Size};
-use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, Subtree, ViewProvider, ViewRef};
+use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, ViewProvider, ViewRef, WeakInvalidator};
 
 pub struct ViewMatchIVP<E, S, U, D, F>
     where E: Environment, U: 'static, D: 'static,

@@ -1953,6 +1953,7 @@ mod text_view {
         mod text_view_state {
             use std::ops::Deref;
             use std::sync::atomic::{AtomicBool, Ordering};
+
             use quarve_derive::StoreContainer;
 
             use crate::core::{MSlock, Slock};
@@ -2086,7 +2087,7 @@ mod text_view {
         use crate::core::{Environment, MSlock, run_main_async, Slock, StandardConstEnv};
         use crate::event::{Event, EventPayload, EventResult, MouseEvent};
         use crate::native;
-        use crate::native::view::text_view::{text_view_begin_editing, text_view_copy, text_view_cursor_pos, text_view_cut, text_view_dispatch_event, text_view_end_editing, text_view_focus, text_view_full_replace, text_view_get_line_height, text_view_get_selection, text_view_init, text_view_paste, text_view_select_all, text_view_set_char_attributes, text_view_set_font, text_view_set_page_id, text_view_set_run_attributes, text_view_set_selection, text_view_unfocus};
+        use crate::native::view::text_view::{text_view_begin_editing, text_view_copy, text_view_cursor_pos, text_view_cut, text_view_end_editing, text_view_focus, text_view_full_replace, text_view_get_line_height, text_view_get_selection, text_view_init, text_view_paste, text_view_select_all, text_view_set_char_attributes, text_view_set_font, text_view_set_page_id, text_view_set_run_attributes, text_view_set_selection, text_view_unfocus};
         use crate::resource::Resource;
         use crate::state::{ActualDiffSignal, Bindable, Binding, Buffer, Filterless, Signal, Store, StoreContainer, StoreContainerView, StringActionBasis, VecActionBasis, WeakBinding, Word};
         use crate::state::SetAction::Set;
@@ -3182,6 +3183,7 @@ mod text_view {
                     self.full_state.selected_page.apply(Set(None), s);
                 }
 
+
                 text_view_unfocus(self.text_view, s);
 
                 self.select_all_menu.unset(s);
@@ -3191,8 +3193,6 @@ mod text_view {
             }
 
             fn handle_event(&self, e: &Event, s: MSlock) -> EventResult {
-                // TODO this is so complex
-                // I dont like the event system in general
                 if e.is_mouse() {
                     let pos = e.cursor();
                     let intersects = self.last_size.full_rect().contains(pos);
@@ -3238,7 +3238,7 @@ mod text_view {
                 let derived_chars = &derived.attributes;
                 let intrinsic_chars = &intrinsic.attributes;
 
-                assert_eq!(derived_chars.iter().fold(0usize,|u,v|u + v.1), intrinsic_chars.iter().fold(0usize,|u,v|u + v.1));
+                debug_assert_eq!(derived_chars.iter().fold(0usize,|u,v|u + v.1), intrinsic_chars.iter().fold(0usize,|u,v|u + v.1));
 
                 let mut i = 0;
                 let mut j = 0;

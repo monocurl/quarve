@@ -1,14 +1,15 @@
 use std::thread;
 use std::time::Duration;
+
 use quarve::core::{Application, Environment, launch, MSlock, run_main_async, slock_owner, StandardConstEnv, StandardVarEnv};
 use quarve::event::EventModifiers;
 use quarve::prelude::rgb;
 use quarve::resource::{local_storage, Resource};
 use quarve::state::{Bindable, FixedSignal, JoinedSignal, SetAction, Signal, Store, StoreContainerSource, TokenStore};
-use quarve::util::geo::{Alignment, HorizontalAlignment, Inset, Point, ScreenUnit, Size};
-use quarve::view::{ViewProvider, IntoViewProvider, WeakInvalidator};
-use quarve::view::color_view::EmptyView;
 use quarve::state::Binding;
+use quarve::util::geo::{Alignment, HorizontalAlignment, Inset, Point, ScreenUnit, Size};
+use quarve::view::{IntoViewProvider, ViewProvider, WeakInvalidator};
+use quarve::view::color_view::EmptyView;
 use quarve::view::conditional::view_if;
 use quarve::view::control::{Button, Dropdown};
 use quarve::view::layout::*;
@@ -222,7 +223,7 @@ impl quarve::core::WindowProvider for WindowProvider {
                             trailing: 20.0,
                         }),
                     }, s);
-            })
+            });
         });
 
         VStack::hetero()
@@ -233,7 +234,6 @@ impl quarve::core::WindowProvider for WindowProvider {
                         .stretched(10000, 10000)
                     )
                     .border(Color::white(), 1)
-
             )
             // .push(
             //     TextField::new(text.binding())

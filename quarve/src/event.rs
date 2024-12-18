@@ -1,4 +1,5 @@
 use std::ffi::c_void;
+
 use crate::util::geo::{Point, ScreenUnit};
 
 #[derive(Copy, Clone, Debug)]
@@ -140,6 +141,7 @@ impl Event {
             EventPayload::Key(_) => panic!("Must only be accessed on mouse events")
         }
     }
+
 
     pub fn set_cursor(&mut self, cursor: Point) {
         match self.payload {

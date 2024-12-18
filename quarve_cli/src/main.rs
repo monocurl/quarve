@@ -1,14 +1,16 @@
-mod util;
-
 use std::env::VarError;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
-use std::process::{Command as Process};
-use clap::{Command, arg};
+use std::process::Command as Process;
+
+use clap::{arg, Command};
 use serde_json::Value;
+
 use crate::util::copy_directory;
+
+mod util;
 
 fn append(name: &str, to: &str, contents: &str) {
     let mut toml = OpenOptions::new()
