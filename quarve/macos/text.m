@@ -383,6 +383,8 @@ back_text_field_paste(void *view)
 
 @property int32_t page_id;
 @property BOOL executing_back;
+@property BOOL dragging;
+@property NSUInteger initialSelectionIndex;
 @end
 
 @implementation TextView
@@ -441,6 +443,50 @@ back_text_field_paste(void *view)
     }
 }
 
+- (void)handleEvent:(NSEvent*)event {
+    return;
+    switch (event.type) {
+        case NSEventTypeLeftMouseDown: {
+            // Initial setup for mouse tracking
+            [self.window makeFirstResponder:self];
+            NSPoint initialPoint = [self convertPoint:event.locationInWindow fromView:nil];
+
+            self.initialSelectionIndex = [self characterIndexForInsertionAtPoint:initialPoint];
+            self.dragging = YES;
+
+            NSRange selectionRange = NSMakeRange(self.initialSelectionIndex, 0);
+            [self setSelectedRange:selectionRange];
+            break;
+        }
+        case NSEventTypeLeftMouseUp:
+            self.dragging = NO;
+            break;
+        case NSEventTypeLeftMouseDragged:
+            if (self.window.firstResponder == self && self.dragging) {
+                NSPoint currentPoint = [self convertPoint:event.locationInWindow fromView:nil];
+
+                NSUInteger selectionIndex = [self characterIndexForInsertionAtPoint:currentPoint];
+
+
+                NSRange selectionRange = NSMakeRange(MIN(selectionIndex, self.initialSelectionIndex),
+                                                     ABS((int) selectionIndex - (int) self.initialSelectionIndex));
+                [self setSelectedRange:selectionRange];
+            }
+            break;
+        case NSEventTypeRightMouseDown:
+            [self rightMouseDown:event];
+            break;
+        case NSEventTypeRightMouseDragged:
+            [self rightMouseDragged:event];
+            break;
+        case NSEventTypeRightMouseUp:
+            [self rightMouseUp:event];
+            break;
+        default:
+            break;
+    }
+}
+
 - (BOOL)becomeFirstResponder {
     front_set_token_binding(self.selected, 1, (int32_t) self.page_id);
     return [super becomeFirstResponder];
@@ -473,6 +519,14 @@ back_text_field_paste(void *view)
     if (!front_execute_key_callback(self.key_handler, 3)) {
         [super insertNewlineIgnoringFieldEditor:sender];
     }
+}
+
+- (NSView *)hitTest:(NSPoint)point {
+    NSView *hitView = [super hitTest:point];
+    // exclude this view from hit tests
+    // unless it's a right mouse down, in which case we take them
+    NSEvent* event = [NSApp currentEvent];
+    return hitView;
 }
 
 - (void)dealloc {
@@ -717,6 +771,28 @@ back_text_view_get_line_height(void *tv, size_t line, size_t start, size_t end, 
     textView.executing_back = NO;
     return ret;
 }
+
+void
+back_text_view_get_cursor_pos(void *tv, double *x, double *y)
+{
+    TextView* textView = tv;
+
+    NSRange charRange = [textView selectedRange];
+    NSRange glyphRange = [textView.layoutManager glyphRangeForCharacterRange:charRange
+                                                 actualCharacterRange:nil];
+    NSRect ret = [textView.layoutManager boundingRectForGlyphRange:glyphRange
+                                          inTextContainer:textView.textContainer];
+    *x = ret.origin.x;
+    *y = ret.origin.y;
+}
+
+void
+back_text_view_handle_event(void *tv, void* e)
+{
+    TextView* textView = tv;
+    NSEvent* event = e;
+}
+
 
 void
 back_text_view_set_page_id(void *tv, int32_t page_id)

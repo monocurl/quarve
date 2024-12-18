@@ -5,7 +5,7 @@ use quarve::event::EventModifiers;
 use quarve::prelude::rgb;
 use quarve::resource::{local_storage, Resource};
 use quarve::state::{Bindable, FixedSignal, JoinedSignal, SetAction, Signal, Store, StoreContainerSource, TokenStore};
-use quarve::util::geo::{Alignment, HorizontalAlignment, Inset, ScreenUnit, Size};
+use quarve::util::geo::{Alignment, HorizontalAlignment, Inset, Point, ScreenUnit, Size};
 use quarve::view::{ViewProvider, IntoViewProvider, WeakInvalidator};
 use quarve::view::color_view::EmptyView;
 use quarve::state::Binding;
@@ -116,7 +116,7 @@ impl TextViewProvider<Env> for TVProvider {
 
     }
 
-    fn run_decoration(&self, number: impl Signal<Target=usize>, run: &Run<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> impl IntoViewProvider<Env, DownContext=(), UpContext=()> + 'static {
+    fn run_decoration(&self, number: impl Signal<Target=usize>, run: &Run<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> impl IntoViewProvider<Env, DownContext=()> {
         // Text::new("Test")
         let sig =
             JoinedSignal::join(&number, &run.content_signal(), s)
@@ -127,8 +127,26 @@ impl TextViewProvider<Env> for TVProvider {
             .offset(-120, 0)
     }
 
-    fn page_background(&self, page: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> impl IntoViewProvider<Env, DownContext=()> + 'static {
-        EmptyView
+    fn page_background(&self, page: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> impl IntoViewProvider<Env, DownContext=()> {
+        Color::black()
+    }
+
+    fn page_foreground(&self, page: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>, cursor: impl Signal<Target=Option<Point>>, s: MSlock) -> impl IntoViewProvider<Env, DownContext=()> {
+        vstack!(
+            Button::new("Hello", |s| {
+                println!("Called");
+            });
+            Color::rgba(100, 0, 0, 100);
+        )
+            .frame(
+                Frame::default().intrinsic(100, 100)
+                    .align(Alignment::TopLeading)
+            )
+            .offset_signal(
+                cursor.map(|p| p.map(|p| p.x).unwrap_or(0.0), s),
+                cursor.map(|p| p.map(|p| p.y).unwrap_or(0.0), s)
+            )
+            .text_color(Color::white())
     }
 }
 

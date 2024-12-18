@@ -105,6 +105,12 @@ impl EventModifiers {
 
 #[derive(Clone, Debug)]
 pub struct Event {
+    // on the initial mouse event
+    // this will be true
+    // on the secondary mouse event
+    // this will be false, even if the target node
+    // happens to be the focused node
+    pub for_focused: bool,
     pub payload: EventPayload,
     pub modifiers: EventModifiers,
     pub(crate) native_event: *mut c_void

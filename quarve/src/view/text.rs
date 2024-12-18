@@ -1513,7 +1513,7 @@ mod text_view {
             use crate::core::{MSlock, Slock};
             use crate::state::{Bindable, Binding, DerivedStore, Filterless, SetAction, Signal, Stateful, Store, StoreContainerSource, StoreContainerView, UndoBarrier, VecActionBasis, Word};
             use crate::state::SetAction::Set;
-            use crate::util::geo::ScreenUnit;
+            use crate::util::geo::{Point, ScreenUnit};
             use crate::util::marker::{FalseMarker, ThreadMarker};
             use crate::util::rust_util::DerefMap;
             use crate::view::text::CursorState;
@@ -1529,8 +1529,10 @@ mod text_view {
                 pub added_text_view_listener: bool,
                 pub page_num: usize,
                 pub start_y_pos: ScreenUnit,
+
                 // maintained by individual pages (ignores insets)
-                pub content_height: ScreenUnit
+                pub content_height: ScreenUnit,
+                pub cursor_pos: Option<Point>,
             }
 
             impl Stateful for PageGUIInfo {
@@ -1551,6 +1553,7 @@ mod text_view {
 
                 #[quarve(ignore)]
                 pub(crate) selected_page: Option<<Store<Option<i32>> as Bindable<Filterless<Option<i32>>>>::Binding>,
+
                 pub(crate) cursor: StoreContainerSource<CursorState>,
                 pub(crate) runs: Store<Vec<Run<I, D>>>,
                 pub(crate) page_intrinsic_attribute: Store<AttributeHolder<I::PageAttribute>>,
@@ -1566,6 +1569,7 @@ mod text_view {
                             page_num: 0,
                             start_y_pos: 0.0,
                             content_height: 0.0,
+                            cursor_pos: None,
                         }),
                         selected_page: None,
                         cursor: StoreContainerSource::new(CursorState::new()),
@@ -2082,13 +2086,13 @@ mod text_view {
         use crate::core::{Environment, MSlock, run_main_async, Slock, StandardConstEnv};
         use crate::event::{Event, EventPayload, EventResult, MouseEvent};
         use crate::native;
-        use crate::native::view::text_view::{text_view_begin_editing, text_view_copy, text_view_cut, text_view_end_editing, text_view_focus, text_view_full_replace, text_view_get_line_height, text_view_get_selection, text_view_init, text_view_paste, text_view_select_all, text_view_set_char_attributes, text_view_set_font, text_view_set_page_id, text_view_set_run_attributes, text_view_set_selection, text_view_unfocus};
+        use crate::native::view::text_view::{text_view_begin_editing, text_view_copy, text_view_cursor_pos, text_view_cut, text_view_dispatch_event, text_view_end_editing, text_view_focus, text_view_full_replace, text_view_get_line_height, text_view_get_selection, text_view_init, text_view_paste, text_view_select_all, text_view_set_char_attributes, text_view_set_font, text_view_set_page_id, text_view_set_run_attributes, text_view_set_selection, text_view_unfocus};
         use crate::resource::Resource;
         use crate::state::{ActualDiffSignal, Bindable, Binding, Buffer, Filterless, Signal, Store, StoreContainer, StoreContainerView, StringActionBasis, VecActionBasis, WeakBinding, Word};
         use crate::state::SetAction::Set;
         use crate::state::slock_cell::MainSlockCell;
         use crate::util::geo;
-        use crate::util::geo::{Inset, Rect, ScreenUnit, Size};
+        use crate::util::geo::{Inset, Point, Rect, ScreenUnit, Size};
         use crate::view::{EnvRef, IntoViewProvider, NativeView, NativeViewState, Subtree, TrivialContextViewRef, View, ViewProvider, ViewRef, WeakInvalidator};
         use crate::view::layout::{BindingVMap, LayoutProvider, VStackOptions};
         use crate::view::menu::MenuChannel;
@@ -2180,11 +2184,17 @@ mod text_view {
                 number: impl Signal<Target=usize>,
                 run: &Run<Self::IntrinsicAttribute, Self::DerivedAttribute>,
                 s: MSlock
-            ) -> impl IntoViewProvider<E, DownContext=(), UpContext=()> + 'static;
+            ) -> impl IntoViewProvider<E, DownContext=()>;
 
             fn page_background(
                 &self, page: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock
-            ) -> impl IntoViewProvider<E, DownContext=()> + 'static;
+            ) -> impl IntoViewProvider<E, DownContext=()>;
+
+            fn page_foreground(
+                &self, page: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>,
+                cursor: impl Signal<Target=Option<Point>>,
+                s: MSlock
+            ) -> impl IntoViewProvider<E, DownContext=()>;
         }
 
         // Composed as a series of pages
@@ -2395,17 +2405,19 @@ mod text_view {
         }
 
         // all components of a page
-        struct PageCoordinator<E, B, P, D>
+        struct PageCoordinator<E, B, P, D, F>
             where E: Environment,
                   E::Const: AsRef<StandardConstEnv>,
                   B: IntoViewProvider<E, DownContext=()>,
                   P: TextViewProvider<E>,
-                  D: IntoViewProvider<E, DownContext=()>
+                  D: IntoViewProvider<E, DownContext=()>,
+                  F: IntoViewProvider<E, DownContext=()>
         {
             provider: Arc<MainSlockCell<P>>,
             background: B,
             page_view: PageIVP<E, P>,
             decorations: D,
+            foreground: F,
             phantom: PhantomData<E>
         }
 
@@ -2416,7 +2428,7 @@ mod text_view {
             y: impl Binding<Filterless<ScreenUnit>>,
             height: impl Binding<Filterless<ScreenUnit>>,
             s: MSlock
-        ) -> PageCoordinator<E, impl IntoViewProvider<E, DownContext=()>, P, impl IntoViewProvider<E, DownContext=()>>
+        ) -> PageCoordinator<E, impl IntoViewProvider<E, DownContext=()>, P, impl IntoViewProvider<E, DownContext=()>, impl IntoViewProvider<E, DownContext=()>>
             where E: Environment,
                   E::Const: AsRef<StandardConstEnv>,
                   P: TextViewProvider<E>
@@ -2428,7 +2440,7 @@ mod text_view {
             }
 
             fn _run_decoration<E, P>(run: &'static Run<P::IntrinsicAttribute, P::DerivedAttribute>, s: MSlock<'static>, p: &'static P)
-                                     -> impl IntoViewProvider<E, DownContext=(), UpContext=()> + 'static
+                                     -> impl IntoViewProvider<E, DownContext=()> + 'static
                 where E: Environment, P: TextViewProvider<E> {
                 let line_number =
                     run.gui_info.map(|g| g.line, s);
@@ -2436,7 +2448,13 @@ mod text_view {
                 p.run_decoration(line_number, run, s)
             }
 
-            let (background, decorations) = {
+            fn _foreground<E, P>(page: &'static Page<P::IntrinsicAttribute, P::DerivedAttribute>, s: MSlock<'static>, p: &'static P)
+                                 -> impl IntoViewProvider<E, DownContext=()> + 'static
+                where E: Environment, P: TextViewProvider<E> {
+                p.page_foreground(page, page.gui_info.signal().map(|g| g.cursor_pos, s), s)
+            }
+
+            let (background, decorations, foreground) = {
                 let provider_clone = provider.clone();
                 let provider = provider.borrow_main(s);
 
@@ -2471,7 +2489,9 @@ mod text_view {
                     phantom: PhantomData::<P>
                 };
 
-                (background, decorations)
+                let foreground = _foreground(long_page, long_s, static_provider);
+
+                (background, decorations, foreground)
             };
 
             PageCoordinator {
@@ -2483,16 +2503,18 @@ mod text_view {
                     provider,
                 },
                 decorations,
+                foreground,
                 phantom: Default::default(),
             }
         }
 
-        impl<E, B, P, D> IntoViewProvider<E> for PageCoordinator<E, B, P, D>
+        impl<E, B, P, D, F> IntoViewProvider<E> for PageCoordinator<E, B, P, D, F>
             where E: Environment,
                   E::Const: AsRef<StandardConstEnv>,
                   B: IntoViewProvider<E, DownContext=()>,
                   P: TextViewProvider<E>,
-                  D: IntoViewProvider<E, DownContext=()>
+                  D: IntoViewProvider<E, DownContext=()>,
+                  F: IntoViewProvider<E, DownContext=()>,
         {
             type UpContext = ();
             type DownContext = ();
@@ -2503,6 +2525,7 @@ mod text_view {
                     background: self.background.into_view_provider(env, s).into_view(s),
                     page_view: self.page_view.into_view_provider(env, s).into_view(s),
                     decorations: self.decorations.into_view_provider(env, s).into_view(s),
+                    foreground: self.foreground.into_view_provider(env, s).into_view(s),
                     phantom: PhantomData
                 };
 
@@ -2510,26 +2533,29 @@ mod text_view {
             }
         }
 
-        struct PageCoordinatorLP<E, B, P, D, V>
+        struct PageCoordinatorLP<E, B, P, D, V, F>
             where E: Environment,
                   B: ViewProvider<E, DownContext=()>,
                   P: TextViewProvider<E>,
                   D: ViewProvider<E, DownContext=()>,
-                  V: ViewProvider<E, DownContext=()>
+                  V: ViewProvider<E, DownContext=()>,
+                  F: ViewProvider<E , DownContext=()>
         {
             provider: Arc<MainSlockCell<P>>,
             background: View<E, B>,
             page_view: View<E, V>,
             decorations: View<E, D>,
+            foreground: View<E, F>,
             phantom: PhantomData<E>
         }
 
-        impl<E, B, P, D, V> LayoutProvider<E> for PageCoordinatorLP<E, B, P, D, V>
+        impl<E, B, P, D, V, F> LayoutProvider<E> for PageCoordinatorLP<E, B, P, D, V, F>
             where E: Environment,
                   B: ViewProvider<E, DownContext=()>,
                   P: TextViewProvider<E>,
                   D: ViewProvider<E, DownContext=()>,
-                  V: ViewProvider<E, DownContext=()>
+                  V: ViewProvider<E, DownContext=()>,
+                  F: ViewProvider<E, DownContext=()>,
         {
             type DownContext = ();
             type UpContext = ();
@@ -2547,11 +2573,13 @@ mod text_view {
                     self.background.take_backing(other.background, env, s);
                     self.page_view.take_backing(other.page_view, env, s);
                     self.decorations.take_backing(other.decorations, env, s);
+                    self.foreground.take_backing(other.foreground, env, s);
                 }
 
                 subtree.push_subview(&self.background, env, s);
                 subtree.push_subview(&self.page_view, env, s);
                 subtree.push_subview(&self.decorations, env, s);
+                subtree.push_subview(&self.foreground, env, s);
             }
 
             fn layout_up(&mut self, _subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, _s: MSlock) -> bool {
@@ -2567,6 +2595,7 @@ mod text_view {
                 );
                 self.background.layout_down(page, env, s);
                 self.decorations.layout_down(page, env, s);
+                self.foreground.layout_down(page, env, s);
 
                 Rect::new(
                     page.x - inset.l,
@@ -3014,7 +3043,8 @@ mod text_view {
                 let token = self.page.id;
 
                 let view = Arc::downgrade(subtree.owner());
-                if *self.full_state.selected_page.borrow(s) == Some(token) {
+                let focused = *self.full_state.selected_page.borrow(s) == Some(token);
+                if focused {
                     subtree.window().and_then(|w| w.upgrade()).unwrap()
                         .borrow_main(s)
                         .request_focus(view);
@@ -3025,6 +3055,23 @@ mod text_view {
                         .unrequest_focus(view);
                 }
 
+                // relay cursor information + number (easy)
+                {
+                    let start = self.page.position_to_utf16(
+                        self.page.cursor.start_run(s),
+                        self.page.cursor.start_char(s), s.to_general_slock()
+                    );
+                    let end = self.page.position_to_utf16(
+                        self.page.cursor.end_run(s),
+                        self.page.cursor.end_char(s), s.to_general_slock()
+                    );
+                    text_view_set_selection(self.text_view, start..end, s);
+
+                    let selection = text_view_get_selection(self.text_view);
+                    let (sl, sc) = self.page.utf16_to_position(selection.start, s.to_general_slock());
+                    let (el, ec) = self.page.utf16_to_position(selection.end, s.to_general_slock());
+                    self.page.cursor.set_range(sl, sc, el, ec, s);
+                }
 
                 let lines = self.page.runs.borrow(s).len();
                 // relay attrs of affected lines
@@ -3071,26 +3118,16 @@ mod text_view {
 
                     let mut gui = *self.page.gui_info.borrow(s);
                     gui.content_height = total_height;
+                    gui.cursor_pos = if focused &&
+                        self.page.cursor.end_char(s) == self.page.cursor.start_char(s) &&
+                        self.page.cursor.end_run(s) == self.page.cursor.start_run(s)
+                        {
+                        Some(text_view_cursor_pos(self.text_view, s))
+                    } else { None };
                     self.page.gui_info.apply(Set(gui), s);
 
                     self.last_up_width = self.last_size.w;
                 }
-
-                // relay cursor information + number (easy)
-                let start = self.page.position_to_utf16(
-                    self.page.cursor.start_run(s),
-                    self.page.cursor.start_char(s), s.to_general_slock()
-                );
-                let end = self.page.position_to_utf16(
-                    self.page.cursor.end_run(s),
-                    self.page.cursor.end_char(s), s.to_general_slock()
-                );
-                text_view_set_selection(self.text_view, start..end, s);
-
-                let selection = text_view_get_selection(self.text_view);
-                let (sl, sc) = self.page.utf16_to_position(selection.start, s.to_general_slock());
-                let (el, ec) = self.page.utf16_to_position(selection.end, s.to_general_slock());
-                self.page.cursor.set_range(sl, sc, el, ec, s);
 
                 true
             }
@@ -3153,22 +3190,30 @@ mod text_view {
                 self.paste_menu.unset(s);
             }
 
-            fn handle_event(&self, e: &Event, _s: MSlock) -> EventResult {
+            fn handle_event(&self, e: &Event, s: MSlock) -> EventResult {
+                // TODO this is so complex
+                // I dont like the event system in general
                 if e.is_mouse() {
-                    if let EventPayload::Mouse(MouseEvent::LeftDown, at) = &e.payload {
-                        if self.last_size.full_rect().contains(*at) {
-                            EventResult::FocusAcquire
-                        }
-                        else {
-                            EventResult::FocusRelease
-                        }
+                    let pos = e.cursor();
+                    let intersects = self.last_size.full_rect().contains(pos);
+                    let mouse_down = matches!(e.payload, EventPayload::Mouse(MouseEvent::LeftDown, _));
+
+                    if !e.for_focused {
+                        // not handled; will be handled on next event loop
+                        EventResult::NotHandled
+                    }
+                    else if mouse_down && !intersects {
+                        EventResult::FocusRelease
                     }
                     else {
                         EventResult::NotHandled
                     }
                 }
                 else {
-                    EventResult::Handled
+                    // will be handled later on
+                    // theoretically we could just forward
+                    // to the text view directly instead
+                    EventResult::NotHandled
                 }
             }
         }

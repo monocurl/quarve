@@ -371,7 +371,7 @@ mod window {
 
         fn layout_full(&self, w: f64, h: f64, s: MSlock);
 
-        fn dispatch_native_event(&self, event: Event, s: MSlock);
+        fn dispatch_native_event(&self, event: Event, s: MSlock) -> u8;
         fn set_fullscreen(&self, fs: bool, s: MSlock);
     }
 
@@ -832,8 +832,8 @@ mod window {
         }
 
         // FIXME, when weak fails to upgrade make the option None
-        fn dispatch_native_event(&self, mut event: Event, s: MSlock) {
-            match &mut event.payload {
+        fn dispatch_native_event(&self, mut event: Event, s: MSlock) -> u8 {
+            let ret = match &mut event.payload {
                 EventPayload::Mouse(_, at) => {
                     let raw_cursor = *at;
                     let last_cursor = self.last_cursor.take();
@@ -844,8 +844,10 @@ mod window {
                         let focus = focus_arc.borrow_main(s);
                         let translate = -focus.view_rect_in_window(s).origin();
                         *at = raw_cursor.translate(translate);
+                        event.for_focused = true;
                         handled = focus
                             .handle_mouse_event(&focus_arc, &mut event, last_cursor.translate(translate), true, s);
+                        event.for_focused = false;
                     }
 
                     // note: ensure cv is borrowed afterward in case focus == cv
@@ -856,15 +858,17 @@ mod window {
                     *at = raw_cursor.translate(-cv.view_rect(s).origin());
                     let cursor = *at;
                     if !handled {
-                        cv.handle_mouse_event(&self.content_view, &mut event, last_cursor, false, s);
+                        handled = cv.handle_mouse_event(&self.content_view, &mut event, last_cursor, false, s);
                     }
                     self.last_cursor.set(cursor);
+
+                    if handled { 1 } else { 0 }
                 },
-                EventPayload::Key(_) => 'key: {
+                EventPayload::Key(_) => {
                     // if focus also in key listeners, only do one at a time
                     let mut already_handled: Option<*const MainSlockCell<dyn InnerViewBase<P::Env>>> = None;
 
-                    let mut handled_key_event = |target: Arc<MainSlockCell<dyn InnerViewBase<P::Env>>>| {
+                    let mut handle_event = |target: Arc<MainSlockCell<dyn InnerViewBase<P::Env>>>| {
                         match target.borrow_mut_main(s)
                             .handle_key_event(&mut event, s) {
                             EventResult::NotHandled => false,
@@ -880,20 +884,17 @@ mod window {
                         }
                     };
 
+                    let mut handled = false;
                     if let Some(focus) = self.focus.borrow().deref().as_ref().and_then(|f| f.upgrade()) {
                         // 1. focus
                         already_handled = Some(Arc::as_ptr(&focus));
-                        if handled_key_event(focus) {
-                            break 'key;
-                        }
+                        handled = handle_event(focus);
                     }
                     else if let Some(default_focus) = self.default_focus.borrow().deref()
                         .first().and_then(|f| f.upgrade()) {
                         // 2. autofocus
                         already_handled = Some(Arc::as_ptr(&default_focus));
-                        if handled_key_event(default_focus) {
-                            break 'key;
-                        }
+                        handled = handle_event(default_focus);
                     }
 
                     // 3. key listeners
@@ -911,10 +912,13 @@ mod window {
                                 .handle_key_event(&mut event, s);
                         }
                     }
-                }
-            }
 
-            self.clear_focus_request(s)
+                    if handled { 1 } else { 0 }
+                }
+            };
+
+            self.clear_focus_request(s);
+            ret
         }
 
         fn set_fullscreen(&self, fs: bool, s: MSlock) {

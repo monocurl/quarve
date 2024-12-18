@@ -87,7 +87,7 @@ int performing_subview_insertion = 0;
     return YES;
 }
 
-- (void)dispatchEvent:(NSEvent*)event {
+- (BOOL)dispatchEvent:(NSEvent*)event {
     buffer_event be = { .native_event = event };
 
     be.cursor_x = event.locationInWindow.x;
@@ -163,17 +163,15 @@ int performing_subview_insertion = 0;
         be.delta_y = event.deltaY;
     }
     else {
-        return;
+        return NO;
     }
 
-    front_window_dispatch_event(handle, be);
+    return front_window_dispatch_event(handle, be) != 0;
 }
 
 - (void)sendEvent:(NSEvent *)event {
-    [super sendEvent:event];
-
-    if (event.type == NSEventTypeMouseMoved) {
-        [self dispatchEvent:event];
+    if (![self dispatchEvent:event]) {
+        [super sendEvent:event];
     }
 }
 

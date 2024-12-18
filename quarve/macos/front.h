@@ -12,7 +12,8 @@ extern bool front_window_should_close(fat_pointer p);
 extern void front_window_layout(fat_pointer p, double w, double h);
 
 // fp: &'static dyn WindowBase
-extern void front_window_dispatch_event(fat_pointer handle, buffer_event event);
+// returns if handled or not
+extern uint8_t front_window_dispatch_event(fat_pointer handle, buffer_event event);
 
 // fp: &'static dyn WindowBase
 extern void front_window_will_fullscreen(fat_pointer p, uint8_t fs);
