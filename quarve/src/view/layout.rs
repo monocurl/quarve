@@ -1816,7 +1816,7 @@ mod vec_layout {
             End
         }
 
-        #[derive(Copy, Clone)]
+        #[derive(Copy, Clone, Debug)]
         pub enum FlexAlign {
             Start,
             Center,
@@ -1824,7 +1824,7 @@ mod vec_layout {
             End,
         }
 
-        #[derive(Clone, Copy)]
+        #[derive(Clone, Copy, Debug)]
         pub struct FlexContext {
             grow: f64,
             shrink: f64,

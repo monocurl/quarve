@@ -131,15 +131,17 @@ impl<E, S, U, D, F> ViewProvider<E> for ViewMatchVP<E, S, U, D, F>
 
 #[macro_export]
 macro_rules! view_match {
-    ($sig: expr; $subtree: ident, $env: ident, $s: ident, __build: { $($p: pat => $v: expr,)* } $first_pat: pat => $first_view: expr $(, $tail_pat: pat => $tail_view: expr)*,) => {
+    ($sig: expr; $var: ident $(: $typ: ty)?, $mapped: expr, $subtree: ident, $env: ident, $s: ident, __build: { $($p: pat => $v: expr,)* } $first_pat: pat => $first_view: expr $(, $tail_pat: pat => $tail_view: expr)*,) => {
         view_match! {
             $sig;
+            $var $(: $typ)?, $mapped,
             $subtree, $env, $s,
             __build: {
                 $($p => $v,)*
                 $first_pat => {
                     $subtree.clear_subviews($s);
-                    let view = $first_view.into_view_provider($env.const_env(), $s).into_view($s);
+                    let ivp = $first_view;
+                    let view = ivp.into_view_provider($env.const_env(), $s).into_view($s);
                     $subtree.push_subview(&view, $env, $s);
                     Box::new(view)
                 },
@@ -147,9 +149,9 @@ macro_rules! view_match {
             $($tail_pat => $tail_view,)*
         }
     };
-    ($sig: expr; $subtree: ident, $env: ident, $s: ident, __build: { $($p: pat => $v: expr,)* }) => {
-        ViewMatchIVP::new($sig, |val, $subtree, $env, $s| {
-            match val {
+    ($sig: expr; $var: ident $(: $typ: ty)?, $mapped: expr, $subtree: ident, $env: ident, $s: ident, __build: { $($p: pat => $v: expr,)* }) => {
+        ViewMatchIVP::new($sig, move |$var $(: $typ)?, $subtree, $env, $s| {
+            match $mapped {
                 $($p => $v,)*
             }
         })
@@ -157,6 +159,17 @@ macro_rules! view_match {
     ($sig: expr; $first_pat: pat => $first_view: expr $(, $tail_pat: pat => $tail_view: expr)* $(,)?) => {
         view_match! {
             $sig;
+            u, u,
+            subtree, env, s,
+            __build: { }
+            $first_pat => $first_view,
+            $($tail_pat => $tail_view,)*
+        }
+    };
+    ($sig: expr, |$var: ident  $(: $typ: ty)?| $mapped: expr; $first_pat: pat => $first_view: expr $(, $tail_pat: pat => $tail_view: expr)* $(,)?) => {
+        view_match! {
+            $sig;
+            $var $(: $typ)?, $mapped,
             subtree, env, s,
             __build: { }
             $first_pat => $first_view,

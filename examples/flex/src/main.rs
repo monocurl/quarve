@@ -1,5 +1,8 @@
+use std::os::macos::raw::stat;
+use quarve::core::clock_signal;
 use quarve::prelude::*;
-use quarve::view::util::Color;
+use quarve::view::layout::{FlexAlign, FlexContext, FlexStack, FlexStackOptions, FlexSubview, IteratorFlexMap, SignalFlexMap, VecLayoutProvider};
+use quarve::vstack;
 
 struct App;
 struct MainWindow;
@@ -29,7 +32,7 @@ impl WindowProvider for MainWindow {
     fn size(&self, _env: &<Env as Environment>::Const, _s: MSlock) -> (Size, Size, Size) {
         (
             // min
-            Size::new(400.0, 400.0),
+            Size::new(600.0, 400.0),
             // intrinsic
             Size::new(800.0, 800.0),
             // max
@@ -38,12 +41,52 @@ impl WindowProvider for MainWindow {
     }
 
     fn root(&self, env: &<Env as Environment>::Const, s: MSlock) -> impl ViewProvider<Env, DownContext=()> {
-        vstack()
-            .push(text("Quarve"))
-            .frame(
-                F.intrinsic(400, 400).unlimited_stretch()
+        let static_flex = FlexStack::hetero_options(FlexStackOptions::default().gap(0.0))
+            .push(
+                text("first")
+                    .frame(F.intrinsic(200, 30).squished(40, 30).unlimited_stretch())
+                    .border(RED, 1)
+                    .flex(FlexContext::default().grow(1.0))
             )
+            .push(
+                text("second block of text")
+                    .frame(F.intrinsic(100, 30).unlimited_stretch())
+                    .border(BLUE, 1)
+                    .flex(FlexContext::default().grow(3.0))
+            )
+            .push(
+                text("final")
+                    .frame(F.intrinsic(300, 30).unlimited_stretch())
+                    .border(BLACK, 1)
+                    .flex(FlexContext::default().grow(0.5))
+            );
+
+        let clock = clock_signal(s);
+        let signal = clock
+            .map(|c| {
+                let amount = (10.0 * c.sin() + 10.0) as i32;
+                (0..amount)
+                    .into_iter()
+                    .collect::<Vec<i32>>()
+            }, s);
+
+        let dynamic_flex = signal.sig_flexmap_options(
+            |i, _s| {
+                BLUE.padding(10)
+                    .layer(Layer::default().border(GREEN, 1).radius(3))
+                    .intrinsic(100 + 10 * i, 20 + 5 * i)
+            },
+            FlexStackOptions::default()
+                .align(FlexAlign::Start)
+                .cross_gap(10.0)
+                .wrap()
+        ).intrinsic(800, 600);
+
+        vstack()
+            .push(static_flex)
+            .push(dynamic_flex)
             .background(WHITE)
+            .frame(F.unlimited_stretch())
             .into_view_provider(env, s)
     }
 

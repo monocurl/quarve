@@ -1,7 +1,6 @@
 use quarve::prelude::*;
 use quarve::view::layout::{IteratorHMap, IteratorVMap};
 use quarve::view::scroll::ScrollView;
-use quarve::view::util::Color;
 
 struct App;
 struct MainWindow;
@@ -56,9 +55,6 @@ impl WindowProvider for MainWindow {
             .push(
                 ScrollView::horizontal_with_binding(right_content, offset.binding())
                     .intrinsic(400, 400)
-            )
-            .frame(
-                F.intrinsic(400, 400).unlimited_stretch()
             )
             .background(WHITE)
             .into_view_provider(env, s)

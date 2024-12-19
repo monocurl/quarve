@@ -114,7 +114,7 @@ pub struct Event {
     pub for_focused: bool,
     pub payload: EventPayload,
     pub modifiers: EventModifiers,
-    pub(crate) native_event: *mut c_void
+    pub(crate) _native_event: *mut c_void
 }
 
 impl Event {

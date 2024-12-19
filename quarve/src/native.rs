@@ -97,7 +97,7 @@ impl From<BufferEvent> for Event {
             modifiers: EventModifiers {
                 modifiers: value.modifiers
             },
-            native_event: value.native_event,
+            _native_event: value.native_event,
         }
     }
 }

@@ -739,7 +739,7 @@ mod provider_modifier {
             let w = self.squished_w
                 .or(self.intrinsic.map(|i| i.w))
                 .unwrap_or_else(|| src.ysquished_size(s).w);
-            let h = self.squished_w
+            let h = self.squished_h
                 .or(self.intrinsic.map(|i| i.h))
                 .unwrap_or_else(|| src.ysquished_size(s).h);
             Size::new(w, h)

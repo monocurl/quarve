@@ -497,7 +497,7 @@ mod text_field {
                     EventResult::FocusAcquire
                 }
                 else {
-                    EventResult::Handled
+                    EventResult::NotHandled
                 }
             }
         }

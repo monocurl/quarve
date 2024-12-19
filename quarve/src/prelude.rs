@@ -39,8 +39,9 @@ mod color {
 pub use color::*;
 
 mod layout {
+    pub use crate::view::layout::{*};
+
     use crate::core::Environment;
-    use crate::view::layout::{HeteroIVP, HeteroIVPNode, HStack, VecLayoutProvider, VStack, ZStack};
 
     /// Alias for `VStack::hetero()`
     pub fn vstack<E>() -> HeteroIVP<E, impl HeteroIVPNode<E, (), ()>, VStack>
@@ -66,6 +67,7 @@ pub use layout::*;
 
 mod view {
     pub use crate::view::conditional::*;
+    pub use crate::view::view_match::ViewMatchIVP;
     pub use crate::view::{ViewProvider, IntoViewProvider};
     pub use crate::view::menu::{WindowMenu, Menu, MenuButton};
 

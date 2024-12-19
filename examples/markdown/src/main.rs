@@ -1,5 +1,4 @@
 use quarve::prelude::*;
-use quarve::view::util::Color;
 
 struct App;
 struct MainWindow;

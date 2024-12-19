@@ -2,7 +2,7 @@ use quarve::prelude::*;
 
 struct App;
 struct MainWindow;
-struct Env(StandardConstEnv, StandardVarEnv);
+pub(crate) struct Env(StandardConstEnv, StandardVarEnv);
 
 // mainly boilerplate
 impl ApplicationProvider for App {
@@ -75,6 +75,12 @@ impl Environment for Env {
 
     fn variable_env_mut(&mut self) -> &mut Self::Variable { &mut self.1 }
 }
+
+// boilerplate trait alias for IntoViewProvider<Env, DownContext=(), UpContext=()>
+// which is referenced a lot but tedious to type
+pub(crate) trait IVP: IntoViewProvider<Env, DownContext=(), UpContext=()> { }
+
+impl<I> IVP for I where I: IntoViewProvider<Env, DownContext=(), UpContext=()> { }
 
 
 fn main() {
