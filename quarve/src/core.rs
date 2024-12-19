@@ -337,26 +337,26 @@ mod window {
     }
 
     pub trait WindowProvider: 'static {
-        type Env: Environment;
+        type Environment: Environment;
 
-        fn title(&self, env: &<Self::Env as Environment>::Const, s: MSlock) -> impl Signal<Target=String>;
+        fn title(&self, env: &<Self::Environment as Environment>::Const, s: MSlock) -> impl Signal<Target=String>;
 
-        fn size(&self, env: &<Self::Env as Environment>::Const, s: MSlock) -> (Size, Size, Size);
+        fn size(&self, env: &<Self::Environment as Environment>::Const, s: MSlock) -> (Size, Size, Size);
 
-        fn root(&self, env: &<Self::Env as Environment>::Const, s: MSlock)
-                -> impl ViewProvider<Self::Env, DownContext=()>;
-
-        #[allow(unused_variables)]
-        fn menu(&self, env: &<Self::Env as Environment>::Const, s: MSlock) -> WindowMenu;
+        fn root(&self, env: &<Self::Environment as Environment>::Const, s: MSlock)
+                -> impl ViewProvider<Self::Environment, DownContext=()>;
 
         #[allow(unused_variables)]
-        fn is_open(&self, env: &<Self::Env as Environment>::Const, s: MSlock) -> impl Binding<Filterless<bool>> {
+        fn menu(&self, env: &<Self::Environment as Environment>::Const, s: MSlock) -> WindowMenu;
+
+        #[allow(unused_variables)]
+        fn is_open(&self, env: &<Self::Environment as Environment>::Const, s: MSlock) -> impl Binding<Filterless<bool>> {
             Store::new(true)
                 .binding()
         }
 
         #[allow(unused_variables)]
-        fn is_fullscreen(&self, env: &<Self::Env as Environment>::Const, s: MSlock) -> impl Binding<Filterless<bool>> {
+        fn is_fullscreen(&self, env: &<Self::Environment as Environment>::Const, s: MSlock) -> impl Binding<Filterless<bool>> {
             Store::new(false)
                 .binding()
         }
@@ -399,32 +399,32 @@ mod window {
 
         /* event state */
         last_cursor: Cell<Point>,
-        focus: RefCell<Option<Weak<MainSlockCell<dyn InnerViewBase<P::Env>>>>>,
-        scheduled_focus: Cell<Option<Weak<MainSlockCell<dyn InnerViewBase<P::Env>>>>>,
-        default_focus: RefCell<Vec<Weak<MainSlockCell<dyn InnerViewBase<P::Env>>>>>,
-        key_listeners: RefCell<Vec<Weak<MainSlockCell<dyn InnerViewBase<P::Env>>>>>,
+        focus: RefCell<Option<Weak<MainSlockCell<dyn InnerViewBase<P::Environment>>>>>,
+        scheduled_focus: Cell<Option<Weak<MainSlockCell<dyn InnerViewBase<P::Environment>>>>>,
+        default_focus: RefCell<Vec<Weak<MainSlockCell<dyn InnerViewBase<P::Environment>>>>>,
+        key_listeners: RefCell<Vec<Weak<MainSlockCell<dyn InnerViewBase<P::Environment>>>>>,
 
         // to prevent reentry
         // it is common to take out the environment
         // and put it back in
-        environment: Cell<Option<Box<P::Env>>>,
+        environment: Cell<Option<Box<P::Environment>>>,
         // avoid having to borrow window mutably
         // when invalidating
-        up_views: RefCell<BinaryHeap<InvalidatedEntry<P::Env>>>,
-        down_views: RefCell<BinaryHeap<InvalidatedEntry<P::Env>>>,
+        up_views: RefCell<BinaryHeap<InvalidatedEntry<P::Environment>>>,
+        down_views: RefCell<BinaryHeap<InvalidatedEntry<P::Environment>>>,
         performing_layout_down: Cell<bool>,
 
         /* native */
         handle: WindowHandle,
         menu: WindowMenu,
-        content_view: Arc<MainSlockCell<dyn InnerViewBase<P::Env>>>
+        content_view: Arc<MainSlockCell<dyn InnerViewBase<P::Environment>>>
     }
 
     impl<P> Window<P> where P: WindowProvider {
         // order things are done is a bit awkward
         // but need to coordinate between many things
         pub(super) fn new(provider: P, s: MSlock) -> Arc<MainSlockCell<dyn WindowNativeCallback>> {
-            let root_env = P::Env::root_environment();
+            let root_env = P::Environment::root_environment();
 
             let handle = native::window::window_init(s);
             let content_view = provider.root(root_env.const_env(), s)
@@ -493,7 +493,7 @@ mod window {
         // due to reentry
         fn mount_content_view(this: &Arc<MainSlockCell<Window<P>>>, s: MSlock, borrow: &Window<P>) {
             let weak_window = Arc::downgrade(this)
-                as Weak<MainSlockCell<dyn WindowViewCallback<P::Env>>>;
+                as Weak<MainSlockCell<dyn WindowViewCallback<P::Environment>>>;
 
             let mut stolen_env = borrow.environment.take().unwrap();
             let content_copy = borrow.content_view.clone();
@@ -625,9 +625,9 @@ mod window {
         // if it must cross the min_depth, it will return false
         // (and the env will be left at the "subtree root")
         fn walk_env(
-            env: &mut P::Env,
-            curr: &mut Option<Arc<MainSlockCell<dyn InnerViewBase<P::Env>>>>,
-            to: Option<Arc<MainSlockCell<dyn InnerViewBase<P::Env>>>>,
+            env: &mut P::Environment,
+            curr: &mut Option<Arc<MainSlockCell<dyn InnerViewBase<P::Environment>>>>,
+            to: Option<Arc<MainSlockCell<dyn InnerViewBase<P::Environment>>>>,
             curr_depth: &mut i32,
             min_depth: i32,
             s: MSlock
@@ -866,9 +866,9 @@ mod window {
                 },
                 EventPayload::Key(_) => {
                     // if focus also in key listeners, only do one at a time
-                    let mut already_handled: Option<*const MainSlockCell<dyn InnerViewBase<P::Env>>> = None;
+                    let mut already_handled: Option<*const MainSlockCell<dyn InnerViewBase<P::Environment>>> = None;
 
-                    let mut handle_event = |target: Arc<MainSlockCell<dyn InnerViewBase<P::Env>>>| {
+                    let mut handle_event = |target: Arc<MainSlockCell<dyn InnerViewBase<P::Environment>>>| {
                         match target.borrow_mut_main(s)
                             .handle_key_event(&mut event, s) {
                             EventResult::NotHandled => false,
@@ -933,8 +933,8 @@ mod window {
         }
     }
 
-    impl<P> WindowViewCallback<P::Env> for Window<P> where P: WindowProvider {
-        fn layout_up(&self, env: &mut P::Env, right_below: Option<Arc<MainSlockCell<dyn InnerViewBase<P::Env>>>>, depth: i32, s: MSlock) {
+    impl<P> WindowViewCallback<P::Environment> for Window<P> where P: WindowProvider {
+        fn layout_up(&self, env: &mut P::Environment, right_below: Option<Arc<MainSlockCell<dyn InnerViewBase<P::Environment>>>>, depth: i32, s: MSlock) {
             // the environment is right above this node
             let mut env_spot = right_below.clone();
             let mut env_depth = depth;
@@ -1019,7 +1019,7 @@ mod window {
             Self::walk_env(env, &mut env_spot, None, &mut env_depth, depth, s);
         }
 
-        fn invalidate_view(&self, handle: Weak<MainSlockCell<dyn WindowViewCallback<P::Env>>>, view: Weak<MainSlockCell<dyn InnerViewBase<P::Env>>>, depth: u32, s: Slock) {
+        fn invalidate_view(&self, handle: Weak<MainSlockCell<dyn WindowViewCallback<P::Environment>>>, view: Weak<MainSlockCell<dyn InnerViewBase<P::Environment>>>, depth: u32, s: Slock) {
             // note that we're only touching send parts of self
             let mut borrow = self.up_views.borrow_mut();
             if borrow.is_empty() {
@@ -1039,11 +1039,11 @@ mod window {
             });
         }
 
-        fn request_focus(&self, view: Weak<MainSlockCell<dyn InnerViewBase<P::Env>>>) {
+        fn request_focus(&self, view: Weak<MainSlockCell<dyn InnerViewBase<P::Environment>>>) {
             self.scheduled_focus.set(Some(view));
         }
 
-        fn unrequest_focus(&self, view: Weak<MainSlockCell<dyn InnerViewBase<P::Env>>>) {
+        fn unrequest_focus(&self, view: Weak<MainSlockCell<dyn InnerViewBase<P::Environment>>>) {
             let comp = self.scheduled_focus.take();
             if comp.as_ref().map(|w| Weak::as_ptr(&w)) == Some(view.as_ptr()) {
                 self.scheduled_focus.set(None)
@@ -1053,26 +1053,26 @@ mod window {
             }
         }
 
-        fn request_default_focus(&self, view: Weak<MainSlockCell<dyn InnerViewBase<P::Env>>>) {
+        fn request_default_focus(&self, view: Weak<MainSlockCell<dyn InnerViewBase<P::Environment>>>) {
             let mut borrow = self.default_focus.borrow_mut();
             if !borrow.iter().any(|w| std::ptr::addr_eq(w.as_ptr(), view.as_ptr())) {
                 borrow.push(view)
             }
         }
 
-        fn unrequest_default_focus(&self, view: Weak<MainSlockCell<dyn InnerViewBase<P::Env>>>) {
+        fn unrequest_default_focus(&self, view: Weak<MainSlockCell<dyn InnerViewBase<P::Environment>>>) {
             self.default_focus.borrow_mut()
                 .retain(|w| !std::ptr::addr_eq(w.as_ptr(), view.as_ptr()))
         }
 
-        fn request_key_listener(&self, view: Weak<MainSlockCell<dyn InnerViewBase<P::Env>>>) {
+        fn request_key_listener(&self, view: Weak<MainSlockCell<dyn InnerViewBase<P::Environment>>>) {
             let mut borrow = self.key_listeners.borrow_mut();
             if !borrow.iter().any(|w| std::ptr::addr_eq(w.as_ptr(), view.as_ptr())) {
                 borrow.push(view)
             }
         }
 
-        fn unrequest_key_listener(&self, view: Weak<MainSlockCell<dyn InnerViewBase<P::Env>>>) {
+        fn unrequest_key_listener(&self, view: Weak<MainSlockCell<dyn InnerViewBase<P::Environment>>>) {
             self.key_listeners.borrow_mut()
                 .retain(|w| !std::ptr::eq(w.as_ptr(), view.as_ptr()))
         }

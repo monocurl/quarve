@@ -222,7 +222,7 @@ impl<E, P, BX, BY> ViewProvider<E> for ScrollViewVP<E, P, BX, BY>
             };
 
             if let Some(s) = s.try_to_main_slock() {
-                scroll_view_set_y(backing as *mut c_void, *x, s);
+                scroll_view_set_x(backing as *mut c_void, *x, s);
             }
             else {
                 // buffer was valid so this will be too

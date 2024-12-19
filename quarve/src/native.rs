@@ -625,7 +625,6 @@ pub mod view {
         fn back_text_view_unfocus(tv: *mut c_void);
         fn back_text_view_get_line_height(tv: *mut c_void, line: usize, start: usize, end: usize, width: f64) -> f64;
         fn back_text_view_get_cursor_pos(tv: *mut c_void, x: *mut f64, y: *mut f64);
-        fn back_text_view_handle_event(tv: *mut c_void, e: *mut c_void);
 
         fn back_text_view_copy(tv: *mut c_void);
 
@@ -1048,9 +1047,8 @@ pub mod view {
         use std::ops::Range;
         use std::sync::Arc;
         use crate::core::{Environment, MSlock};
-        use crate::event::Event;
         use crate::native::callbacks::{TEXTVIEW_CALLBACK_KEYCODE_TAB, TEXTVIEW_CALLBACK_KEYCODE_UNTAB, TEXTVIEW_CALLBACK_KEYCODE_NEWLINE, TEXTVIEW_CALLBACK_KEYCODE_ALT_NEWLINE, TEXTVIEW_CALLBACK_KEYCODE_ESCAPE, TEXTVIEW_CALLBACK_KEYCODE_LEFT, TEXTVIEW_CALLBACK_KEYCODE_UP, TEXTVIEW_CALLBACK_KEYCODE_DOWN, TEXTVIEW_CALLBACK_KEYCODE_RIGHT};
-        use crate::native::view::{back_text_view_copy, back_text_view_cut, back_text_view_focus, back_text_view_full_replace, back_text_view_get_cursor_pos, back_text_view_get_line_height, back_text_view_get_selection, back_text_view_handle_event, back_text_view_init, back_text_view_paste, back_text_view_replace, back_text_view_select_all, back_text_view_set_char_attributes, back_text_view_set_editing_state, back_text_view_set_font, back_text_view_set_line_attributes, back_text_view_set_page_id, back_text_view_set_selection, back_text_view_unfocus};
+        use crate::native::view::{back_text_view_copy, back_text_view_cut, back_text_view_focus, back_text_view_full_replace, back_text_view_get_cursor_pos, back_text_view_get_line_height, back_text_view_get_selection, back_text_view_init, back_text_view_paste, back_text_view_replace, back_text_view_select_all, back_text_view_set_char_attributes, back_text_view_set_editing_state, back_text_view_set_font, back_text_view_set_line_attributes, back_text_view_set_page_id, back_text_view_set_selection, back_text_view_unfocus};
         use crate::resource::Resource;
         use crate::state::{Binding, Filterless, SetAction, StoreContainerView};
         use crate::state::slock_cell::MainSlockCell;
@@ -1248,12 +1246,6 @@ pub mod view {
         pub fn text_view_set_selection(tv: *mut c_void, range: Range<usize>, _s: MSlock) {
             unsafe {
                 back_text_view_set_selection(tv, range.start, range.len())
-            }
-        }
-
-        pub fn text_view_dispatch_event(tv: *mut c_void, event: &Event, _s: MSlock) {
-            unsafe {
-                back_text_view_handle_event(tv, event.native_event);
             }
         }
 

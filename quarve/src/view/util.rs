@@ -87,31 +87,31 @@ mod color {
     }
 
     impl Color {
-        pub fn rgb(r: u8, g: u8, b: u8) -> Color {
+        pub const fn rgb(r: u8, g: u8, b: u8) -> Color {
             Color {
                 r, g, b, a: u8::MAX
             }
         }
 
-        pub fn rgba(r: u8, g: u8, b: u8, a: u8) -> Color {
+        pub const fn rgba(r: u8, g: u8, b: u8, a: u8) -> Color {
             Color {
                 r, g, b, a
             }
         }
 
-        pub fn clear() -> Color {
+        pub const fn clear() -> Color {
             Color {
                 r: 0, g: 0, b: 0, a: 0
             }
         }
 
-        pub fn black() -> Color {
+        pub const fn black() -> Color {
             Color {
                 r: 0, g: 0, b: 0, a: u8::MAX
             }
         }
 
-        pub fn white() -> Color {
+        pub const fn white() -> Color {
             Color {
                 r: u8::MAX, g: u8::MAX, b: u8::MAX, a: u8::MAX
             }

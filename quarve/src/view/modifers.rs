@@ -662,6 +662,17 @@ mod provider_modifier {
     }
 
     impl Frame {
+        pub const fn new() -> Self {
+            Frame {
+                squished_w: None,
+                squished_h: None,
+                intrinsic: None,
+                stretched_w: None,
+                stretched_h: None,
+                alignment: Alignment::Center
+            }
+        }
+
         pub fn align(mut self, alignment: Alignment) -> Frame {
             self.alignment = alignment;
             self

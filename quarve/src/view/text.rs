@@ -3192,7 +3192,7 @@ mod text_view {
                 self.paste_menu.unset(s);
             }
 
-            fn handle_event(&self, e: &Event, s: MSlock) -> EventResult {
+            fn handle_event(&self, e: &Event, _s: MSlock) -> EventResult {
                 if e.is_mouse() {
                     let pos = e.cursor();
                     let intersects = self.last_size.full_rect().contains(pos);

@@ -521,14 +521,6 @@ back_text_field_paste(void *view)
     }
 }
 
-- (NSView *)hitTest:(NSPoint)point {
-    NSView *hitView = [super hitTest:point];
-    // exclude this view from hit tests
-    // unless it's a right mouse down, in which case we take them
-    NSEvent* event = [NSApp currentEvent];
-    return hitView;
-}
-
 - (void)dealloc {
     [super dealloc];
 
@@ -784,13 +776,6 @@ back_text_view_get_cursor_pos(void *tv, double *x, double *y)
                                           inTextContainer:textView.textContainer];
     *x = ret.origin.x;
     *y = ret.origin.y;
-}
-
-void
-back_text_view_handle_event(void *tv, void* e)
-{
-    TextView* textView = tv;
-    NSEvent* event = e;
 }
 
 

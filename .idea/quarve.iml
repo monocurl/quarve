@@ -7,6 +7,11 @@
       <sourceFolder url="file://$MODULE_DIR$/quarve/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/quarve_cli/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/quarve_derive/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/examples/flex/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/examples/markdown/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/examples/multithread/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/examples/mux/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/examples/scroll/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/dev/main/target" />
       <excludeFolder url="file://$MODULE_DIR$/quarve/target" />
       <excludeFolder url="file://$MODULE_DIR$/target" />

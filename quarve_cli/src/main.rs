@@ -12,6 +12,7 @@ use crate::util::copy_directory;
 
 mod util;
 
+
 fn append(name: &str, to: &str, contents: &str) {
     let mut toml = OpenOptions::new()
         .create(true)
@@ -23,6 +24,18 @@ fn append(name: &str, to: &str, contents: &str) {
     writeln!(toml, "{}", contents)
         .expect("Could not write to project");
 }
+
+fn set(name: &str, path: &str, contents: &str) {
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(format!("{}/{}", name, path))
+        .expect("Could not locate project");
+
+    writeln!(file, "{}", contents)
+        .expect("Could not write to project");
+}
+
 fn new(name: &str) {
     let init = Process::new("cargo")
         .arg("new")
@@ -44,7 +57,9 @@ fn new(name: &str) {
 
     append(name, "Cargo.toml", quarve_dep);
 
-    append(name, ".gitignore", "quarve_target\n")
+    append(name, ".gitignore", "quarve_target\n");
+
+    set(name, "src/main.rs", include_str!("template.rs.txt"));
 }
 
 fn find_path() -> PathBuf {
