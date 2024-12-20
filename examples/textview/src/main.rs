@@ -159,7 +159,7 @@ impl WindowProvider for MainWindow {
     type Environment = Env;
 
     fn title(&self, _env: &<Env as Environment>::Const, _s: MSlock) -> impl Signal<Target=String> {
-        FixedSignal::new("Quarve App".into())
+        FixedSignal::new("Text View".into())
     }
 
     fn size(&self, _env: &<Env as Environment>::Const, _s: MSlock) -> (Size, Size, Size) {

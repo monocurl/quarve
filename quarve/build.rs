@@ -1,8 +1,7 @@
 use cc;
 
-#[cfg(target_os = "macos")]
+#[cfg(target_os="macos")]
 fn build() {
-    println!("cargo::rustc-check-cfg=cfg(quarve_managed_run)");
     println!("cargo:rerun-if-changed=macos");
 
     cc::Build::new()
@@ -22,9 +21,17 @@ fn build() {
         .compile("backend");
 }
 
+#[cfg(not(target_os="macos"))]
+fn build() {
+
+}
+
 fn main() {
     /* dependencies */
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=inc");
+
+    println!("cargo::rustc-check-cfg=cfg(quarve_managed_run)");
 
     build();
 }

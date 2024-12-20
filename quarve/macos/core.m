@@ -1,7 +1,7 @@
 #import <Cocoa/Cocoa.h>
 #import "color.h"
 #import "util.h"
-#import "front.h"
+#import "../inc/front.h"
 
 /* internal _state */
 int performing_subview_insertion = 0;

@@ -1,6 +1,6 @@
 #import <Cocoa/Cocoa.h>
 #import "util.h"
-#import "front.h"
+#import "../inc/front.h"
 
 extern int performing_subview_insertion;
 

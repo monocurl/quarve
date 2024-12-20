@@ -1,7 +1,7 @@
 #import <Cocoa/Cocoa.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import "util.h"
-#import "front.h"
+#import "../inc/front.h"
 
 @interface Picker : NSObject
 @property(retain) NSSavePanel* panel;

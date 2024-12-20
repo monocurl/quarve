@@ -1,8 +1,8 @@
 use quarve::prelude::*;
 use quarve::view::control::Dropdown;
-use quarve::view::text::TextModifier;
+use quarve::view::text::{TextModifier};
 use quarve::{view_match, vstack};
-use quarve::state::SetAction;
+use quarve::state::{SetAction};
 
 struct App;
 struct MainWindow;
