@@ -73,7 +73,11 @@ impl TextViewProvider<Env> for TVP {
         // see multithread example for more information about how multithreading works
         // here, whenever there is a change to state, we request a rerender of all lines
         let (notifier, receiver) = channel();
-        state.subtree_general_listener(move |s| {
+
+        // initial request
+        notifier.send(()).unwrap();
+
+        state.subtree_general_listener(move |_s| {
             notifier.send(()).unwrap();
             true
         }, s);
@@ -90,8 +94,9 @@ impl TextViewProvider<Env> for TVP {
                 for run in page.runs(s).iter() {
                     // in efficient implementation character by character,
                     // but simple for example
-                    let c= run.content(s);
-                    for (i, c) in c.chars().enumerate() {
+                    let c = run.content(s);
+
+                    for (i, c) in c.char_indices() {
                         let curr_bold = if bold && c == '*' {
                             bold = false;
                             true
@@ -103,16 +108,17 @@ impl TextViewProvider<Env> for TVP {
                         else {
                             bold
                         };
+
                         run.set_char_derived(Attribute {
                             bold: curr_bold,
-                        }, i..(i + 1), s);
+                        }, i..(i + c.len_utf8()), s);
                     }
                 }
             }
         });
     }
 
-    fn run_decoration(&self, number: impl Signal<Target=usize>, run: &Run<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> impl IntoViewProvider<Env, DownContext=()> {
+    fn run_decoration(&self, number: impl Signal<Target=usize>, _run: &Run<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> impl IntoViewProvider<Env, DownContext=()> {
         // line number for every single run
         Text::from_signal(number.map(|u| (u + 1).to_string(), s))
             .frame(

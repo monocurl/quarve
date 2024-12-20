@@ -602,11 +602,11 @@ mod text_view {
             impl<A> RangedAttributeHolder<A> where A: ToCharAttribute {
                 // note that even if returns false, may actually be true
                 // this is just for optimization purposes
-                pub fn range_equals(&self, range: Range<usize>, attribute: &A) -> bool {
+                pub fn range_definitely_equals(&self, range: Range<usize>, attribute: &A) -> bool {
                     let mut at = 0;
                     for (a, len) in &self.attributes {
-                        if at >= range.start {
-                            return range.end <= at + len && a == attribute;
+                        if range.end <= at + len {
+                            return at <= range.start && a == attribute;
                         }
 
                         at += *len;
@@ -896,19 +896,16 @@ mod text_view {
         mod run {
             use std::ops::{Deref, Range};
 
-            use quarve_derive::StoreContainer;
-
             use crate::core::{MSlock, Slock};
-            use crate::state::{Bindable, Binding, DerivedStore, EditingString, GroupAction, SetAction, Signal, Store, StringActionBasis, Word};
+            use crate::state::{Bindable, Binding, DerivedStore, EditingString, GeneralListener, GroupAction, InverseListener, SetAction, Signal, Store, StoreContainer, StringActionBasis, Word};
             use crate::state::SetAction::Set;
             use crate::util::marker::ThreadMarker;
             use crate::util::rust_util::DerefMap;
             use crate::view::text::text_view::state::attribute_holder::{AttributeHolder, RangedAttributeAction, RangedAttributeHolder, RangedBasis};
             use crate::view::text::text_view::state::AttributeSet;
             use crate::view::text::text_view::state::run_gui_info::RunGUIInfo;
-            use crate::view::undo_manager::history_elide;
+            use crate::view::undo_manager::{history_elide, UndoBucket};
 
-            #[derive(StoreContainer)]
             pub struct Run<I, D> where I: AttributeSet, D: AttributeSet {
                 content: Store<EditingString>,
                 pub(crate) gui_info: DerivedStore<RunGUIInfo>,
@@ -918,15 +915,33 @@ mod text_view {
                 // since we still want that for actual insertions or deletions, the inverse action to be applied
                 // all changes that shouldn't result in an undo
                 // are manually carried out
-
-                // ignore derived attributes from general listeners
-                #[quarve(ignore)]
                 pub(crate) char_derived_attribute: Store<RangedAttributeHolder<D::CharAttribute>>,
 
                 intrinsic_attribute: Store<AttributeHolder<I::RunAttribute>>,
-                // ignore derived attributes
-                #[quarve(ignore)]
                 derived_attribute: DerivedStore<AttributeHolder<D::RunAttribute>>,
+            }
+
+            impl<I, D> StoreContainer for Run<I, D> where I: AttributeSet, D: AttributeSet {
+                fn subtree_general_listener<F: GeneralListener + Clone>(&self, f: F, s: Slock<impl ThreadMarker>) {
+                    self.content.subtree_general_listener(f.clone(), s);
+                    self.char_intrinsic_attribute.subtree_general_listener(f.clone(), s);
+                    // dont include derived in general listener
+                    self.intrinsic_attribute.subtree_general_listener(f, s);
+                }
+
+                fn subtree_inverse_listener<F: InverseListener + Clone>(&self, f: F, s: Slock<impl ThreadMarker>) {
+                    self.content.subtree_inverse_listener(f.clone(), s);
+                    self.char_intrinsic_attribute.subtree_inverse_listener(f.clone(), s);
+                    self.char_derived_attribute.subtree_inverse_listener(f.clone(), s);
+                    self.intrinsic_attribute.subtree_inverse_listener(f, s);
+                }
+
+                fn subtree_undo_bucket(&self, bucket: UndoBucket, s: Slock<impl ThreadMarker>) {
+                    self.content.subtree_undo_bucket(bucket, s);
+                    self.char_intrinsic_attribute.subtree_undo_bucket(bucket, s);
+                    self.char_derived_attribute.subtree_undo_bucket(bucket, s);
+                    self.intrinsic_attribute.subtree_undo_bucket(bucket, s);
+                }
             }
 
             impl<I, D> Run<I, D> where I: AttributeSet, D: AttributeSet {
@@ -1198,7 +1213,7 @@ mod text_view {
                 }
 
                 pub fn set_char_intrinsic(&self, attribute: I::CharAttribute, for_range: Range<usize>, s: Slock<impl ThreadMarker>) {
-                    if self.char_intrinsic_attribute.borrow(s).range_equals(for_range.clone(), &attribute) {
+                    if self.char_intrinsic_attribute.borrow(s).range_definitely_equals(for_range.clone(), &attribute) {
                         return
                     }
 
@@ -1220,7 +1235,7 @@ mod text_view {
                 }
 
                 pub fn set_char_derived(&self, attribute: D::CharAttribute, for_range: Range<usize>, s: Slock<impl ThreadMarker>) {
-                    if self.char_derived_attribute.borrow(s).range_equals(for_range.clone(), &attribute) {
+                    if self.char_derived_attribute.borrow(s).range_definitely_equals(for_range.clone(), &attribute) {
                         return
                     }
 
@@ -1468,10 +1483,18 @@ mod text_view {
                     end_char: usize,
                     s: Slock<impl ThreadMarker>
                 ) {
-                    self.start_run.apply(Set(start_run), s);
-                    self.start_char.apply(Set(start_char), s);
-                    self.end_run.apply(Set(end_run), s);
-                    self.end_char.apply(Set(end_char), s);
+                    if *self.start_run.borrow(s) != start_run {
+                        self.start_run.apply(Set(start_run), s);
+                    }
+                    if *self.start_char.borrow(s) != start_char {
+                        self.start_char.apply(Set(start_char), s);
+                    }
+                    if *self.end_run.borrow(s) != end_run {
+                        self.end_run.apply(Set(end_run), s);
+                    }
+                    if *self.end_char.borrow(s) != end_char {
+                        self.end_char.apply(Set(end_char), s);
+                    }
                 }
 
                 // Function is called with start_run, start_char, end_run, end_char
@@ -1554,11 +1577,15 @@ mod text_view {
             pub struct Page<I, D> where I: AttributeSet, D: AttributeSet {
                 #[quarve(ignore)]
                 pub(crate) id: i32,
+                #[quarve(ignore)]
                 pub(crate) gui_info: DerivedStore<PageGUIInfo>,
 
                 #[quarve(ignore)]
                 pub(crate) selected_page: Option<<Store<Option<i32>> as Bindable<Filterless<Option<i32>>>>::Binding>,
 
+                // typically not needed for general listeners or undo history
+                // (as hooks cover most of it anyway)
+                #[quarve(ignore)]
                 pub(crate) cursor: StoreContainerSource<CursorState>,
                 pub(crate) runs: Store<Vec<Run<I, D>>>,
                 pub(crate) page_intrinsic_attribute: Store<AttributeHolder<I::PageAttribute>>,
