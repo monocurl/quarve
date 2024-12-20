@@ -607,6 +607,7 @@ impl DirectlyInvertible for Hook {
 /// not be called initially.
 /// Also, make sure that the undo manager will be invoked
 /// some way or another in the transaction block
+/// Otherwise, the hook will not be called
 pub fn history_hook(
     forward_hook: impl FnMut(MSlock) + Send + 'static,
     transaction: impl FnOnce(),
@@ -621,7 +622,8 @@ pub fn history_hook(
 
     transaction();
 
-    assert!(FORWARD_HOOKS.with_borrow(|f| f.is_empty()), "Transaction must invoke an undoable action");
+    // sometimes there is no undo manager attached at all
+    // assert!(FORWARD_HOOKS.with_borrow(|f| f.is_empty()), "Transaction must invoke an undoable action");
 }
 
 // all transactions will not incur an undo

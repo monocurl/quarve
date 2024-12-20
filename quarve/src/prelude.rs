@@ -136,7 +136,7 @@ pub use global::*;
 mod state {
     pub use crate::state::{
         Signal, Binding, Bindable,
-        Store,
+        Store, StoreContainer,
         FixedSignal
     };
 }

@@ -782,13 +782,13 @@ mod provider_modifier {
             }
 
             match self.alignment.vertical() {
-                VerticalAlignment::Bottom => {
+                VerticalAlignment::Top => {
                     translation.y = -used.y;
                 }
                 VerticalAlignment::Center => {
                     translation.y = chosen.h / 2.0 - (used.y + used.h) / 2.0;
                 }
-                VerticalAlignment::Top => {
+                VerticalAlignment::Bottom => {
                     translation.y = chosen.h - (used.y + used.h);
                 }
             }

@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
 
-members = [ "examples/flex", "examples/markdown", "examples/multithread", "examples/conditionals", "examples/scroll",
+members = [
+    "examples/flex", "examples/textview", "examples/multithread", "examples/conditional", "examples/scroll",
     "quarve",
-    "quarve_cli", "quarve_derive"]
+    "quarve_cli", "quarve_derive"
+]

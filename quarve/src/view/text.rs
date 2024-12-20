@@ -918,9 +918,14 @@ mod text_view {
                 // since we still want that for actual insertions or deletions, the inverse action to be applied
                 // all changes that shouldn't result in an undo
                 // are manually carried out
+
+                // ignore derived attributes from general listeners
+                #[quarve(ignore)]
                 pub(crate) char_derived_attribute: Store<RangedAttributeHolder<D::CharAttribute>>,
 
                 intrinsic_attribute: Store<AttributeHolder<I::RunAttribute>>,
+                // ignore derived attributes
+                #[quarve(ignore)]
                 derived_attribute: DerivedStore<AttributeHolder<D::RunAttribute>>,
             }
 
@@ -1557,6 +1562,8 @@ mod text_view {
                 pub(crate) cursor: StoreContainerSource<CursorState>,
                 pub(crate) runs: Store<Vec<Run<I, D>>>,
                 pub(crate) page_intrinsic_attribute: Store<AttributeHolder<I::PageAttribute>>,
+                // keep derived attributes out of general listeners
+                #[quarve(ignore)]
                 pub(crate) page_derived_attribute: DerivedStore<AttributeHolder<D::PageAttribute>>
             }
 
@@ -1712,8 +1719,12 @@ mod text_view {
                     s: MSlock
                 ) {
                     assert!(end_run >= start_run || (start_run == end_run && end_char >= end_run));
-
                     let with = with.into();
+                    // empty replacement causes some undo problems
+                    if end_run == start_run && end_char == start_char && with.len() == 0 {
+                        return;
+                    }
+
                     let segments: Vec<_> = with
                         .split('\n')
                         .collect();
@@ -1962,6 +1973,9 @@ mod text_view {
             use crate::util::rust_util::DerefMap;
             use crate::view::text::text_view::state::{AttributeSet, Page};
 
+            // Note that for subtree_general_listener
+            // will not be invoked whenever derived attributes are changed
+            // (which is usually what is wanted)
             #[derive(StoreContainer)]
             pub struct TextViewState<I, D> where I: AttributeSet, D: AttributeSet {
                 pub(crate) pages: Store<Vec<StoreContainerSource<Page<I, D>>>>,
@@ -2117,7 +2131,7 @@ mod text_view {
                 14.0
             }
 
-            fn init(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock);
+            fn init(&mut self, state: StoreContainerView<TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>>, s: MSlock);
 
             #[allow(unused_variables)]
             fn tab(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, page: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> bool {
@@ -2233,7 +2247,7 @@ mod text_view {
                 // merge them in undo history
                 self.state.group_undos(s);
 
-                self.provider.init(self.state.deref(), s);
+                self.provider.init(self.state.clone(), s);
                 let shared_provider = Arc::new(MainSlockCell::new_main(self.provider, s));
 
                 let y = Store::new(0.0);
