@@ -1,8 +1,9 @@
 use std::cell::{Cell, RefCell};
-use std::collections::{VecDeque};
+use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::mem::take;
 use std::sync::{Arc, Weak};
+
 use crate::core::{Environment, MSlock, run_main_async, Slock, slock_drop_listener, StandardConstEnv, StandardVarEnv};
 use crate::event::{Event, EventResult};
 use crate::state::{DirectlyInvertible, InverseListener, StoreContainer, UndoBarrier};
@@ -622,6 +623,10 @@ pub fn history_hook(
 
     transaction();
 
+    if FORWARD_HOOKS.with_borrow(|f| !f.is_empty()) {
+        FORWARD_HOOKS.with_borrow_mut(|f| f.pop());
+        INVERSE_HOOKS.with_borrow_mut(|i| i.pop());
+    }
     // sometimes there is no undo manager attached at all
     // assert!(FORWARD_HOOKS.with_borrow(|f| f.is_empty()), "Transaction must invoke an undoable action");
 }

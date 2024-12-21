@@ -1,6 +1,6 @@
 use cc;
 
-#[cfg(target_os="macos")]
+#[cfg(all(target_os="macos", not(quarve_backend_qt)))]
 fn build() {
     println!("cargo:rerun-if-changed=macos");
 
@@ -21,17 +21,31 @@ fn build() {
         .compile("backend");
 }
 
-#[cfg(not(target_os="macos"))]
+#[cfg(any(not(target_os="macos"), quarve_backend_qt))]
 fn build() {
+    println!("cargo:rerun-if-changed=qt");
 
+    cc::Build::new()
+        .file("qt/core.m")
+        .file("qt/cursor_view.m")
+        .file("qt/image_view.m")
+        .file("qt/layer_view.m")
+        .file("qt/layout_view.m")
+        .file("qt/scroll_view.m")
+        .file("qt/button_view.m")
+        .file("qt/dropdown_view.m")
+        .file("qt/menu.m")
+        .file("qt/message_box.m")
+        .file("qt/file_picker.m")
+        .file("qt/text.m")
+        .file("qt/path.m")
+        .compile("backend");
 }
 
 fn main() {
     /* dependencies */
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=inc");
-
-    println!("cargo::rustc-check-cfg=cfg(quarve_managed_run)");
 
     build();
 }

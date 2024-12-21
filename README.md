@@ -62,11 +62,11 @@ We designed Quarve to satisfy the core principles:
    This allows for small installation size and memory footprint.
 5. **Fast** We do not use virtual doms and aim for minimal overheard
    compared to a fully native application
-   (there is still have some work to do).
+   (there is still some work to do).
 
 Currently, Quarve is implemented for macOS, Windows and Linux.
 There are many features that are yet to be added,
-but you can still do a lot with the basics.
+but the basics are implemented.
 
 Documentation is available at [docs.rs](https://docs.rs/quarve/0.1.0/quarve/).
 

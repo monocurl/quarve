@@ -12,3 +12,5 @@ rand = "0.8.5"
 [dependencies]
 quarve_derive = { path = '../quarve_derive'}
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(quarve_backend_qt)', 'cfg(quarve_managed_run)'] }

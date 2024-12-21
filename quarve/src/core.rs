@@ -1,7 +1,17 @@
 use std::cell::OnceCell;
-use std::sync::{OnceLock};
 use std::sync::mpsc::SyncSender;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
+
+pub use application::*;
+pub use environment::*;
+pub use global::*;
+// life cycle methods only needed outside of this module
+// when testing
+#[cfg(test)]
+pub(crate) use life_cycle::*;
+pub use slock::*;
+pub use window::*;
 
 static TIMER_WORKER: OnceLock<SyncSender<(Box<dyn for<'a> FnMut(Duration, Slock<'a>) -> bool + Send>, Instant)>> = OnceLock::new();
 
@@ -57,7 +67,8 @@ mod life_cycle {
     use std::sync::mpsc::{Receiver, sync_channel};
     use std::thread;
     use std::time::{Duration, Instant};
-    use crate::core::{slock_owner, Slock, TIMER_WORKER};
+
+    use crate::core::{Slock, slock_owner, TIMER_WORKER};
 
     const ANIMATION_THREAD_TICK: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
@@ -108,10 +119,6 @@ mod life_cycle {
         TIMER_WORKER.set(sender).expect("Application should only be run once");
     }
 }
-// life cycle methods only needed outside of this module
-// when testing
-#[cfg(test)]
-pub(crate) use life_cycle::*;
 
 mod environment {
     use crate::resource::Resource;
@@ -216,17 +223,16 @@ mod environment {
         }
     }
 }
-pub use environment::*;
 
 mod application {
     use std::cell::RefCell;
     use std::sync::Arc;
+
     use crate::core::{MSlock, slock_main_owner};
     use crate::core::life_cycle::setup_timing_thread;
     use crate::core::window::{Window, WindowNativeCallback, WindowProvider};
     use crate::native;
-    use crate::state::slock_cell::{MainSlockCell};
-
+    use crate::state::slock_cell::MainSlockCell;
 
     pub trait ApplicationProvider: 'static {
         // This name is used for determining application support directory
@@ -275,30 +281,31 @@ mod application {
         }
     }
 }
-pub use application::*;
 
 mod window {
     use std::cell::{Cell, RefCell};
     use std::collections::BinaryHeap;
     use std::ops::{Deref, DerefMut};
     use std::sync::{Arc, Weak};
+
+    use crate::{native, util};
     use crate::core::{APP, Environment, MSlock, run_main_async, run_main_maybe_sync, Slock};
     use crate::core::window::invalidated_entry::InvalidatedEntry;
     use crate::event::{Event, EventPayload, EventResult};
-    use crate::{native, util};
-    use crate::native::{WindowHandle};
     use crate::native::window::{window_exit, window_set_menu};
+    use crate::native::WindowHandle;
     use crate::state::{ActualDiffSignal, Bindable, Binding, Filterless, Signal, Store};
     use crate::state::SetAction::Set;
-    use crate::state::slock_cell::{MainSlockCell};
+    use crate::state::slock_cell::MainSlockCell;
     use crate::util::geo::{Point, Rect, Size};
-    use crate::view::{InnerViewBase};
-    use crate::view::{ViewProvider};
-    use crate::view::menu::{WindowMenu};
+    use crate::view::InnerViewBase;
+    use crate::view::menu::WindowMenu;
+    use crate::view::ViewProvider;
 
     mod invalidated_entry {
         use std::cmp::Ordering;
         use std::sync::Weak;
+
         use crate::core::Environment;
         use crate::state::slock_cell::MainSlockCell;
         use crate::view::InnerViewBase;
@@ -833,6 +840,23 @@ mod window {
 
         // FIXME, when weak fails to upgrade make the option None
         fn dispatch_native_event(&self, mut event: Event, s: MSlock) -> u8 {
+            // clear invalid focus/default focus
+            self.default_focus.borrow_mut()
+                .retain(|d| {
+                    let Some(d) = d.upgrade() else {
+                        return false;
+                    };
+                    d.borrow_main(s).depth() != u32::MAX
+                });
+            {
+                let mut f = self.focus.borrow_mut();
+                if let Some(v) = f.as_ref().and_then(|f| f.upgrade()) {
+                    if v.borrow_mut_main(s).depth() == u32::MAX {
+                        *f = None;
+                    }
+                }
+            }
+
             let ret = match &mut event.payload {
                 EventPayload::Mouse(_, at) => {
                     let raw_cursor = *at;
@@ -1084,16 +1108,16 @@ mod window {
         }
     }
 }
-pub use window::*;
 
 mod slock {
     use std::marker::PhantomData;
     use std::sync::{Mutex, MutexGuard};
     use std::thread;
+
+    use crate::core::debug_stats::DebugInfo;
     use crate::native;
     use crate::util::marker::{AnyThreadMarker, MainThreadMarker, ThreadMarker};
     use crate::util::rust_util::PhantomUnsendUnsync;
-    use crate::core::debug_stats::DebugInfo;
 
     static GLOBAL_STATE_LOCK: Mutex<()> = Mutex::new(());
     static SLOCK_INIT_LISTENER: Mutex<Vec<Box<dyn FnMut(Slock) -> bool + Send>>> = Mutex::new(Vec::new());
@@ -1312,15 +1336,16 @@ mod slock {
         }
     }
 }
-pub use slock::*;
 
 mod global {
     use std::time::{Duration, Instant};
+
     use crate::core::application::{Application, ApplicationProvider};
     use crate::native;
     use crate::state::{CapacitatedSignal, FixedSignal};
     use crate::state::capacitor::IncreasingCapacitor;
     use crate::util::marker::ThreadMarker;
+
     use super::{APP, MSlock, Slock, TIMER_WORKER};
 
     pub fn timed_worker<F: for<'a> FnMut(Duration, Slock<'a>) -> bool + Send + 'static>(func: F) {
@@ -1371,12 +1396,12 @@ mod global {
         })
     }
 }
-pub use global::*;
 
 #[cfg(test)]
 mod tests {
     use std::thread::sleep;
     use std::time::Duration;
+
     use crate::core::slock_owner;
 
     /* of course, should only panic in debug scenarios */
