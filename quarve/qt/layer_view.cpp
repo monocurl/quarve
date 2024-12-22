@@ -1,5 +1,5 @@
-#import "color.h"
-#import "../inc/util.h"
+#include "color.h"
+#include "../inc/util.h"
 
 extern "C" void *
 back_view_layer_init() {

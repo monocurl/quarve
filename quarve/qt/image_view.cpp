@@ -1,4 +1,4 @@
-#import "../inc/util.h"
+#include "../inc/util.h"
 
 extern "C" void *
 back_view_image_init(uint8_t const* path)

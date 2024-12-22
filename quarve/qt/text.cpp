@@ -1,6 +1,6 @@
-#import "../inc/util.h"
-#import "color.h"
-#import "../inc/front.h"
+#include "../inc/util.h"
+#include "color.h"
+#include "../inc/front.h"
 
 extern "C" void*
 back_text_init()

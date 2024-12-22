@@ -1,5 +1,5 @@
-#import "../inc/util.h"
-#import "../inc/front.h"
+#include "../inc/util.h"
+#include "../inc/front.h"
 
 
 extern "C" void*

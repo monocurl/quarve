@@ -1,6 +1,6 @@
-#import "color.h"
-#import "../inc/util.h"
-#import "../inc/front.h"
+#include "color.h"
+#include "../inc/util.h"
+#include "../inc/front.h"
 
 /* internal _state */
 int performing_subview_insertion = 0;

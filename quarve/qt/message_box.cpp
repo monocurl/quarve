@@ -1,5 +1,5 @@
-#import "../inc/util.h"
-#import "../inc/front.h"
+#include "../inc/util.h"
+#include "../inc/front.h"
 
 extern "C" void*
 back_message_box_init(uint8_t const* title, uint8_t const* message)
