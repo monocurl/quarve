@@ -33,7 +33,7 @@ fn mux_demo() -> impl IVP {
     // and a set of match arms
     let mux = view_match!(selection_sig, |val: &Option<String>| val.as_ref().map(move |q| q.as_str());
         Some("Alpha") => text("alpha text").bold(),
-        Some("Beta") => button("beta button", |s| println!("clicked!")).italic(),
+        Some("Beta") => button("beta button", |_s| println!("clicked!")).italic(),
         _ => text("Please select an option")
     );
 

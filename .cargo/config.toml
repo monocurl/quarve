@@ -1,2 +1,0 @@
-[build]
-rustflags = "--cfg quarve_backend_qt"

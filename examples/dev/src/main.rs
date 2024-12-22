@@ -2,7 +2,6 @@ use quarve::prelude::*;
 use quarve::prelude::Alignment::Center;
 use quarve::state::NumericAction;
 use quarve::view::text::{Text, TextModifier};
-use quarve::view::util::Color;
 
 struct App;
 struct MainWindow;

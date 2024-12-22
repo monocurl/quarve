@@ -1,17 +1,134 @@
-use std::{fs, io};
-use std::path::Path;
+pub mod file_util {
+    use std::fs::OpenOptions;
+    use std::{fs, io};
+    use std::io::Write;
+    use std::path::Path;
 
-/// https://stackoverflow.com/questions/26958489/how-to-copy-a-folder-recursively-in-rust
-pub fn copy_directory(src: &Path, dst: &Path) -> io::Result<()> {
-    fs::create_dir_all(&dst)?;
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let ty = entry.file_type()?;
-        if ty.is_dir() {
-            copy_directory(&entry.path(), &dst.join(entry.file_name()))?;
+    /// https://stackoverflow.com/questions/26958489/how-to-copy-a-folder-recursively-in-rust
+    pub(crate) fn copy_directory(src: &Path, dst: &Path) -> io::Result<()> {
+        fs::create_dir_all(&dst)?;
+        for entry in fs::read_dir(src)? {
+            let entry = entry?;
+            let ty = entry.file_type()?;
+            if ty.is_dir() {
+                copy_directory(&entry.path(), &dst.join(entry.file_name()))?;
+            } else if ty.is_file() {
+                fs::copy(entry.path(), dst.join(entry.file_name()))?;
+            }
+            // ignore symlink (which are encountered sometimes in QtGui.Framework)
+        }
+        Ok(())
+    }
+
+
+    pub(crate) fn append(name: &str, to: &str, contents: &str) {
+        let mut toml = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .append(true)
+            .open(format!("{}/{}", name, to))
+            .expect("Could not locate project");
+
+        writeln!(toml, "{}", contents)
+            .expect("Could not write to project");
+    }
+
+    pub(crate) fn set(name: &str, path: &str, contents: &str) {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(format!("{}/{}", name, path))
+            .expect("Could not locate project");
+
+        writeln!(file, "{}", contents)
+            .expect("Could not write to project");
+    }
+}
+
+pub mod cargo_util {
+    use std::env::VarError;
+    use std::path::{Path, PathBuf};
+    use std::process::Command as Process;
+    use serde_json::Value;
+    use crate::util::file_util::{append, set};
+
+    pub(crate) fn new(name: &str) {
+        let init = Process::new("cargo")
+            .arg("new")
+            .arg(name)
+            .status().expect("Failed to execute cargo");
+
+        if !init.success() {
+            return
+        }
+
+        // for local builds
+        let quarve_dep =
+            if std::env::var("QUARVE_DEV") != Err(VarError::NotPresent) {
+                "quarve = { path = \"../../quarve\" }\n"
+            } else {
+                "quarve = { version = \"0.1.0\" }\n"
+            };
+
+        append(name, "Cargo.toml", quarve_dep);
+        append(name, ".gitignore", "quarve_target\n");
+        set(name, "src/main.rs", include_str!("template.rs.txt"));
+    }
+
+    pub(crate) fn find_path() -> PathBuf {
+        let root = Process::new("cargo")
+            .arg("locate-project")
+            .arg("--workspace")
+            .arg("--message-format")
+            .arg("plain")
+            .output()
+            .expect("Failed to execute cargo");
+
+        let str = String::from_utf8(root.stdout).expect("UTF-8 error");
+        Path::new(&str).parent()
+            .expect("Unexpected cargo location")
+            .to_owned()
+    }
+
+    pub(crate) fn find_name(name_hint: Option<&str>) -> Option<String> {
+        let meta = Process::new("cargo")
+            .arg("metadata")
+            .arg("--no-deps")
+            .arg("--format-version=1")
+            .output()
+            .expect("Failed to execute cargo");
+
+        let str = String::from_utf8(meta.stdout).expect("UTF-8 error");
+        let json: Value = serde_json::from_str(&str).unwrap();
+        let map = json.as_object().unwrap();
+
+        if let Some(hint) = name_hint {
+            let found = map.get("packages").unwrap()
+                .as_array().unwrap().iter()
+                .any(|p|
+                    p.as_object().unwrap()
+                        .get("targets").unwrap()
+                        .as_array().unwrap().iter()
+                        .any(|t| {
+                            t.as_object().unwrap()
+                                .get("name").unwrap()
+                                .as_str().unwrap() == hint
+                        })
+                );
+
+            if found {
+                Some(hint.into())
+            } else {
+                None
+            }
         } else {
-            fs::copy(entry.path(), dst.join(entry.file_name()))?;
+            Some(map.get("packages").unwrap()
+                .as_array().unwrap()[0]
+                .as_object().unwrap()
+                .get("targets").unwrap()
+                .as_array().unwrap()[0]
+                .get("name").unwrap()
+                .as_str().unwrap().to_owned())
         }
     }
-    Ok(())
 }

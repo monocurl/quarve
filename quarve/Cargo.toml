@@ -3,6 +3,10 @@ name = "quarve"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default=[]
+qt_backend=[]
+
 [build-dependencies]
 cc = "1.0.94"
 
@@ -13,4 +17,4 @@ rand = "0.8.5"
 quarve_derive = { path = '../quarve_derive'}
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(quarve_backend_qt)', 'cfg(quarve_managed_run)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(quarve_managed_run)'] }

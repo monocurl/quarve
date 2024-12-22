@@ -1,6 +1,6 @@
 use cc;
 
-#[cfg(all(target_os="macos", not(quarve_backend_qt)))]
+#[cfg(all(target_os="macos", not(feature = "qt_backend")))]
 fn build() {
     println!("cargo:rerun-if-changed=macos");
 
@@ -19,9 +19,12 @@ fn build() {
         .file("macos/text.m")
         .file("macos/path.m")
         .compile("backend");
+
+    println!("cargo:rustc-link-lib=framework=Cocoa");
+    println!("cargo:rustc-link-lib=framework=UniformTypeIdentifiers");
 }
 
-#[cfg(any(not(target_os="macos"), quarve_backend_qt))]
+#[cfg(any(not(target_os="macos"), feature = "qt_backend"))]
 fn build() {
     println!("cargo:rerun-if-changed=qt");
 
@@ -40,7 +43,25 @@ fn build() {
         .file("qt/text.m")
         .file("qt/path.m")
         .compile("backend");
+
+    #[cfg(target_os = "macos")]
+    {
+        let framework_search = std::env::var("QUARVE_BACKEND_PATH")
+            .expect("The QUARVE_BACKEND_PATH should be set to the location of Qt's libraries");
+
+        println!("cargo:rustc-link-search=framework={}", &framework_search);
+
+        println!("cargo:rustc-link-lib=framework=QtGui");
+        println!("cargo:rustc-link-lib=framework=QtWidgets");
+        println!("cargo:rustc-link-lib=framework=QtCore");
+        println!("cargo:rustc-link-lib=framework=QtDBus");
+    }
+
+    // TODO remove this eventually
+    println!("cargo:rustc-link-lib=framework=Cocoa");
+    println!("cargo:rustc-link-lib=framework=UniformTypeIdentifiers");
 }
+
 
 fn main() {
     /* dependencies */
@@ -49,4 +70,3 @@ fn main() {
 
     build();
 }
-

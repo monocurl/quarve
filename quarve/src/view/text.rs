@@ -2289,7 +2289,7 @@ mod text_view {
                 }, VStackOptions::default().spacing(0.0)).into_view_provider(env, s).into_view(s);
 
                 TextViewVP {
-                    provider: shared_provider,
+                    _provider: shared_provider,
                     state: self.state,
                     scroll_y: y,
                     height: h,
@@ -2304,7 +2304,7 @@ mod text_view {
                   VP: ViewProvider<E, DownContext=()>,
                   E: Environment
         {
-            provider: Arc<MainSlockCell<P>>,
+            _provider: Arc<MainSlockCell<P>>,
             state: StoreContainerView<TextViewState<P::IntrinsicAttribute, P::DerivedAttribute>>,
             scroll_y: Store<ScreenUnit>,
             height: Store<ScreenUnit>,
@@ -2563,7 +2563,7 @@ mod text_view {
 
             fn into_view_provider(self, env: &E::Const, s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
                 let lp = PageCoordinatorLP {
-                    provider: self.provider,
+                    _provider: self.provider,
                     background: self.background.into_view_provider(env, s).into_view(s),
                     page_view: self.page_view.into_view_provider(env, s).into_view(s),
                     decorations: self.decorations.into_view_provider(env, s).into_view(s),
@@ -2583,7 +2583,7 @@ mod text_view {
                   V: ViewProvider<E, DownContext=()>,
                   F: ViewProvider<E , DownContext=()>
         {
-            provider: Arc<MainSlockCell<P>>,
+            _provider: Arc<MainSlockCell<P>>,
             background: View<E, B>,
             page_view: View<E, V>,
             decorations: View<E, D>,

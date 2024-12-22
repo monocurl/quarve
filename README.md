@@ -1,5 +1,8 @@
 # Quarve
 
+**Quarve is in pre-alpha. Use at your own risk**
+
+
 Quarve is an experimental rust UI library for desktop applications.
 It was made to develop [Monocurl](https://www.monocurl.com),
 a mathematical animation app, but can be used more generally.

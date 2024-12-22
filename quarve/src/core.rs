@@ -20,6 +20,7 @@ thread_local! {
 }
 
 mod debug_stats {
+    #[cfg(debug_assertions)]
     use std::time::{Duration, Instant};
 
     #[cfg(debug_assertions)]
@@ -395,6 +396,7 @@ mod window {
         fn unrequest_focus(&self, view: Weak<MainSlockCell<dyn InnerViewBase<E>>>);
 
         fn request_default_focus(&self, view: Weak<MainSlockCell<dyn InnerViewBase<E>>>);
+        #[allow(unused)]
         fn unrequest_default_focus(&self, view: Weak<MainSlockCell<dyn InnerViewBase<E>>>);
 
         fn request_key_listener(&self, view: Weak<MainSlockCell<dyn InnerViewBase<E>>>);
@@ -846,7 +848,8 @@ mod window {
                     let Some(d) = d.upgrade() else {
                         return false;
                     };
-                    d.borrow_main(s).depth() != u32::MAX
+                    let save = d.borrow_main(s).depth() != u32::MAX;
+                    save
                 });
             {
                 let mut f = self.focus.borrow_mut();

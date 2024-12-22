@@ -8,8 +8,3 @@ pub mod prelude;
 
 /* private */
 mod native;
-
-#[cfg(target_os = "macos")]
-#[link(name = "Cocoa", kind = "framework")]
-#[link(name = "UniformTypeIdentifiers", kind = "framework")]
-extern { }

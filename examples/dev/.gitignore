@@ -1,2 +1,4 @@
 quarve_target
+# only used for hack around qt
+build.rs
 
