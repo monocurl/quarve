@@ -1,6 +1,6 @@
 #pragma once
 
-#import "util.h"
+#include "../inc/util.h"
 
 /* front end */
 extern void front_will_spawn(void);

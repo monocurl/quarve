@@ -58,6 +58,8 @@ mod run {
             if release {
                 // copy relevant frameworks
                 let mut src_path = PathBuf::from(qt_path.clone());
+                src_path.push("lib");
+
                 quarve_target.push("Contents");
                 quarve_target.push("Frameworks");
                 for framework in QT_FRAMEWORKS {

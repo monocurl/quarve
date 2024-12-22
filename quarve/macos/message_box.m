@@ -1,13 +1,5 @@
-#import <Cocoa/Cocoa.h>
-#import "util.h"
+#import "../util.h"
 #import "../inc/front.h"
-
-// quarve/view/modal.rs
-enum button_type {
-    BUTTON_TYPE_OK = 1,
-    BUTTON_TYPE_CANCEL = 2,
-    BUTTON_TYPE_DELETE = 3,
-};
 
 void*
 back_message_box_init(uint8_t const* title, uint8_t const* message)

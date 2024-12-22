@@ -1,6 +1,16 @@
 #pragma once
 
+#include <stdint.h>
+#include <stdlib.h>
+
 #define EPSILON 1e-4
+
+// quarve/view/modal.rs
+enum button_type {
+    BUTTON_TYPE_OK = 1,
+    BUTTON_TYPE_CANCEL = 2,
+    BUTTON_TYPE_DELETE = 3,
+};
 
 typedef struct fat_pointer {
     void const *p0;
