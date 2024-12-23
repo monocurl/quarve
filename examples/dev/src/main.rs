@@ -1,7 +1,5 @@
 use quarve::prelude::*;
-use quarve::prelude::Alignment::Center;
-use quarve::state::NumericAction;
-use quarve::view::text::{Text, TextModifier};
+use quarve::view::color_view::EmptyView;
 
 struct App;
 struct MainWindow;
@@ -20,24 +18,9 @@ impl ApplicationProvider for App {
     }
 }
 
-fn counter(s: MSlock) -> impl IVP {
-    // state
-    let count = Store::new(0);
-    let count_binding = count.binding();
-    let count_label = count.map(|c| format!("Count: {:?}", c), s);
-
-    // views
-    let button = button("Increment", move |s| {
-        count_binding.apply(NumericAction::Incr(1), s);
-    });
-    let display = Text::from_signal(count_label);
-
-    vstack()
-        .push(button.bold())
-        .push(display)
-        .text_color(BLACK)
-        .frame(F.intrinsic(400, 400).align(Center).unlimited_stretch())
-        .background(WHITE)
+fn counter(_s: MSlock) -> impl IVP {
+    EmptyView
+        .intrinsic(400, 400)
 }
 
 // The main code where you specify a view hierarchy

@@ -97,9 +97,57 @@ impl<E: Environment> IntoViewProvider<E> for EmptyView {
     type UpContext = ();
     type DownContext = ();
 
-    fn into_view_provider(self, env: &E::Const, s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
-        Color::clear()
-            .frame(Frame::default().intrinsic(0, 0))
-            .into_view_provider(env, s)
+    fn into_view_provider(self, _env: &E::Const, _s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
+        EmptyVP
+    }
+}
+
+struct EmptyVP;
+
+impl<E> ViewProvider<E> for EmptyVP where E: Environment {
+    type UpContext = ();
+    type DownContext = ();
+
+    fn intrinsic_size(&mut self, _s: MSlock) -> Size {
+        Size::new(0.0, 0.0)
+    }
+
+    fn xsquished_size(&mut self, _s: MSlock) -> Size {
+        Size::new(0.0, 0.0)
+    }
+
+    fn xstretched_size(&mut self, _s: MSlock) -> Size {
+        Size::new(0.0, 0.0)
+    }
+
+    fn ysquished_size(&mut self, _s: MSlock) -> Size {
+        Size::new(0.0, 0.0)
+    }
+
+    fn ystretched_size(&mut self, _s: MSlock) -> Size {
+        Size::new(0.0, 0.0)
+    }
+
+    fn up_context(&mut self, _s: MSlock) -> Self::UpContext {
+        ()
+    }
+
+    fn init_backing(&mut self, _invalidator: WeakInvalidator<E>, _subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, _env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+        let nv = if let Some((nv, _)) = backing_source {
+            nv
+        }
+        else {
+            NativeView::layout_view(s)
+        };
+
+        nv
+    }
+
+    fn layout_up(&mut self, _subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, s: MSlock) -> bool {
+        false
+    }
+
+    fn layout_down(&mut self, _subtree: &Subtree<E>, _frame: Size, _layout_context: &Self::DownContext, _env: &mut EnvRef<E>, _s: MSlock) -> (Rect, Rect) {
+        (Rect::new(0., 0., 0., 0.), Rect::new(0., 0., 0., 0.))
     }
 }
