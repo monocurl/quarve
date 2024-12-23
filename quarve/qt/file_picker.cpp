@@ -1,5 +1,5 @@
 #include "../inc/util.h"
-#include "../inc/front.h"
+#include "front.h"
 
 extern "C" void*
 back_file_open_picker_init(uint8_t const* allowed_mask) {

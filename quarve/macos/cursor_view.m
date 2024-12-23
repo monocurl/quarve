@@ -1,6 +1,6 @@
 #import <Cocoa/Cocoa.h>
 #import "cursor_view.h"
-#import "util.h"
+#import "../inc/util.h"
 
 @implementation CursorView
 

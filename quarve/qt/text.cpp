@@ -1,6 +1,6 @@
 #include "../inc/util.h"
 #include "color.h"
-#include "../inc/front.h"
+#include "front.h"
 
 extern "C" void*
 back_text_init()

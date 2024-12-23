@@ -1,5 +1,6 @@
-#import "../util.h"
-#import "../inc/front.h"
+#import <Cocoa/Cocoa.h>
+#import "../inc/util.h"
+#import "front.h"
 
 void*
 back_message_box_init(uint8_t const* title, uint8_t const* message)

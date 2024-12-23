@@ -1,5 +1,5 @@
 #include "../inc/util.h"
-#include "../inc/front.h"
+#include "front.h"
 
 extern int performing_subview_insertion;
 

@@ -1,6 +1,8 @@
+#include <QtWidgets>
+
 #include "color.h"
 #include "../inc/util.h"
-#include "../inc/front.h"
+#include "front.h"
 
 /* internal _state */
 int performing_subview_insertion = 0;
@@ -8,15 +10,22 @@ int performing_subview_insertion = 0;
 /* global methods */
 extern "C" void
 back_main_loop() {
-
+    int argc = 0;
+    char* argv[] = {};
+    QApplication a(argc, argv);
+    a.exec();
 }
 
 extern "C" void
 back_run_main(fat_pointer box) {
+    QTimer::singleShot(0, [=]{
+        front_execute_fn_once(box);
+    });
 }
 
 extern "C" void
 back_terminate() {
+    QCoreApplication::instance()->quit();
 }
 
 /* window methods */

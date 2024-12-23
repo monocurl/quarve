@@ -1,5 +1,5 @@
 #import <Cocoa/Cocoa.h>
-#import "util.h"
+#import "../inc/util.h"
 
 void *
 back_view_image_init(uint8_t const* path)
