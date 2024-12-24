@@ -1,6 +1,5 @@
 use quarve::prelude::*;
 use quarve::state::Filterless;
-use quarve::view::color_view::EmptyView;
 
 struct App;
 struct MainWindow;
@@ -19,12 +18,15 @@ impl ApplicationProvider for App {
     }
 }
 
-fn counter(_s: MSlock) -> impl IVP {
-    vstack()
+fn view(_s: MSlock) -> impl IVP {
+    VStack::hetero_options(VStackOptions::default().align(HorizontalAlignment::Center))
         .push(BLACK.intrinsic(100, 100))
-        .push(EmptyView.intrinsic(100, 100))
+        .push(RED.intrinsic(200, 100))
         .push(WHITE.intrinsic(100, 100))
-        .intrinsic(400, 400)
+        .frame(
+            F.intrinsic(400, 400).unlimited_stretch()
+                .align(Alignment::Center)
+        )
 }
 
 // The main code where you specify a view hierarchy
@@ -47,7 +49,7 @@ impl WindowProvider for MainWindow {
     }
 
     fn root(&self, env: &<Env as Environment>::Const, s: MSlock) -> impl ViewProvider<Env, DownContext=()> {
-        counter(s)
+        view(s)
             .into_view_provider(env, s)
     }
 

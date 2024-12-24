@@ -231,7 +231,7 @@ mod application {
 
     use crate::core::{MSlock, slock_main_owner};
     use crate::core::life_cycle::setup_timing_thread;
-    use crate::core::window::{Window, WindowNativeCallback, WindowProvider};
+    use crate::core::window::{new_window, WindowNativeCallback, WindowProvider};
     use crate::native;
     use crate::state::slock_cell::MainSlockCell;
 
@@ -273,7 +273,7 @@ mod application {
         }
 
         pub fn spawn_window<W>(&self, provider: W, s: MSlock) where W: WindowProvider {
-            self.windows.borrow_mut().push(Window::new(provider, s));
+            self.windows.borrow_mut().push(new_window(provider, s));
         }
 
         #[cold]
@@ -403,7 +403,7 @@ mod window {
         fn unrequest_key_listener(&self, view: Weak<MainSlockCell<dyn InnerViewBase<E>>>);
     }
 
-    pub struct Window<P> where P: WindowProvider {
+    pub struct Window<P, B> where P: WindowProvider, B: Binding<Filterless<bool>> {
         provider: P,
 
         /* event state */
@@ -412,6 +412,7 @@ mod window {
         scheduled_focus: Cell<Option<Weak<MainSlockCell<dyn InnerViewBase<P::Environment>>>>>,
         default_focus: RefCell<Vec<Weak<MainSlockCell<dyn InnerViewBase<P::Environment>>>>>,
         key_listeners: RefCell<Vec<Weak<MainSlockCell<dyn InnerViewBase<P::Environment>>>>>,
+        is_fullscreen: B,
 
         // to prevent reentry
         // it is common to take out the environment
@@ -429,51 +430,54 @@ mod window {
         content_view: Arc<MainSlockCell<dyn InnerViewBase<P::Environment>>>
     }
 
-    impl<P> Window<P> where P: WindowProvider {
+    pub(super) fn new_window<P: WindowProvider>(provider: P, s: MSlock) -> Arc<MainSlockCell<dyn WindowNativeCallback>> {
+        let root_env = <P::Environment>::root_environment();
+
+        let handle = native::window::window_init(s);
+        let content_view = provider.root(root_env.const_env(), s)
+            .into_view(s).0;
+
+        let menu = provider.menu(root_env.const_env(), s);
+        let is_fullscreen = provider.is_fullscreen(root_env.const_env(), s);
+
+        let window = Window {
+            provider,
+            last_cursor: Cell::new(Point::new(util::geo::UNBOUNDED, util::geo::UNBOUNDED)),
+            focus: RefCell::new(None),
+            scheduled_focus: Cell::new(None),
+            default_focus: RefCell::new(Vec::new()),
+            key_listeners: RefCell::new(Vec::new()),
+            is_fullscreen,
+            environment: Cell::new(Some(Box::new(root_env))),
+            up_views: RefCell::new(BinaryHeap::new()),
+            down_views: RefCell::new(BinaryHeap::new()),
+            performing_layout_down: Cell::new(false),
+            handle,
+            menu,
+            content_view
+        };
+
+        let b = Arc::new(MainSlockCell::new_main(window, s));
+
+        // create initial tree and other tasks
+        Window::init(&b, s);
+
+        // set handle of backing as well as root view
+        {
+            let borrow = b.borrow_main(s);
+            native::window::window_set_handle(handle, borrow.deref() as &dyn WindowNativeCallback, s);
+
+            let content_borrow = borrow.content_view.borrow_main(s);
+            debug_assert!(!content_borrow.native_view().is_null());
+            native::window::window_set_root(handle, content_borrow.native_view(), s);
+        }
+
+        b
+    }
+
+    impl<P, B> Window<P, B> where P: WindowProvider, B: Binding<Filterless<bool>> {
         // order things are done is a bit awkward
         // but need to coordinate between many things
-        pub(super) fn new(provider: P, s: MSlock) -> Arc<MainSlockCell<dyn WindowNativeCallback>> {
-            let root_env = P::Environment::root_environment();
-
-            let handle = native::window::window_init(s);
-            let content_view = provider.root(root_env.const_env(), s)
-                .into_view(s).0;
-
-            let menu = provider.menu(root_env.const_env(), s);
-
-            let window = Window {
-                provider,
-                last_cursor: Cell::new(Point::new(util::geo::UNBOUNDED, util::geo::UNBOUNDED)),
-                focus: RefCell::new(None),
-                scheduled_focus: Cell::new(None),
-                default_focus: RefCell::new(Vec::new()),
-                key_listeners: RefCell::new(Vec::new()),
-                environment: Cell::new(Some(Box::new(root_env))),
-                up_views: RefCell::new(BinaryHeap::new()),
-                down_views: RefCell::new(BinaryHeap::new()),
-                performing_layout_down: Cell::new(false),
-                handle,
-                menu,
-                content_view
-            };
-
-            let b = Arc::new(MainSlockCell::new_main(window, s));
-
-            // create initial tree and other tasks
-            Window::init(&b, s);
-
-            // set handle of backing as well as root view
-            {
-                let borrow = b.borrow_main(s);
-                native::window::window_set_handle(handle, borrow.deref() as &dyn WindowNativeCallback, s);
-
-                let content_borrow = borrow.content_view.borrow_main(s);
-                debug_assert!(!content_borrow.native_view().is_null());
-                native::window::window_set_root(handle, content_borrow.native_view(), s);
-            }
-
-            b
-        }
 
         // exact order is pretty important
         // (view depends on menu being before)
@@ -500,7 +504,7 @@ mod window {
 
         // logic is a bit tricky for initial mounting
         // due to reentry
-        fn mount_content_view(this: &Arc<MainSlockCell<Window<P>>>, s: MSlock, borrow: &Window<P>) {
+        fn mount_content_view(this: &Arc<MainSlockCell<Window<P, B>>>, s: MSlock, borrow: &Window<P, B>) {
             let weak_window = Arc::downgrade(this)
                 as Weak<MainSlockCell<dyn WindowViewCallback<P::Environment>>>;
 
@@ -522,12 +526,13 @@ mod window {
                 Some(Rect::new(0.0, 0.0, intrinsic.w, intrinsic.h)),
                 s
             ).unwrap();
+            content_borrow.finalize_view_frame(s);
 
             // give back env
             borrow.environment.set(Some(stolen_env));
         }
 
-        fn apply_window_style(borrow: &Window<P>, s: MSlock) {
+        fn apply_window_style(borrow: &Window<P, B>, s: MSlock) {
             let stolen_env = borrow.environment.take().unwrap();
 
             // set window size (note no recursive layout call can happen since handle not mounted yet)
@@ -539,7 +544,7 @@ mod window {
             borrow.environment.set(Some(stolen_env));
         }
 
-        fn window_listeners(this: &Arc<MainSlockCell<Window<P>>>, borrow: &Window<P>, s: MSlock) {
+        fn window_listeners(this: &Arc<MainSlockCell<Window<P, B>>>, borrow: &Window<P, B>, s: MSlock) {
             let stolen_env = borrow.environment.take().unwrap();
 
             // title
@@ -596,7 +601,7 @@ mod window {
 
             // fullscreen
             {
-                let fs = borrow.provider.is_fullscreen(stolen_env.const_env(), s);
+                let fs = &borrow.is_fullscreen;
                 let weak = Arc::downgrade(&this);
                 fs.diff_listen(move |val, _s| {
                     let Some(this) = weak.upgrade() else {
@@ -621,7 +626,7 @@ mod window {
             borrow.environment.set(Some(stolen_env));
         }
 
-        fn mount_menu(borrow: &mut Window<P>, s: MSlock) {
+        fn mount_menu(borrow: &mut Window<P, B>, s: MSlock) {
             let stolen_env = borrow.environment.take().unwrap();
 
             window_set_menu(borrow.handle, &mut borrow.menu, s);
@@ -742,7 +747,7 @@ mod window {
         }
     }
 
-    impl<P> WindowNativeCallback for Window<P> where P: WindowProvider {
+    impl<P, B> WindowNativeCallback for Window<P, B> where P: WindowProvider, B: Binding<Filterless<bool>> {
         fn can_close(&self, s: MSlock) -> bool {
             // let can_close = self.provider.can_close(s);
             let can_close = true;
@@ -951,7 +956,7 @@ mod window {
         fn set_fullscreen(&self, fs: bool, s: MSlock) {
             let stolen_env = self.environment.take().unwrap();
 
-            let binding = self.provider.is_fullscreen(stolen_env.const_env(), s);
+            let binding = &self.is_fullscreen;
             if *binding.borrow(s) != fs {
                 binding.apply(Set(fs), s);
             }
@@ -960,7 +965,7 @@ mod window {
         }
     }
 
-    impl<P> WindowViewCallback<P::Environment> for Window<P> where P: WindowProvider {
+    impl<P, B> WindowViewCallback<P::Environment> for Window<P, B> where P: WindowProvider, B: Binding<Filterless<bool>> {
         fn layout_up(&self, env: &mut P::Environment, right_below: Option<Arc<MainSlockCell<dyn InnerViewBase<P::Environment>>>>, depth: i32, s: MSlock) {
             // the environment is right above this node
             let mut env_spot = right_below.clone();
@@ -1105,7 +1110,7 @@ mod window {
         }
     }
 
-    impl<P> Drop for Window<P> where P: WindowProvider {
+    impl<P, B> Drop for Window<P, B> where P: WindowProvider, B: Binding<Filterless<bool>> {
         fn drop(&mut self) {
             native::window::window_free(self.handle);
         }
@@ -1367,7 +1372,10 @@ mod global {
     /// Must be called from the main thread in the main function
     #[cold]
     pub fn launch(provider: impl ApplicationProvider) {
-        if let Err(_) = APP.with(|m| m.set(Application::new(provider))) {
+        if let Err(_) = APP.with(|m| {
+            // purposefully leak APP
+            m.set(Application::new(provider))
+        }) {
             panic!("Cannot launch an app multiple times");
         }
 

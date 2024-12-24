@@ -1,11 +1,11 @@
 use std::ffi::c_void;
+
 use crate::core::{Environment, MSlock};
 use crate::native;
 use crate::state::{FixedSignal, Signal, SignalOrValue};
 use crate::util::geo::{Rect, Size, UNBOUNDED};
+use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, ViewProvider, WeakInvalidator};
 use crate::view::util::Color;
-use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, Subtree, ViewProvider};
-use crate::view::modifers::{Frame, FrameModifiable};
 
 pub struct ColorView<S>(SignalOrValue<S>, *mut c_void) where S: Signal<Target=Color>;
 
@@ -143,7 +143,7 @@ impl<E> ViewProvider<E> for EmptyVP where E: Environment {
         nv
     }
 
-    fn layout_up(&mut self, _subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, s: MSlock) -> bool {
+    fn layout_up(&mut self, _subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, _s: MSlock) -> bool {
         false
     }
 
