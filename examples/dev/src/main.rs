@@ -2,6 +2,8 @@ use quarve::prelude::*;
 use quarve::state::Filterless;
 use quarve::view::color_view::EmptyView;
 
+mod config;
+
 struct App;
 struct MainWindow;
 struct Env(StandardConstEnv, StandardVarEnv);
@@ -76,10 +78,12 @@ impl WindowProvider for MainWindow {
 
     fn is_fullscreen(&self, _env: &<Self::Environment as Environment>::Const, s: MSlock) -> impl Binding<Filterless<bool>> {
         let ret = Store::new(false);
-        ret.listen(|val, _s| {
-            println!("Fullscreen State: {}", *val);
-            true
-        }, s);
+        if config::ENABLE_FULLSCREEN_LOGGING {
+            ret.listen(|val, _s| {
+                println!("Fullscreen State: {}", *val);
+                true
+            }, s);
+        }
         ret.binding()
     }
 }

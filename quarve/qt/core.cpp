@@ -1,5 +1,6 @@
 #include <QtWidgets>
 #include <vector>
+#include <cstring>
 
 #include "debug.h"
 #include "color.h"
@@ -66,7 +67,6 @@ private:
     }
 
 protected:
-
     void resizeEvent(QResizeEvent* event) override {
         QWidget::resizeEvent(event);
         this->needsLayout = true;
@@ -86,10 +86,98 @@ protected:
         QWidget::changeEvent(event);
     }
 
-    inline void closeEvent(QCloseEvent *event) override
+    void closeEvent(QCloseEvent *event) override
     {
         event->ignore();
         front_window_should_close(this->handle);
+    }
+
+    bool eventFilter(QObject *watched, QEvent *event) override {
+        if (QWidget* widget = qobject_cast<QWidget*>(watched)) {
+            buffer_event be = { .native_event = event };
+            bool valid = false;
+
+            // holds characters
+            unsigned char buffer[64];
+
+            if (event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease) {
+                valid = true;
+
+                QKeyEvent* keyEvent = static_cast<QKeyEvent*>(event);
+
+                if (keyEvent->modifiers() & Qt::ControlModifier) {
+                    be.modifiers |= EVENT_MODIFIER_CONTROL;
+                }
+                if (keyEvent->modifiers() & Qt::ShiftModifier) {
+                    be.modifiers |= EVENT_MODIFIER_SHIFT;
+                }
+                if (keyEvent->modifiers() & Qt::AltModifier) {
+                    be.modifiers |= EVENT_MODIFIER_ALT_OPTION;
+                }
+                if (keyEvent->modifiers() & Qt::MetaModifier) {
+                    be.modifiers |= EVENT_MODIFIER_COMMAND;
+                }
+
+                if (event->type() == QEvent::KeyPress && !keyEvent->isAutoRepeat()) {
+                    be.is_down = true;
+                } else if (event->type() == QEvent::KeyRelease) {
+                    be.is_up = true;
+                }
+
+                strncpy((char *) buffer, keyEvent->text().toUtf8().data(), (sizeof buffer) - 1);
+                buffer[(sizeof buffer) - 1] = '\0';
+                be.key_characters = buffer;
+            }
+            else if (event->type() == QEvent::MouseButtonPress ||
+                     event->type() == QEvent::MouseButtonRelease ||
+                     event->type() == QEvent::MouseMove) {
+                valid = true;
+
+                QMouseEvent* mouseEvent = static_cast<QMouseEvent*>(event);
+                be.is_mouse = true;
+
+                if (event->type() == QEvent::MouseButtonPress) {
+                    if (mouseEvent->button() == Qt::LeftButton) {
+                        be.is_left_button = true;
+                        be.is_down = true;
+                    } else if (mouseEvent->button() == Qt::RightButton) {
+                        be.is_right_button = true;
+                        be.is_down = true;
+                    }
+                }
+                else if (event->type() == QEvent::MouseButtonRelease) {
+                    if (mouseEvent->button() == Qt::LeftButton) {
+                        be.is_left_button = true;
+                        be.is_up = true;
+                    } else if (mouseEvent->button() == Qt::RightButton) {
+                        be.is_right_button = true;
+                        be.is_up = true;
+                    }
+                }
+
+                be.cursor_x = mouseEvent->position().x();
+                be.cursor_y = mouseEvent->position().y();
+            }
+            else if (event->type() == QEvent::Wheel) {
+                valid = true;
+
+                QWheelEvent* wheelEvent = static_cast<QWheelEvent*>(event);
+                be.is_mouse = true;
+                be.is_scroll = true;
+                be.delta_x = wheelEvent->angleDelta().x();
+                be.delta_y = wheelEvent->angleDelta().y();
+
+                be.cursor_x = wheelEvent->position().x();
+                be.cursor_y = wheelEvent->position().y();
+            }
+
+            if (valid) {
+                return front_window_dispatch_event(this->handle, be) != 0;
+            }
+            // else fallthrough
+        }
+
+        return QObject::eventFilter(watched, event);
     }
 };
 
@@ -105,6 +193,7 @@ back_window_init() {
 extern "C" void
 back_window_set_handle(void *_window, fat_pointer handle) {
     Window *window = (Window*) _window;
+    window->installEventFilter(window);
     window->handle = handle;
 }
 

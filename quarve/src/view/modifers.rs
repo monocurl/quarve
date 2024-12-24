@@ -1,6 +1,16 @@
+pub use cursor::*;
+pub use env_modifier::*;
+pub use foreback_modifier::*;
+pub use identity_modifier::*;
+pub use key_listener::*;
+pub use layer_modifier::*;
+pub use provider_modifier::*;
+pub use show_hide_modifier::*;
+pub use when_modifier::*;
 
 use crate::core::{Environment, MSlock};
 use crate::view::{EnvRef, IntoViewProvider, Subtree, ViewProvider};
+
 // FIXME perhaps could do some better software architecture here
 // Conceptually, whenever the view provider is disabled
 // the scene should behave the same as if only a Modifying was in its place
@@ -28,10 +38,11 @@ pub trait ConditionalVPModifier<E>: ViewProvider<E> where E: Environment
 
 mod identity_modifier {
     use std::marker::PhantomData;
+
     use crate::core::{Environment, MSlock};
     use crate::event::{Event, EventResult};
     use crate::util::geo::{Rect, Size};
-    use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, Subtree, ViewProvider};
+    use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, ViewProvider, WeakInvalidator};
     use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
 
     pub struct UnmodifiedIVP<E, P> where E: Environment, P: IntoViewProvider<E> {
@@ -165,17 +176,17 @@ mod identity_modifier {
         }
     }
 }
-pub use identity_modifier::*;
 
 mod provider_modifier {
     use std::marker::PhantomData;
+
     use crate::core::{Environment, MSlock, Slock};
     use crate::event::{Event, EventResult};
     use crate::state::{FixedSignal, Signal, SignalOrValue};
     use crate::util::geo;
     use crate::util::geo::{Alignment, HorizontalAlignment, Point, Rect, ScreenUnit, Size, UNBOUNDED, VerticalAlignment};
     use crate::util::marker::ThreadMarker;
-    use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, Subtree, ViewProvider};
+    use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, ViewProvider, WeakInvalidator};
     use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
 
     // Note that you should generally not
@@ -820,18 +831,18 @@ mod provider_modifier {
         }
     }
 }
-pub use provider_modifier::*;
 
 mod layer_modifier {
     use std::ffi::c_void;
     use std::marker::PhantomData;
+
     use crate::core::{Environment, MSlock};
     use crate::native;
     use crate::state::{FixedSignal, Signal, SignalOrValue};
     use crate::util::geo::{Rect, ScreenUnit, Size};
-    use crate::view::util::Color;
-    use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, Subtree, View, ViewProvider, ViewRef};
+    use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, View, ViewProvider, ViewRef, WeakInvalidator};
     use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
+    use crate::view::util::Color;
 
     pub struct Layer<S1, S2, S3, S4, S5>
         where S1: Signal<Target=Color>, S2: Signal<Target=ScreenUnit>, S3: Signal<Target=Color>, S4: Signal<Target=ScreenUnit>, S5: Signal<Target=f32> {
@@ -1187,13 +1198,13 @@ mod layer_modifier {
         }
     }
 }
-pub use layer_modifier::*;
 
 mod foreback_modifier {
     use std::marker::PhantomData;
+
     use crate::core::{Environment, MSlock};
     use crate::util::geo::{Rect, Size};
-    use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, Subtree, View, ViewProvider, ViewRef};
+    use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, View, ViewProvider, ViewRef, WeakInvalidator};
     use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
 
     pub struct ForeBackIVP<E, I, J> where E: Environment,
@@ -1396,15 +1407,15 @@ mod foreback_modifier {
         }
     }
 }
-pub use foreback_modifier::*;
 
 mod when_modifier {
     use std::marker::PhantomData;
+
     use crate::core::{Environment, MSlock};
     use crate::event::{Event, EventResult};
     use crate::state::{ActualDiffSignal, Signal};
     use crate::util::geo::{Rect, Size};
-    use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, Subtree, ViewProvider};
+    use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, ViewProvider, WeakInvalidator};
     use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
     use crate::view::modifers::identity_modifier::UnmodifiedIVP;
 
@@ -1602,14 +1613,14 @@ mod when_modifier {
         }
     }
 }
-pub use when_modifier::*;
 
 mod env_modifier {
     use std::marker::PhantomData;
+
     use crate::core::{Environment, MSlock};
     use crate::event::{Event, EventResult};
     use crate::util::geo::{Rect, Size};
-    use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, Subtree, ViewProvider};
+    use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, ViewProvider, WeakInvalidator};
     use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
 
     pub trait EnvironmentModifier<E>: 'static where E: Environment {
@@ -1791,14 +1802,14 @@ mod env_modifier {
         }
     }
 }
-pub use env_modifier::*;
 
 mod show_hide_modifier {
     use std::marker::PhantomData;
+
     use crate::core::{Environment, MSlock};
     use crate::event::{Event, EventResult};
     use crate::util::geo::{Rect, Size};
-    use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, Subtree, ViewProvider};
+    use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, ViewProvider, WeakInvalidator};
 
     pub struct ShowHideIVP<E, I, F1, F2, F3, F4>
         where E: Environment,
@@ -2007,16 +2018,16 @@ mod show_hide_modifier {
         }
     }
 }
-pub use show_hide_modifier::*;
 
 mod key_listener {
     use std::marker::PhantomData;
     use std::sync::{Arc, Weak};
+
     use crate::core::{Environment, MSlock, WindowViewCallback};
-    use crate::event::{Event, EventModifiers, EventResult};
+    use crate::event::{Event, EventModifiers, EventPayload, EventResult, KeyEvent};
     use crate::state::slock_cell::MainSlockCell;
     use crate::util::geo::{Rect, Size};
-    use crate::view::{EnvRef, InnerViewBase, IntoViewProvider, WeakInvalidator, NativeView, Subtree, ViewProvider};
+    use crate::view::{EnvRef, InnerViewBase, IntoViewProvider, NativeView, Subtree, ViewProvider, WeakInvalidator};
 
     struct KeyListenerIVP<E, I, F>
         where E: Environment,
@@ -2159,8 +2170,8 @@ mod key_listener {
 
         fn handle_event(&self, e: &Event, s: MSlock) -> EventResult {
             let res = self.source.handle_event(e, s);
-            if let Some(chars) = e.chars() {
-                (self.listener)(chars, e.modifiers, s)
+            if let EventPayload::Key(KeyEvent::Press(ref ke))  = e.payload {
+                (self.listener)(ke.chars(), e.modifiers, s)
             }
 
             res
@@ -2183,14 +2194,14 @@ mod key_listener {
         }
     }
 }
-pub use key_listener::*;
 
 mod cursor {
     use std::marker::PhantomData;
+
     use crate::core::{Environment, MSlock};
     use crate::native;
     use crate::util::geo::{Rect, Size};
-    use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, Subtree, View, ViewProvider, ViewRef};
+    use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, View, ViewProvider, ViewRef, WeakInvalidator};
 
     #[derive(Copy, Clone)]
     pub enum Cursor {
@@ -2291,4 +2302,3 @@ mod cursor {
         }
     }
 }
-pub use cursor::*;

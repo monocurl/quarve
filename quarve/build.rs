@@ -1,6 +1,10 @@
+#[cfg(any(not(target_os="macos"), feature = "qt_backend"))]
+use std::{
+    path::PathBuf,
+    process::{Command, Stdio}
+};
+
 use cc;
-use std::path::PathBuf;
-use std::process::{Command, Stdio};
 
 #[cfg(all(target_os="macos", not(feature = "qt_backend")))]
 fn build() {
@@ -89,10 +93,6 @@ fn build() {
             println!("cargo:rustc-link-lib=framework={}", framework);
         }
     }
-
-    // TODO remove this eventually
-    println!("cargo:rustc-link-lib=framework=Cocoa");
-    println!("cargo:rustc-link-lib=framework=UniformTypeIdentifiers");
 }
 
 
