@@ -34,10 +34,45 @@ back_terminate() {
 /* window methods */
 class Window : public QWidget {
 public:
-    Window() {}
     fat_pointer handle{};
+    bool needsLayout{false};
+
+    Window() {}
+
+    void scheduleLayout() {
+        if (needsLayout) {
+            // already scheduled
+            return;
+        }
+
+        this->needsLayout = true;
+
+        QPointer<Window> safeThis = this;
+        QTimer::singleShot(0, [safeThis]() {
+            if (safeThis) {
+                safeThis->layout();
+            }
+        });
+    }
+
+private:
+    void layout() {
+        if (!needsLayout || !this->handle.p0) {
+            return;
+        }
+
+        front_window_layout(this->handle, this->width(), this->height());
+        this->needsLayout = false;
+    }
 
 protected:
+
+    void resizeEvent(QResizeEvent* event) override {
+        QWidget::resizeEvent(event);
+        this->needsLayout = true;
+        this->layout();
+    }
+
     void changeEvent(QEvent *event) override {
         if (event->type() == QEvent::WindowStateChange) {
             QWindowStateChangeEvent *stateEvent = static_cast<QWindowStateChangeEvent*>(event);
@@ -54,11 +89,6 @@ protected:
     inline void closeEvent(QCloseEvent *event) override
     {
         event->ignore();
-        // a bit tight since we're freeing
-        // at the same time it's being called??
-        // however, doing it a frame
-        // later actually does cause problems
-        // when we do command q
         front_window_should_close(this->handle);
     }
 };
@@ -86,7 +116,8 @@ back_window_set_title(void *_window, uint8_t const* const title) {
 
 extern "C" void
 back_window_set_needs_layout(void *_window) {
-
+    Window *window = (Window*) _window;
+    window->scheduleLayout();
 }
 
 // should only be called once

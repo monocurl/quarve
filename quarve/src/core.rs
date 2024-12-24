@@ -754,12 +754,17 @@ mod window {
             if can_close {
                 self.hide_root(s);
 
-                APP.with(|app| {
-                    app.get().unwrap()
-                        .windows
-                        .borrow_mut()
-                        .retain(|w| w.borrow_main(s).handle() != self.handle);
-                });
+                // run next iteration to avoid the possibility of freeing
+                // inside a method
+                let handle = self.handle;
+                run_main_async(move |s| {
+                    APP.with(|app| {
+                        app.get().unwrap()
+                            .windows
+                            .borrow_mut()
+                            .retain(|w| w.borrow_main(s).handle() != handle);
+                    });
+                })
             }
 
             can_close

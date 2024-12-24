@@ -3,7 +3,7 @@
 #include "color.h"
 #include "../inc/util.h"
 
-class CustomWidget : public QWidget {
+class LayerWidget : public QWidget {
 public:
     void setBackgroundColor(const QColor& color) {
         backgroundColor = color;
@@ -64,13 +64,13 @@ private:
 extern "C" void *
 back_view_layer_init()
 {
-    return new CustomWidget{};
+    return new LayerWidget{};
 }
 
 extern "C" void
 back_view_layer_update(void *_view, color background_color, color border_color, double corner_radius, double border_width, float opacity)
 {
-    CustomWidget* view = (CustomWidget*) _view;
+    LayerWidget* view = (LayerWidget*) _view;
 
     view->setBackgroundColor(QColor(
         background_color.r,
