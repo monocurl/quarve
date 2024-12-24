@@ -90,9 +90,6 @@ int performing_subview_insertion = 0;
 - (BOOL)dispatchEvent:(NSEvent*)event {
     buffer_event be = { .native_event = event };
 
-    be.cursor_x = event.locationInWindow.x;
-    be.cursor_y = self.contentView.frame.size.height - event.locationInWindow.y;
-
     if (event.modifierFlags & NSEventModifierFlagCommand) {
         be.modifiers |= EVENT_MODIFIER_COMMAND;
     }
@@ -109,15 +106,21 @@ int performing_subview_insertion = 0;
         be.modifiers |= EVENT_MODIFIER_ALT_OPTION;
     }
 
+    char buffer[128];
+
     if (event.type == NSEventTypeKeyUp) {
         be.is_up = 1;
-        be.key_characters = (unsigned char const *) event.characters.UTF8String;
+        strncopy(buffer, event.characters.utf8String, (sizeof buffer) - 1);
+        buffer[(sizeof buffer) - 1] = '\0';
+        be.key_characters = buffer;
     }
     else if (event.type == NSEventTypeKeyDown) {
         if (!event.ARepeat) {
             be.is_down = 1;
         }
-        be.key_characters = (unsigned char const *) event.characters.UTF8String;
+        strncopy(buffer, event.characters.utf8String, (sizeof buffer) - 1);
+        buffer[(sizeof buffer) - 1] = '\0';
+        be.key_characters = buffer;
     }
     else if (event.type == NSEventTypeScrollWheel) {
         be.is_mouse = 1;
@@ -165,6 +168,12 @@ int performing_subview_insertion = 0;
     else {
         return NO;
     }
+
+    if (be.is_mouse) {
+        be.cursor_x = event.locationInWindow.x;
+        be.cursor_y = self.contentView.frame.size.height - event.locationInWindow.y;
+    }
+
 
     return front_window_dispatch_event(handle, be) != 0;
 }
