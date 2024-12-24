@@ -206,7 +206,6 @@ back_view_set_frame(void *_view, double left, double top, double width, double h
 
     if (view->pos().x() != li || view->pos().y() != ti) {
         view->move(li, ti);
-        std::cerr << "Position " << li << " " << ti << std::endl;
     }
 }
 

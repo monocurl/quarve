@@ -1,5 +1,6 @@
 use quarve::prelude::*;
 use quarve::state::Filterless;
+use quarve::view::color_view::EmptyView;
 
 struct App;
 struct MainWindow;
@@ -21,11 +22,20 @@ impl ApplicationProvider for App {
 fn view(_s: MSlock) -> impl IVP {
     VStack::hetero_options(VStackOptions::default().align(HorizontalAlignment::Center))
         .push(BLACK.intrinsic(100, 100))
-        .push(RED.intrinsic(200, 100))
-        .push(WHITE.intrinsic(100, 100))
+        .push(
+            RED.intrinsic(200, 100)
+        )
+        .push(
+            EmptyView.intrinsic(100, 100)
+        )
         .frame(
             F.intrinsic(400, 400).unlimited_stretch()
                 .align(Alignment::Center)
+        )
+        .layer(
+            Layer::default().border(RED, 1)
+                .bg_color(PURPLE)
+                .radius(4)
         )
 }
 
