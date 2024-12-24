@@ -1,4 +1,5 @@
 use quarve::prelude::*;
+use quarve::state::Filterless;
 use quarve::view::color_view::EmptyView;
 
 struct App;
@@ -19,7 +20,10 @@ impl ApplicationProvider for App {
 }
 
 fn counter(_s: MSlock) -> impl IVP {
-    EmptyView
+    vstack()
+        .push(BLACK.intrinsic(100, 100))
+        .push(EmptyView.intrinsic(100, 100))
+        .push(WHITE.intrinsic(100, 100))
         .intrinsic(400, 400)
 }
 
@@ -56,6 +60,15 @@ impl WindowProvider for MainWindow {
             Menu::new("Help"),
             s
         )
+    }
+
+    fn is_fullscreen(&self, _env: &<Self::Environment as Environment>::Const, s: MSlock) -> impl Binding<Filterless<bool>> {
+        let ret = Store::new(false);
+        ret.listen(|val, _s| {
+            println!("Fullscreen State: {}", *val);
+            true
+        }, s);
+        ret.binding()
     }
 }
 
