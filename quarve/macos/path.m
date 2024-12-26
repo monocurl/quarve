@@ -1,8 +1,10 @@
 #import <Cocoa/Cocoa.h>
+#import <assert.h>
 
 uint8_t const*
 back_app_storage_directory(uint8_t const* app_name) {
     static __thread NSString *threadLocalStorageDirectory = nil;
+    static __thread *const char threadLocalStorageString = nil;
 
     if (!threadLocalStorageDirectory) {
         NSArray *paths = NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES);
@@ -23,8 +25,12 @@ back_app_storage_directory(uint8_t const* app_name) {
             }
 
             threadLocalStorageDirectory = [appPath copy];
+            threadLocalStorageString = [threadLocalStorageDirectory UTF8String];
+        }
+        else {
+            assert(0);
         }
     }
 
-    return (uint8_t const*) [threadLocalStorageDirectory UTF8String];
+    return (uint8_t const*) threadLocalStorageString;
 }

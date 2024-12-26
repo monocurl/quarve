@@ -3,9 +3,6 @@
 #import "util.h"
 #import "front.h"
 
-/* internal _state */
-int performing_subview_insertion = 0;
-
 @interface AppDelegate : NSObject<NSApplicationDelegate>
 - (void)applicationWillFinishLaunching:(NSNotification *)aNotification;
 @end
