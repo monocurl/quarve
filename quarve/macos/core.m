@@ -3,6 +3,11 @@
 #import "util.h"
 #import "front.h"
 
+#import <stdlib.h>
+
+/* internal _state */
+int performing_subview_insertion = 0;
+
 @interface AppDelegate : NSObject<NSApplicationDelegate>
 - (void)applicationWillFinishLaunching:(NSNotification *)aNotification;
 @end
@@ -88,10 +93,10 @@
     buffer_event be = { .native_event = event };
 
     if (event.modifierFlags & NSEventModifierFlagCommand) {
-        be.modifiers |= EVENT_MODIFIER_COMMAND;
+        be.modifiers |= EVENT_MODIFIER_CONTROL;
     }
     if (event.modifierFlags & NSEventModifierFlagControl) {
-        be.modifiers |= EVENT_MODIFIER_CONTROL;
+        be.modifiers |= EVENT_MODIFIER_META;
     }
     if (event.modifierFlags & NSEventModifierFlagShift) {
         be.modifiers |= EVENT_MODIFIER_SHIFT;
@@ -107,7 +112,7 @@
 
     if (event.type == NSEventTypeKeyUp) {
         be.is_up = 1;
-        strncopy((char*) buffer, event.characters.utf8String, (sizeof buffer) - 1);
+        strncpy((char*) buffer, event.characters.UTF8String, (sizeof buffer) - 1);
         buffer[(sizeof buffer) - 1] = '\0';
         be.key_characters = buffer;
     }
@@ -115,7 +120,7 @@
         if (!event.ARepeat) {
             be.is_down = 1;
         }
-        strncopy((char*) buffer, event.characters.utf8String, (sizeof buffer) - 1);
+        strncpy((char*) buffer, event.characters.UTF8String, (sizeof buffer) - 1);
         buffer[(sizeof buffer) - 1] = '\0';
         be.key_characters = buffer;
     }

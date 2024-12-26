@@ -36,8 +36,8 @@ typedef struct buffer_event {
 
 // must match rust definition
 enum event_modifiers {
-    EVENT_MODIFIER_COMMAND = 1,
-    EVENT_MODIFIER_CONTROL = 2,
+    EVENT_MODIFIER_CONTROL = 1,
+    EVENT_MODIFIER_META = 2,
     EVENT_MODIFIER_SHIFT   = 4,
     EVENT_MODIFIER_FN      = 8,
     EVENT_MODIFIER_ALT_OPTION = 16

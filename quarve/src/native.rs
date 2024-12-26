@@ -1,5 +1,6 @@
 use std::ffi::{c_char, c_void, CStr, CString};
-use crate::core::{WindowNativeCallback};
+
+use crate::core::WindowNativeCallback;
 use crate::event::{Event, EventModifiers, EventPayload, Key, KeyEvent, MouseEvent};
 use crate::util::geo::{Point, ScreenUnit};
 
@@ -105,6 +106,7 @@ impl From<BufferEvent> for Event {
 /* back -> front call backs */
 mod callbacks {
     use std::ffi::{c_char, CStr, CString};
+
     use crate::core::{APP, MSlock, slock_force_main_owner, slock_main_owner, SlockOwner};
     use crate::native::{BufferEvent, FatPointer};
     use crate::util::geo::ScreenUnit;
@@ -355,6 +357,7 @@ mod callbacks {
 // FIXME use libc types at some point
 pub mod global {
     use std::cell::Cell;
+
     use crate::core::{Slock, SlockOwner};
     use crate::native::FatPointer;
     use crate::util::marker::MainThreadMarker;
@@ -408,9 +411,10 @@ pub mod global {
 
 pub mod window {
     use std::ffi::{c_void, CString};
+
     use crate::core::{MSlock, WindowNativeCallback};
     use crate::native::{FatPointer, WindowHandle};
-    use crate::view::menu::{WindowMenu};
+    use crate::view::menu::WindowMenu;
 
     extern "C" {
         fn back_window_init() -> *mut c_void;
@@ -508,6 +512,7 @@ pub mod window {
 pub mod view {
     use std::ffi;
     use std::ffi::{c_double, c_int, c_ulonglong, c_void};
+
     use crate::core::MSlock;
     use crate::native::FatPointer;
     use crate::util::geo::{Rect, Size};
@@ -690,6 +695,7 @@ pub mod view {
 
     pub mod layer {
         use std::ffi::c_void;
+
         use crate::core::MSlock;
         use crate::native::view::{back_view_layer_init, back_view_layer_update};
         use crate::view::util::Color;
@@ -726,6 +732,7 @@ pub mod view {
         use std::ffi::{c_void, CString};
         use std::os::unix::ffi::OsStrExt;
         use std::path::Path;
+
         use crate::core::MSlock;
         use crate::native::view::{back_view_image_init, back_view_image_size};
         use crate::util::geo::Size;
@@ -746,6 +753,7 @@ pub mod view {
 
     pub mod cursor {
         use std::ffi::c_void;
+
         use crate::core::MSlock;
         use crate::native::view::{back_view_cursor_init, back_view_cursor_update};
         use crate::view::modifers::Cursor;
@@ -765,7 +773,8 @@ pub mod view {
 
     pub mod scroll {
         use std::ffi::c_void;
-        use crate::core::{MSlock};
+
+        use crate::core::MSlock;
         use crate::native::view::{back_view_scroll_init, back_view_scroll_set_x, back_view_scroll_set_y};
         use crate::state::{Binding, Filterless, SetAction};
         use crate::util::geo::ScreenUnit;
@@ -817,6 +826,7 @@ pub mod view {
 
     pub mod button {
         use std::ffi::c_void;
+
         use crate::core::MSlock;
         use crate::native::view::{back_view_button_init, back_view_button_update};
 
@@ -835,6 +845,7 @@ pub mod view {
 
     pub mod dropdown {
         use std::ffi::{c_char, c_void, CStr, CString};
+
         use crate::core::MSlock;
         use crate::native::view::{back_view_dropdown_add, back_view_dropdown_clear, back_view_dropdown_init, back_view_dropdown_select, back_view_dropdown_size};
         use crate::state::{Binding, Filterless, SetAction};
@@ -897,6 +908,7 @@ pub mod view {
     pub mod text {
         use std::ffi;
         use std::ffi::{c_void, CString};
+
         use crate::core::{MSlock, StandardVarEnv};
         use crate::native::view::{back_text_init, back_text_size, back_text_update};
         use crate::util::geo::Size;
@@ -940,6 +952,7 @@ pub mod view {
     pub mod text_field {
         use std::ffi;
         use std::ffi::{c_char, c_void, CStr, CString};
+
         use crate::core::{MSlock, StandardVarEnv};
         use crate::native::view::{back_text_field_copy, back_text_field_cut, back_text_field_focus, back_text_field_init, back_text_field_paste, back_text_field_select_all, back_text_field_size, back_text_field_unfocus, back_text_field_update};
         use crate::state::{Binding, Filterless, SetAction};
@@ -1046,8 +1059,9 @@ pub mod view {
         use std::ffi::{c_void, CString};
         use std::ops::Range;
         use std::sync::Arc;
+
         use crate::core::{Environment, MSlock};
-        use crate::native::callbacks::{TEXTVIEW_CALLBACK_KEYCODE_TAB, TEXTVIEW_CALLBACK_KEYCODE_UNTAB, TEXTVIEW_CALLBACK_KEYCODE_NEWLINE, TEXTVIEW_CALLBACK_KEYCODE_ALT_NEWLINE, TEXTVIEW_CALLBACK_KEYCODE_ESCAPE, TEXTVIEW_CALLBACK_KEYCODE_LEFT, TEXTVIEW_CALLBACK_KEYCODE_UP, TEXTVIEW_CALLBACK_KEYCODE_DOWN, TEXTVIEW_CALLBACK_KEYCODE_RIGHT};
+        use crate::native::callbacks::{TEXTVIEW_CALLBACK_KEYCODE_ALT_NEWLINE, TEXTVIEW_CALLBACK_KEYCODE_DOWN, TEXTVIEW_CALLBACK_KEYCODE_ESCAPE, TEXTVIEW_CALLBACK_KEYCODE_LEFT, TEXTVIEW_CALLBACK_KEYCODE_NEWLINE, TEXTVIEW_CALLBACK_KEYCODE_RIGHT, TEXTVIEW_CALLBACK_KEYCODE_TAB, TEXTVIEW_CALLBACK_KEYCODE_UNTAB, TEXTVIEW_CALLBACK_KEYCODE_UP};
         use crate::native::view::{back_text_view_copy, back_text_view_cut, back_text_view_focus, back_text_view_full_replace, back_text_view_get_cursor_pos, back_text_view_get_line_height, back_text_view_get_selection, back_text_view_init, back_text_view_paste, back_text_view_replace, back_text_view_select_all, back_text_view_set_char_attributes, back_text_view_set_editing_state, back_text_view_set_font, back_text_view_set_line_attributes, back_text_view_set_page_id, back_text_view_set_selection, back_text_view_unfocus};
         use crate::resource::Resource;
         use crate::state::{Binding, Filterless, SetAction, StoreContainerView};
@@ -1291,6 +1305,7 @@ pub mod view {
 
     pub mod message_box {
         use std::ffi::{c_void, CString};
+
         use crate::core::MSlock;
         use crate::native::view::{back_message_box_add_button, back_message_box_init, back_message_box_run};
 
@@ -1322,13 +1337,19 @@ pub mod view {
 
 pub mod menu {
     use std::ffi::{c_void, CString};
+
     use crate::core::MSlock;
     use crate::native::FatPointer;
 
     extern "C" {
+
+        fn back_menu_bar_init() -> *mut c_void;
+        fn back_menu_bar_add(mb: *mut c_void, item: *mut c_void, title: *const u8);
+        fn back_menu_bar_free(mb: *mut c_void);
+
         fn back_menu_init(title: *const u8) -> *mut c_void;
         fn back_menu_add(menu: *mut c_void, item: *mut c_void);
-        fn back_menu_free(menu: *mut c_void);
+        // fn back_menu_free(menu: *mut c_void);
 
         // button
         fn back_menu_separator_init() -> *mut c_void;
@@ -1341,6 +1362,24 @@ pub mod menu {
         fn back_menu_button_free(button: *mut c_void);
     }
 
+    pub fn menu_bar_init(_s: MSlock) -> *mut c_void {
+        unsafe {
+            back_menu_bar_init()
+        }
+    }
+
+    pub fn menu_bar_push(backing: *mut c_void, menu: *mut c_void, title: &str, _s: MSlock) {
+        unsafe {
+            let title = CString::new(title).unwrap();
+            back_menu_bar_add(backing, menu, title.as_bytes().as_ptr())
+        }
+    }
+
+    // pub fn menu_bar_free(backing: *mut c_void, _s: MSlock) {
+    //     unsafe {
+    //         back_menu_bar_free(backing)
+    //     }
+    // }
 
     pub fn menu_init(title: String, _s: MSlock) -> *mut c_void {
         unsafe {
@@ -1355,11 +1394,11 @@ pub mod menu {
         }
     }
 
-    pub fn menu_free(menu: *mut c_void) {
-        unsafe {
-            back_menu_free(menu);
-        }
-    }
+    // pub fn menu_free(menu: *mut c_void) {
+    //     unsafe {
+    //         back_menu_free(menu);
+    //     }
+    // }
 
     pub fn separator_init(_s: MSlock) -> *mut c_void {
         unsafe {
@@ -1406,16 +1445,17 @@ pub mod menu {
         }
     }
 
-    pub fn button_free(button: *mut c_void) {
-        unsafe {
-            back_menu_button_free(button)
-        }
-    }
+    // pub fn button_free(button: *mut c_void) {
+    //     unsafe {
+    //         back_menu_button_free(button)
+    //     }
+    // }
 }
 
 pub mod file_picker {
     use std::ffi::{c_char, c_void, CStr, CString};
-    use std::path::{PathBuf};
+    use std::path::PathBuf;
+
     use crate::core::MSlock;
 
     extern "C" {

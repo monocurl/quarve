@@ -24,6 +24,34 @@
 @end
 
 void*
+back_menu_bar_init() {
+    NSMenu* menu = [[NSMenu alloc] initWithTitle: @""];
+    [menu setAutoenablesItems: NO];
+    return menu;
+}
+
+void
+back_menu_bar_add(void* menu_bar, void* menu_item, uint8_t const* title)
+{
+    NSMenu *mb = (NSMenu*) menu_bar;
+    NSMenuItem* button = [[NSMenuItem alloc]
+        initWithTitle:[NSString stringWithUTF8String:(char const*) title]
+        action: NULL
+        keyEquivalent:@""
+    ];
+    NSMenu *item = (NSMenu*) menu_item;
+    button.submenu = item;
+
+    [mb addItem:button];
+}
+
+void
+back_menu_bar_free(void* menu_bar) {
+    NSMenu* mb = menu_bar;
+    [mb release];
+}
+
+void*
 back_menu_init(uint8_t const* title)
 {
     NSMenu* menu = [[NSMenu alloc] initWithTitle: [NSString stringWithUTF8String: (char const*) title]];
@@ -72,10 +100,10 @@ back_menu_button_init(uint8_t const* title, uint8_t const* keyEquivalent, uint8_
     ret.callback = (fat_pointer) {NULL, NULL};
     ret.target = ret;
     ret.keyEquivalentModifierMask = 0;
-    if (modifiers & EVENT_MODIFIER_COMMAND) {
+    if (modifiers & EVENT_MODIFIER_CONTROL) {
         ret.keyEquivalentModifierMask |= NSEventModifierFlagCommand;
     }
-    if (modifiers & EVENT_MODIFIER_CONTROL) {
+    if (modifiers & EVENT_MODIFIER_META) {
         ret.keyEquivalentModifierMask |= NSEventModifierFlagControl;
     }
     if (modifiers & EVENT_MODIFIER_SHIFT) {

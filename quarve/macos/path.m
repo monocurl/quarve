@@ -4,7 +4,7 @@
 uint8_t const*
 back_app_storage_directory(uint8_t const* app_name) {
     static __thread NSString *threadLocalStorageDirectory = nil;
-    static __thread *const char threadLocalStorageString = nil;
+    static __thread const char *threadLocalStorageString = nil;
 
     if (!threadLocalStorageDirectory) {
         NSArray *paths = NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES);

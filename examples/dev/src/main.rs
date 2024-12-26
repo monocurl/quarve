@@ -1,3 +1,4 @@
+use quarve::event::EventModifiers;
 use quarve::prelude::*;
 use quarve::state::Filterless;
 use quarve::view::color_view::EmptyView;
@@ -68,7 +69,10 @@ impl WindowProvider for MainWindow {
     fn menu(&self, env: &<Self::Environment as Environment>::Const, s: MSlock) -> WindowMenu {
         WindowMenu::standard(
             env,
-            Menu::new("File"),
+            Menu::new("File")
+                .push(MenuButton::new("New", "N", EventModifiers::default().set_command(), |s| {
+                    println!("Clicked menu button");
+                })),
             Menu::new("Edit"),
             Menu::new("View"),
             Menu::new("Help"),

@@ -1,4 +1,6 @@
 #include <QtWidgets>
+#include <QMenuBar>
+
 #include <vector>
 #include <cstring>
 
@@ -6,9 +8,6 @@
 #include "color.h"
 #include "../inc/util.h"
 #include "front.h"
-
-/* internal _state */
-int performing_subview_insertion = 0;
 
 /* global methods */
 extern "C" void
@@ -33,12 +32,12 @@ back_terminate() {
 }
 
 /* window methods */
-class Window : public QWidget {
+class Window : public QMainWindow {
 public:
     fat_pointer handle{};
     bool needsLayout{false};
 
-    Window() {}
+    Window() { }
 
     void scheduleLayout() {
         if (needsLayout) {
@@ -106,7 +105,7 @@ protected:
                 QKeyEvent* keyEvent = static_cast<QKeyEvent*>(event);
 
                 if (keyEvent->modifiers() & Qt::ControlModifier) {
-                    be.modifiers |= EVENT_MODIFIER_CONTROL;
+                    be.modifiers |= EVENT_MODIFIER_META;
                 }
                 if (keyEvent->modifiers() & Qt::ShiftModifier) {
                     be.modifiers |= EVENT_MODIFIER_SHIFT;
@@ -115,7 +114,7 @@ protected:
                     be.modifiers |= EVENT_MODIFIER_ALT_OPTION;
                 }
                 if (keyEvent->modifiers() & Qt::MetaModifier) {
-                    be.modifiers |= EVENT_MODIFIER_COMMAND;
+                    be.modifiers |= EVENT_MODIFIER_CONTROL;
                 }
 
                 if (event->type() == QEvent::KeyPress && !keyEvent->isAutoRepeat()) {
@@ -212,10 +211,11 @@ back_window_set_needs_layout(void *_window) {
 // should only be called once
 extern "C" void
 back_window_set_root(void *_window, void *root_view) {
-    QWidget* widget = (QWidget*) _window;
-    QWidget* root = (QWidget*) root_view;
-    root->setParent(widget);
-    root->show();
+    Window* widget = (Window*) _window;
+
+    QWidget* content = (QWidget*) root_view;
+    content->setParent(widget);
+    content->show();
 }
 
 extern "C" void
@@ -254,7 +254,10 @@ back_window_set_fullscreen(void *_window, uint8_t fs) {
 extern "C" void
 back_window_set_menu(void *_window, void *_menu)
 {
+    Window* window = (Window *) _window;
+    QMenuBar* mb = (QMenuBar *) _menu;
 
+    window->setMenuBar(mb);
 }
 
 extern "C" void

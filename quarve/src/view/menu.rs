@@ -1,27 +1,36 @@
 use std::ffi::c_void;
-use crate::core::{MSlock};
+
+pub use menu::*;
+pub use menu_button::*;
+pub use menu_channel::*;
+pub use menu_receiver::*;
+pub use menu_sender::*;
+pub use menu_separator::*;
+pub use window_menu::*;
+
+use crate::core::MSlock;
 
 // FIXME can use into/conversion semantics to make this more efficient
 pub unsafe trait MenuItem: 'static {
+    // caller takes ownership
     fn backing(&mut self, s: MSlock) -> *mut c_void;
 }
 
 mod window_menu {
     use std::ffi::c_void;
+
     use crate::core::{MSlock, StandardConstEnv};
     use crate::event::EventModifiers;
-    use crate::native::menu::{menu_init, menu_push};
-    use crate::view::menu::{Menu, MenuButton, MenuItem, MenuReceiver, MenuSeparator};
+    use crate::native::menu::{menu_bar_init, menu_bar_push};
+    use crate::view::menu::{Menu, MenuItem, MenuReceiver, MenuSeparator};
 
     pub struct WindowMenu {
-        backing: *mut c_void,
-        submenus: Vec<MenuButton>
+        submenus: Vec<Menu>
     }
 
     impl WindowMenu {
         pub fn new() -> Self {
             WindowMenu {
-                backing: 0 as *mut c_void,
                 submenus: Vec::new(),
             }
         }
@@ -45,35 +54,30 @@ mod window_menu {
         }
 
         pub fn push(mut self, menu: Menu) -> Self {
-            self.submenus.push(
-                MenuButton::new(menu.name.clone(), "", EventModifiers::new(), |_| {})
-                    .submenu(menu)
-            );
+            self.submenus.push(menu);
             self
         }
 
         pub(crate) fn backing(&mut self, s: MSlock) -> *mut c_void {
-            let ours = menu_init("".to_owned(), s);
+            let ours = menu_bar_init(s);
             for sm in &mut self.submenus {
-                menu_push(ours, sm.backing(s), s);
+                menu_bar_push(ours, sm.backing(s), &sm.name, s);
             }
-            self.backing = ours;
-            self.backing
+            ours
         }
     }
 }
-pub use window_menu::*;
 
 mod menu {
     use std::ffi::c_void;
+
     use crate::core::MSlock;
-    use crate::native::menu::{menu_free, menu_init, menu_push};
+    use crate::native::menu::{menu_init, menu_push};
     use crate::view::menu::MenuItem;
 
     pub struct Menu {
         pub(super) name: String,
         items: Vec<Box<dyn MenuItem>>,
-        backing: *mut c_void
     }
 
     impl Menu {
@@ -83,7 +87,6 @@ mod menu {
             Menu {
                 name,
                 items: Vec::new(),
-                backing: 0 as *mut c_void
             }
         }
 
@@ -101,44 +104,35 @@ mod menu {
             ours
         }
     }
-
-    impl Drop for Menu {
-        fn drop(&mut self) {
-            menu_free(self.backing);
-        }
-    }
 }
-pub use menu::*;
 
 mod menu_button_backing {
     use std::ffi::c_void;
-    use crate::native::global::is_main;
-    use crate::native::menu::button_free;
 
     pub(super) struct MenuButtonBacking {
         // for send compliance
         pub backing: *mut c_void
     }
-
-    impl Drop for MenuButtonBacking {
-        fn drop(&mut self) {
-            debug_assert!(is_main());
-
-            if !self.backing.is_null() {
-                button_free(self.backing)
-            }
-        }
-    }
+    //
+    // impl Drop for MenuButtonBacking {
+    //     fn drop(&mut self) {
+    //         debug_assert!(is_main());
+    //
+    //         if !self.backing.is_null() {
+    //             button_free(self.backing)
+    //         }
+    //     }
+    // }
 }
 
 mod menu_button {
     use std::cell::Cell;
     use std::ffi::c_void;
+
     use crate::core::MSlock;
     use crate::event::EventModifiers;
     use crate::native::menu::{button_init, button_set_action, button_set_submenu};
     use crate::view::menu::{Menu, MenuItem};
-    use crate::view::menu::menu_button_backing::MenuButtonBacking;
 
     pub struct MenuButton {
         name: String,
@@ -146,7 +140,7 @@ mod menu_button {
         modifier: EventModifiers,
         action: Cell<Option<Box<dyn FnMut(MSlock)>>>,
         submenu: Option<Menu>,
-        backing: MenuButtonBacking
+        // backing: MenuButtonBacking
     }
 
     impl MenuButton {
@@ -157,9 +151,9 @@ mod menu_button {
                 modifier,
                 action: Cell::new(Some(Box::new(action))),
                 submenu: None,
-                backing: MenuButtonBacking {
-                    backing: 0 as *mut c_void
-                },
+                // backing: MenuButtonBacking {
+                //     backing: 0 as *mut c_void
+                // },
             };
             ret
         }
@@ -172,21 +166,20 @@ mod menu_button {
 
     unsafe impl MenuItem for MenuButton {
         fn backing(&mut self, s: MSlock) -> *mut c_void {
-            if self.backing.backing.is_null() {
-                self.backing.backing = button_init(self.name.clone(), self.key.clone(), self.modifier.modifiers, s);
-                button_set_action(self.backing.backing, self.action.take().unwrap(), s);
-                if let Some(ref mut sm) = self.submenu {
-                    button_set_submenu(self.backing.backing, sm.backing(s), s);
-                }
+            let backing = button_init(self.name.clone(), self.key.clone(), self.modifier.modifiers, s);
+            button_set_action(backing, self.action.take().unwrap(), s);
+            if let Some(ref mut sm) = self.submenu {
+                button_set_submenu(backing, sm.backing(s), s);
             }
-            self.backing.backing
+
+            backing
         }
     }
 }
-pub use menu_button::*;
 
 mod menu_separator {
     use std::ffi::c_void;
+
     use crate::core::MSlock;
     use crate::native::menu::{separator_free, separator_init};
     use crate::view::menu::MenuItem;
@@ -218,17 +211,17 @@ mod menu_separator {
         }
     }
 }
-pub use menu_separator::*;
 
 mod menu_receiver {
     use std::ffi::c_void;
     use std::sync::Arc;
+
     use crate::core::MSlock;
     use crate::event::EventModifiers;
     use crate::native::menu::{button_init, button_set_enabled};
-    use crate::state::slock_cell::{MainSlockCell};
-    use crate::view::menu::menu_button_backing::MenuButtonBacking;
+    use crate::state::slock_cell::MainSlockCell;
     use crate::view::menu::{MenuChannel, MenuItem};
+    use crate::view::menu::menu_button_backing::MenuButtonBacking;
 
     pub(super) struct MenuReceiverInner {
         pub backing: MenuButtonBacking,
@@ -270,11 +263,11 @@ mod menu_receiver {
         }
     }
 }
-pub use menu_receiver::*;
 
 mod menu_channel {
     use std::sync::{Arc, Weak};
-    use crate::core::{MSlock};
+
+    use crate::core::MSlock;
     use crate::native::menu::{button_set_action, button_set_enabled, button_set_title};
     use crate::state::slock_cell::{MainSlockCell, SlockCell};
     use crate::view::menu::menu_receiver::MenuReceiverInner;
@@ -342,12 +335,11 @@ mod menu_channel {
         }
     }
 }
-pub use menu_channel::*;
 
 mod menu_sender {
     use crate::core::{Environment, MSlock};
-    use crate::view::{IntoViewProvider};
-    use crate::view::menu::{MenuChannel};
+    use crate::view::IntoViewProvider;
+    use crate::view::menu::MenuChannel;
 
     pub trait MenuSend<E>: IntoViewProvider<E> where E: Environment {
         // FIXME we can make this not have to be clone
@@ -369,4 +361,3 @@ mod menu_sender {
         }
     }
 }
-pub use menu_sender::*;
