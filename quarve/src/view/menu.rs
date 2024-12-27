@@ -22,7 +22,7 @@ mod window_menu {
     use crate::core::{MSlock, StandardConstEnv};
     use crate::event::EventModifiers;
     use crate::native::menu::{menu_bar_init, menu_bar_push};
-    use crate::view::menu::{Menu, MenuItem, MenuReceiver, MenuSeparator};
+    use crate::view::menu::{Menu, MenuReceiver, MenuSeparator};
 
     pub struct WindowMenu {
         submenus: Vec<Menu>

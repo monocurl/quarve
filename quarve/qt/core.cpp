@@ -309,7 +309,12 @@ back_view_insert_child(void *_view, void* _child, unsigned long long index) {
     }
 
     QWidget* child = (QWidget*) _child;
-    child->setParent(view);
+    if (auto* scroll = qobject_cast<QScrollArea*>(view)) {
+        scroll->setWidget(child);
+    }
+    else {
+        child->setParent(view);
+    }
     child->show();
 
     for (int i = removed.size() - 1; i >= 0; --i) {

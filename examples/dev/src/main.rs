@@ -4,6 +4,7 @@ use quarve::state::Filterless;
 use quarve::view::color_view::EmptyView;
 use quarve::view::control::{Button, Dropdown};
 use quarve::view::image_view::ImageView;
+use quarve::view::scroll::ScrollView;
 
 mod config;
 
@@ -30,12 +31,21 @@ fn view(s: MSlock) -> impl IVP {
         println!("Changed {:?}", a);
         true
     }, s);
+
     VStack::hetero_options(VStackOptions::default().align(HorizontalAlignment::Center))
         .push(
             Dropdown::new(selection.binding())
                 .option("Damascus")
                 .option("Solidarity")
                 .intrinsic(100, 30)
+        )
+        .push(
+            ScrollView::vertical(
+                vstack()
+                    .push(GREEN.intrinsic(100, 100))
+                    .push(BLUE.intrinsic(100, 100))
+                    .push(RED.intrinsic(200, 100))
+            )
         )
         .push(
             RED.intrinsic(200, 100)
@@ -92,7 +102,7 @@ impl WindowProvider for MainWindow {
         WindowMenu::standard(
             env,
             Menu::new("File")
-                .push(MenuButton::new("New", "N", EventModifiers::default().set_command(), |s| {
+                .push(MenuButton::new("New", "N", EventModifiers::default().set_command(), |_s| {
                     println!("Clicked menu button");
                 })),
             Menu::new("Edit"),

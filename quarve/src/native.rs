@@ -1345,7 +1345,7 @@ pub mod menu {
 
         fn back_menu_bar_init() -> *mut c_void;
         fn back_menu_bar_add(mb: *mut c_void, item: *mut c_void, title: *const u8);
-        fn back_menu_bar_free(mb: *mut c_void);
+        // fn back_menu_bar_free(mb: *mut c_void);
 
         fn back_menu_init(title: *const u8) -> *mut c_void;
         fn back_menu_add(menu: *mut c_void, item: *mut c_void);
@@ -1359,7 +1359,7 @@ pub mod menu {
         fn back_menu_button_set_action(button: *mut c_void, action: FatPointer);
         fn back_menu_button_set_enabled(button: *mut c_void, enabled: u8);
         fn back_menu_button_set_submenu(button: *mut c_void, menu: *mut c_void);
-        fn back_menu_button_free(button: *mut c_void);
+        // fn back_menu_button_free(button: *mut c_void);
     }
 
     pub fn menu_bar_init(_s: MSlock) -> *mut c_void {

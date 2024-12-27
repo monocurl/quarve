@@ -47,7 +47,7 @@ back_message_box_run(void *mb)
 {
     QMessageBox* msgBox = (QMessageBox*) mb;
 
-    int result = msgBox->exec();
+    msgBox->exec();
 
     QList<QAbstractButton*> buttons = msgBox->buttons();
     QAbstractButton* clickedButton = msgBox->clickedButton();
