@@ -100,6 +100,7 @@ fn main() {
     /* dependencies */
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=inc");
+    println!("cargo:rerun-if-env-changed=QUARVE_BACKEND_PATH");
 
     build();
 }

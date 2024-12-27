@@ -1532,7 +1532,7 @@ pub mod path {
     }
 
 
-    #[cfg(all(target_os = "macos", quarve_managed_run))]
+    #[cfg(target_os = "macos")]
     pub fn production_resource_root() -> PathBuf {
         std::env::current_exe().unwrap()
             .parent().unwrap()

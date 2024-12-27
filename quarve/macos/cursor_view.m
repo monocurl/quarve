@@ -8,8 +8,6 @@
     [super init];
     self.cursor = cursor;
 
-    // for button view
-    [self setWantsLayer: YES];
     return self;
 }
 
