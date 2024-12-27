@@ -1,12 +1,11 @@
-use quarve::core::clock_signal;
 use quarve::event::EventModifiers;
 use quarve::prelude::*;
-use quarve::state::Filterless;
+use quarve::state::{Filterless, TokenStore};
 use quarve::view::color_view::EmptyView;
 use quarve::view::control::{Button, Dropdown};
 use quarve::view::image_view::ImageView;
 use quarve::view::scroll::ScrollView;
-use quarve::view::text::TextModifier;
+use quarve::view::text::{Text, TextField, TextModifier};
 
 mod config;
 
@@ -34,8 +33,9 @@ fn view(s: MSlock) -> impl IVP {
         true
     }, s);
 
-    let color = clock_signal(s)
-        .map(|c| rgb(((*c * 255.0) as u64 % 255) as u8, 120, 120), s);
+    let selected = TokenStore::new(Some(1));
+    let current = Store::new("A".to_string());
+    let current2 = Store::new("A".to_string());
 
     VStack::hetero_options(VStackOptions::default().align(HorizontalAlignment::Center))
         .push(
@@ -45,13 +45,31 @@ fn view(s: MSlock) -> impl IVP {
                 .intrinsic(100, 30)
         )
         .push(
+            Text::from_signal(selected.map(|s| {
+                format!("{:?}", *s)
+            }, s))
+        )
+        .push(
+            TextField::new(current.binding())
+                .focused_if_eq(selected.binding(), 0)
+                .text_backcolor(BLACK)
+                .text_color(ORANGE)
+        )
+        .push(
+            TextField::new(current2.binding())
+                .focused_if_eq(selected.binding(), 1)
+                .text_backcolor(WHITE)
+                .text_color(BLUE)
+        )
+        .push(
             ScrollView::vertical(
                 vstack()
                     .push(
-                        button("Click Me!", |_| println!("Clicked"))
+                        text("This is a lot of text\n line 2\n line 3")
+                            .max_lines(2)
                             .text_font("SignikaNegative-Regular.ttf")
                     )
-                    .push(RED.intrinsic(200, 400))
+                    // .push(RED.intrinsic(200, 400))
                     .push(button("Click Me 3!", |_| println!("Clicked")))
                     .frame(F)
             )
@@ -79,7 +97,7 @@ fn view(s: MSlock) -> impl IVP {
                 .align(Alignment::Center)
         )
         .layer(
-            Layer::default().border(RED, 1)
+            Layer::default()//.border(RED, 1)
                 .bg_color(PURPLE)
                 .radius(4)
         )
