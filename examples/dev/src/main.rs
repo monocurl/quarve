@@ -2,7 +2,7 @@ use quarve::event::EventModifiers;
 use quarve::prelude::*;
 use quarve::state::Filterless;
 use quarve::view::color_view::EmptyView;
-use quarve::view::control::Button;
+use quarve::view::control::{Button, Dropdown};
 use quarve::view::image_view::ImageView;
 
 mod config;
@@ -24,9 +24,19 @@ impl ApplicationProvider for App {
     }
 }
 
-fn view(_s: MSlock) -> impl IVP {
+fn view(s: MSlock) -> impl IVP {
+    let selection = Store::new(None);
+    selection.listen(|a, s| {
+        println!("Changed {:?}", a);
+        true
+    }, s);
     VStack::hetero_options(VStackOptions::default().align(HorizontalAlignment::Center))
-        .push(BLACK.intrinsic(100, 100))
+        .push(
+            Dropdown::new(selection.binding())
+                .option("Damascus")
+                .option("Solidarity")
+                .intrinsic(100, 30)
+        )
         .push(
             RED.intrinsic(200, 100)
                 .cursor(Cursor::Pointer)
@@ -41,6 +51,7 @@ fn view(_s: MSlock) -> impl IVP {
         )
         .push(
             EmptyView.intrinsic(100, 100)
+                .border(RED, 1)
         )
         .frame(
             F.intrinsic(400, 400).unlimited_stretch()

@@ -2,7 +2,6 @@
 #import "util.h"
 #import "front.h"
 
-
 @interface Dropdown : NSPopUpButton
 @property fat_pointer binding;
 @property BOOL in_transaction;
@@ -76,7 +75,9 @@ back_view_dropdown_select(void *_view, unsigned char const* selection) {
         return ret;
     }
     else {
+        dropdown.in_transaction = YES;
         [dropdown selectItem:NULL];
+        dropdown.in_transaction = NO;
         return 0;
     }
 }
