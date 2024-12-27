@@ -28,6 +28,8 @@ back_menu_bar_init() {
 extern "C" void
 back_menu_bar_add(void* menu_bar, void* menu_item, uint8_t const* title)
 {
+    (void) title;
+
     QMenuBar *mb = (QMenuBar*) menu_bar;
     QMenu *item = (QMenu*) menu_item;
     mb->addMenu(item);

@@ -374,6 +374,11 @@ pub mod global {
         static MAIN: Cell<bool> = const { Cell::new(false) };
     }
 
+    #[cfg(test)]
+    pub(crate) unsafe fn mark_thread_main() {
+        MAIN.set(true);
+    }
+
     pub fn main_loop() {
         MAIN.set(true);
 

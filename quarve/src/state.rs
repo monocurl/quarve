@@ -4,10 +4,17 @@
 // CRDT stores at some point
 // path listeners and path appliers
 
+pub use buffer::*;
+pub use group::*;
+pub use listener::*;
+pub use signal::*;
+pub use store::*;
+
 pub mod slock_cell {
     use std::cell::{Ref, RefCell, RefMut};
     use std::mem;
     use std::ops::{Deref, DerefMut};
+
     use crate::core::{MSlock, Slock};
     use crate::native;
     use crate::util::marker::ThreadMarker;
@@ -173,14 +180,18 @@ mod listener {
         GeneralListener(Box<dyn FnMut(Slock) -> bool + Send>),
     }
 }
-pub use listener::*;
 
 mod group {
     use std::ops::Mul;
-    use crate::view::undo_manager::UndoBucket;
+
+    pub use action::*;
+    pub use filter::*;
+    pub use word::*;
+
+    use crate::core::Slock;
     use crate::state::{GeneralListener, InverseListener};
-    use crate::core::{Slock};
     use crate::util::marker::{BoolMarker, ThreadMarker};
+    use crate::view::undo_manager::UndoBucket;
 
     pub trait Stateful: Send + Sized + 'static {
         type Action: GroupAction<Self>;
@@ -256,6 +267,7 @@ mod group {
     mod word {
         use std::iter::Rev;
         use std::ops::Mul;
+
         use crate::state::{GroupAction, GroupBasis, IntoAction};
 
         #[derive(Debug)]
@@ -358,12 +370,12 @@ mod group {
             }
         }
     }
-    pub use word::*;
 
     mod filter {
         use std::marker::PhantomData;
-        use crate::core::{Slock};
-        use crate::state::{Stateful};
+
+        use crate::core::Slock;
+        use crate::state::Stateful;
         use crate::util::marker::ThreadMarker;
 
         pub trait StateFilter: Send + 'static {
@@ -419,11 +431,16 @@ mod group {
             }
         }
     }
-    pub use filter::*;
 
     mod action {
+        pub use numeric_action::*;
+        pub use set_action::*;
+        pub use string_action::*;
+        pub use vec_action::*;
+
         mod set_action {
             use std::ops::Mul;
+
             use crate::state::{GroupAction, GroupBasis, Stateful};
             use crate::util::marker::FalseMarker;
 
@@ -509,11 +526,11 @@ mod group {
                 Option<bool>, Option<String>
             );
         }
-        pub use set_action::*;
 
         mod string_action {
             use std::ops::Range;
-            use crate::state::{GroupBasis,  Stateful, Word};
+
+            use crate::state::{GroupBasis, Stateful, Word};
             use crate::util::marker::FalseMarker;
 
             #[derive(Clone, Debug, PartialEq, Eq, Default)]
@@ -552,11 +569,11 @@ mod group {
                 type HasInnerStores = FalseMarker;
             }
         }
-        pub use string_action::*;
 
         mod vec_action {
             use std::ops::Range;
-            use crate::core::{Slock};
+
+            use crate::core::Slock;
             use crate::state::{GeneralListener, GroupBasis, InverseListener, Stateful, StoreContainer, Word};
             use crate::util::marker::{ThreadMarker, TrueMarker};
             use crate::view::undo_manager::UndoBucket;
@@ -697,11 +714,11 @@ mod group {
                 }
             }
         }
-        pub use vec_action::*;
 
         mod vector_action {
             use std::array;
             use std::ops::Mul;
+
             use crate::state::{GroupAction, GroupBasis, IntoAction, Stateful};
             use crate::util::marker::FalseMarker;
             use crate::util::Vector;
@@ -807,6 +824,7 @@ mod group {
         // pseudo action that converts into set action
         mod numeric_action {
             use std::ops::{Add, Mul, Sub};
+
             use crate::state::{IntoAction, SetAction, Stateful};
 
             /// Not an actual action; merely meant to convert to
@@ -834,16 +852,14 @@ mod group {
                 }
             }
         }
-        pub use numeric_action::*;
     }
-    pub use action::*;
 }
-pub use group::*;
 
 pub mod capacitor {
     use std::collections::VecDeque;
     use std::ops::{Add, Sub};
     use std::time::Duration;
+
     use crate::state::Stateful;
     use crate::util::numeric::{Lerp, Norm};
 
@@ -1108,8 +1124,15 @@ pub mod capacitor {
 mod store {
     use std::cell::Cell;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use crate::core::{Slock};
-    use crate::state::{StateFilter, IntoAction, Signal, Stateful, UndoBarrier};
+
+    pub use derived_store::*;
+    pub use general_binding::*;
+    pub use shared_store_container::*;
+    pub use store::*;
+    pub use token_store::*;
+
+    use crate::core::Slock;
+    use crate::state::{IntoAction, Signal, StateFilter, Stateful, UndoBarrier};
     use crate::state::listener::{GeneralListener, InverseListener};
     use crate::util::marker::ThreadMarker;
     use crate::view::undo_manager::UndoBucket;
@@ -1181,6 +1204,7 @@ mod store {
     mod shared_store_container {
         use std::ops::Deref;
         use std::sync::Arc;
+
         use crate::core::Slock;
         use crate::state::{GeneralListener, InverseListener, StoreContainer};
         use crate::util::marker::ThreadMarker;
@@ -1246,13 +1270,13 @@ mod store {
             }
         }
     }
-    pub use shared_store_container::*;
 
     mod raw_store {
         use std::sync::Arc;
+
         use crate::core::Slock;
-        use crate::state::slock_cell::SlockCell;
         use crate::state::{IntoAction, StateFilter, Stateful};
+        use crate::state::slock_cell::SlockCell;
         use crate::state::store::store_dispatcher::StoreDispatcher;
         use crate::util::marker::ThreadMarker;
 
@@ -1281,8 +1305,9 @@ mod store {
     pub(super) mod raw_store_shared_owner {
         use std::marker::PhantomData;
         use std::sync::Arc;
-        use crate::core::{Slock};
-        use crate::state::{StateFilter, Filter, Filterable, Stateful, Signal, Binding, IntoAction, UndoBarrier};
+
+        use crate::core::Slock;
+        use crate::state::{Binding, Filter, Filterable, IntoAction, Signal, StateFilter, Stateful, UndoBarrier};
         use crate::state::listener::StateListener;
         use crate::state::slock_cell::SlockCell;
         use crate::state::store::general_binding::GeneralWeakBinding;
@@ -1354,10 +1379,11 @@ mod store {
     mod action_inverter {
         use std::marker::PhantomData;
         use std::sync::Weak;
-        use crate::core::{MSlock};
+
+        use crate::core::MSlock;
+        use crate::state::{StateFilter, Stateful};
         use crate::state::listener::DirectlyInvertible;
         use crate::state::slock_cell::SlockCell;
-        use crate::state::{StateFilter, Stateful};
         use crate::state::store::raw_store::RawStore;
 
         pub(super) struct ActionInverter<F: StateFilter, I> where I: RawStore<F> {
@@ -1413,6 +1439,7 @@ mod store {
         use std::cell::Ref;
         use std::marker::PhantomData;
         use std::ops::Deref;
+
         use crate::state::StateFilter;
         use crate::state::store::raw_store::RawStore;
 
@@ -1502,8 +1529,8 @@ mod store {
 
     mod store_dispatcher {
         use crate::core::Slock;
-        use crate::state::{StateFilter, DirectlyInvertible, GeneralListener, GroupBasis, IntoAction, InverseListener, Stateful, UndoBarrier};
-        use crate::state::listener::{ StateListener};
+        use crate::state::{DirectlyInvertible, GeneralListener, GroupBasis, IntoAction, InverseListener, StateFilter, Stateful, UndoBarrier};
+        use crate::state::listener::StateListener;
         use crate::state::store::inverse_listener_holder::InverseListenerHolder;
         use crate::util::marker::ThreadMarker;
         use crate::util::test_util::QuarveAllocTag;
@@ -1730,14 +1757,13 @@ mod store {
         use std::marker::PhantomData;
         use std::ops::{Deref, DerefMut};
         use std::sync::Arc;
-        use crate::view::undo_manager::UndoBucket;
-        use crate::state::{Bindable, StateListener};
-        use crate::state::store::state_ref::StateRef;
+
         use crate::{
-            state::{StateFilter, Filterless, IntoAction, Signal, Stateful, StoreContainer, GeneralSignal},
             core::Slock,
+            state::{Filterless, GeneralSignal, IntoAction, Signal, StateFilter, Stateful, StoreContainer},
         };
-        use crate::state::{Filter};
+        use crate::state::{Bindable, StateListener};
+        use crate::state::Filter;
         use crate::state::listener::{GeneralListener, InverseListener};
         use crate::state::slock_cell::SlockCell;
         use crate::state::store::action_inverter::ActionInverter;
@@ -1747,8 +1773,10 @@ mod store {
         use crate::state::store::macros::{impl_adhoc_inner, impl_bindable_inner, impl_signal_inner, impl_store_container_inner};
         use crate::state::store::raw_store::RawStore;
         use crate::state::store::raw_store_shared_owner::RawStoreSharedOwner;
+        use crate::state::store::state_ref::StateRef;
         use crate::state::store::store_dispatcher::StoreDispatcher;
         use crate::util::marker::ThreadMarker;
+        use crate::view::undo_manager::UndoBucket;
 
         pub(super) struct InnerStore<S: Stateful, F: StateFilter<Target=S>> {
             dispatcher: StoreDispatcher<S, F, InverseListenerHolderImpl>
@@ -1872,28 +1900,28 @@ mod store {
             }
         }
     }
-    pub use store::*;
 
     mod token_store {
-        use std::marker::PhantomData;
         use std::collections::HashMap;
         use std::hash::Hash;
+        use std::marker::PhantomData;
         use std::ops::{Deref, DerefMut};
         use std::sync::Arc;
+
+        use crate::core::Slock;
         use crate::state::{Bindable, StateListener};
-        use crate::state::store::state_ref::StateRef;
-        use crate::core::{Slock};
-        use crate::state::{StateFilter, Filter, Filterless, GeneralListener, GeneralSignal, IntoAction, Signal, Stateful, StoreContainer};
-        use crate::state::store::action_inverter::ActionInverter;
-        use crate::state::store::inverse_listener_holder::InverseListenerHolderImpl;
-        use crate::state::store::macros::{impl_adhoc_inner, impl_bindable_inner, impl_signal_inner, impl_store_container_inner};
-        use crate::state::store::store_dispatcher::StoreDispatcher;
+        use crate::state::{Filter, Filterless, GeneralListener, GeneralSignal, IntoAction, Signal, StateFilter, Stateful, StoreContainer};
         use crate::state::InverseListener;
         use crate::state::slock_cell::SlockCell;
+        use crate::state::store::action_inverter::ActionInverter;
         use crate::state::store::EXECUTING_INVERSE;
         use crate::state::store::general_binding::{GeneralBinding, GeneralWeakBinding};
+        use crate::state::store::inverse_listener_holder::InverseListenerHolderImpl;
+        use crate::state::store::macros::{impl_adhoc_inner, impl_bindable_inner, impl_signal_inner, impl_store_container_inner};
         use crate::state::store::raw_store::RawStore;
         use crate::state::store::raw_store_shared_owner::RawStoreSharedOwner;
+        use crate::state::store::state_ref::StateRef;
+        use crate::state::store::store_dispatcher::StoreDispatcher;
         use crate::util::marker::ThreadMarker;
         use crate::view::undo_manager::UndoBucket;
 
@@ -2049,22 +2077,20 @@ mod store {
             }
         }
     }
-    pub use token_store::*;
 
     mod derived_store {
-        use crate::view::undo_manager::UndoBucket;
         use std::marker::PhantomData;
         use std::ops::{Deref, DerefMut};
         use std::sync::Arc;
-        use crate::state::store::state_ref::StateRef;
+
         use crate::{
-            state::{
-                StateFilter, Filterless, IntoAction, Signal, Stateful, StoreContainer, GeneralSignal,
-            },
             core::Slock,
+            state::{
+                Filterless, GeneralSignal, IntoAction, Signal, StateFilter, Stateful, StoreContainer,
+            },
         };
         use crate::state::{Bindable, StateListener};
-        use crate::state::{Filter};
+        use crate::state::Filter;
         use crate::state::listener::{GeneralListener, InverseListener};
         use crate::state::slock_cell::SlockCell;
         use crate::state::store::general_binding::{GeneralBinding, GeneralWeakBinding};
@@ -2072,8 +2098,10 @@ mod store {
         use crate::state::store::macros::{impl_adhoc_inner, impl_bindable_inner, impl_signal_inner, impl_store_container_inner};
         use crate::state::store::raw_store::RawStore;
         use crate::state::store::raw_store_shared_owner::RawStoreSharedOwner;
+        use crate::state::store::state_ref::StateRef;
         use crate::state::store::store_dispatcher::StoreDispatcher;
         use crate::util::marker::ThreadMarker;
+        use crate::view::undo_manager::UndoBucket;
 
         pub(super) struct InnerDerivedStore<S: Stateful, F: StateFilter<Target=S>> {
             dispatcher: StoreDispatcher<S, F, NullInverseListenerHolder>
@@ -2194,20 +2222,20 @@ mod store {
             }
         }
     }
-    pub use derived_store::*;
 
     mod general_binding {
         use std::marker::PhantomData;
         use std::ops::Deref;
         use std::sync::{Arc, Weak};
-        use crate::core::{Slock};
+
+        use crate::core::Slock;
         use crate::state::{StateFilter, StateListener, WeakBinding};
-        use crate::state::store::state_ref::StateRef;
-        use crate::state::{Signal};
+        use crate::state::Signal;
         use crate::state::signal::GeneralSignal;
         use crate::state::slock_cell::SlockCell;
         use crate::state::store::raw_store::RawStore;
         use crate::state::store::raw_store_shared_owner::RawStoreSharedOwner;
+        use crate::state::store::state_ref::StateRef;
         use crate::util::marker::ThreadMarker;
 
         // will find better solution in the future
@@ -2321,13 +2349,13 @@ mod store {
             }
         }
     }
-    pub use general_binding::*;
 
     // only to make rust happy
     pub mod unreachable_binding {
         use std::marker::PhantomData;
         use std::ops::Deref;
         use std::sync::Arc;
+
         use crate::core::Slock;
         use crate::state::{GeneralSignal, IntoAction, Signal, StateFilter, Stateful};
         use crate::state::slock_cell::{MainSlockCell, SlockCell};
@@ -2404,11 +2432,11 @@ mod store {
         }
     }
 }
-pub use store::*;
 
 mod buffer {
     use std::ops::{Deref, DerefMut};
     use std::sync::{Arc, Weak};
+
     use crate::core::Slock;
     use crate::state::slock_cell::SlockCell;
     use crate::util::marker::ThreadMarker;
@@ -2460,11 +2488,19 @@ mod buffer {
         }
     }
 }
-pub use buffer::*;
 
 mod signal {
-    use std::ops::{Deref};
-    use crate::core::{Slock};
+    use std::ops::Deref;
+
+    pub use fixed_signal::*;
+    pub use general_signal::*;
+    pub use joined_signal::*;
+    use signal_audience::*;
+    pub use signal_or_value::*;
+    use signal_ref::*;
+    pub use timed_signal::*;
+
+    use crate::core::Slock;
     use crate::util::marker::ThreadMarker;
 
     pub trait Signal: Sized + Send + Sync + 'static {
@@ -2510,7 +2546,7 @@ mod signal {
     }
 
     mod signal_audience {
-        use crate::core::{Slock};
+        use crate::core::Slock;
         use crate::util::marker::ThreadMarker;
 
         pub(super) struct SignalAudience<T> where T: Send + 'static {
@@ -2547,11 +2583,11 @@ mod signal {
             }
         }
     }
-    use signal_audience::*;
 
     mod signal_ref {
         use std::cell::Ref;
         use std::ops::Deref;
+
         use super::InnerSignal;
 
         pub(super) struct SignalRef<'a, U: InnerSignal> {
@@ -2566,18 +2602,19 @@ mod signal {
             }
         }
     }
-    use signal_ref::*;
 
     mod fixed_signal {
         use std::ops::Deref;
         use std::sync::Arc;
-        use crate::core::{Slock};
+
+        use crate::core::Slock;
         use crate::state::Signal;
         use crate::state::slock_cell::SlockCell;
         use crate::util::marker::ThreadMarker;
         use crate::util::test_util::QuarveAllocTag;
-        use super::SignalRef;
+
         use super::InnerSignal;
+        use super::SignalRef;
 
         struct InnerFixedSignal<T: Send + 'static>(QuarveAllocTag, T);
 
@@ -2637,18 +2674,19 @@ mod signal {
             }
         }
     }
-    pub use fixed_signal::*;
 
     mod general_signal {
         use std::ops::{Deref, DerefMut};
         use std::sync::Arc;
-        use crate::core::{Slock};
+
+        use crate::core::Slock;
         use crate::state::Signal;
         use crate::state::slock_cell::SlockCell;
         use crate::util::marker::ThreadMarker;
         use crate::util::test_util::QuarveAllocTag;
-        use super::SignalRef;
+
         use super::{InnerSignal, SignalAudience};
+        use super::SignalRef;
 
         struct GeneralInnerSignal<T> where T: Send + 'static {
             _quarve_tag: QuarveAllocTag,
@@ -2739,14 +2777,14 @@ mod signal {
             }
         }
     }
-    pub use general_signal::*;
 
     mod joined_signal {
         use std::ops::{Deref, DerefMut};
         use std::sync::Arc;
-        use std::sync::atomic::{AtomicU8};
-        use std::sync::atomic::Ordering::{SeqCst};
-        use crate::core::{Slock};
+        use std::sync::atomic::AtomicU8;
+        use std::sync::atomic::Ordering::SeqCst;
+
+        use crate::core::Slock;
         use crate::state::{GeneralSignal, Signal};
         use crate::state::signal::InnerSignal;
         use crate::state::signal::signal_audience::SignalAudience;
@@ -2922,18 +2960,18 @@ mod signal {
             }
         }
     }
-    pub use joined_signal::*;
 
     mod timed_signal {
         use std::ops::{Deref, DerefMut};
         use std::sync::Arc;
         use std::sync::atomic::AtomicU8;
-        use std::sync::atomic::Ordering::{SeqCst};
+        use std::sync::atomic::Ordering::SeqCst;
         use std::time::Duration;
+
         use crate::core::{Slock, timed_worker};
-        use crate::state::signal::InnerSignal;
         use crate::state::{GeneralSignal, Signal};
-        use crate::state::capacitor::{Capacitor};
+        use crate::state::capacitor::Capacitor;
+        use crate::state::signal::InnerSignal;
         use crate::state::signal::signal_audience::SignalAudience;
         use crate::state::signal::signal_ref::SignalRef;
         use crate::state::slock_cell::SlockCell;
@@ -3113,7 +3151,6 @@ mod signal {
             }
         }
     }
-    pub use timed_signal::*;
 
     mod signal_or_value {
         use crate::core::{Environment, Slock};
@@ -3137,13 +3174,8 @@ mod signal {
                 if let SignalOrValue::Signal(sig) = self  {
                     let weak_inv = inv.clone();
                     sig.listen(move |_, s| {
-                        let Some(inv) = weak_inv.upgrade() else {
-                            return false;
-                        };
-
-                        inv.invalidate(s);
-                        true
-                    }, s)
+                        weak_inv.try_upgrade_invalidate(s)
+                    }, s);
                 }
             }
         }
@@ -3156,9 +3188,7 @@ mod signal {
             }
         }
     }
-    pub use signal_or_value::*;
 }
-pub use signal::*;
 
 #[cfg(test)]
 mod test {
@@ -3166,12 +3196,16 @@ mod test {
     use std::thread;
     use std::thread::sleep;
     use std::time::Duration;
+
     use rand::Rng;
-    use crate::core::{clock_signal, setup_timing_thread, Slock, slock_owner, timed_worker};
-    use crate::state::{Store, Signal, TokenStore, Binding, StoreContainer, NumericAction, DirectlyInvertible, Filterable, DerivedStore, StringActionBasis, Buffer, Word, GroupAction, WithCapacitor, JoinedSignal, FixedSignal, EditingString, Bindable, SetAction, WeakBinding, InverseListener, UndoBarrier};
+
+    use crate::core::{clock_signal, setup_timing_thread, Slock, slock_main_owner, slock_owner, SlockOwner, timed_worker};
+    use crate::native::global::mark_thread_main;
+    use crate::state::{Bindable, Binding, Buffer, DerivedStore, DirectlyInvertible, EditingString, Filterable, FixedSignal, GroupAction, InverseListener, JoinedSignal, NumericAction, SetAction, Signal, Store, StoreContainer, StringActionBasis, TokenStore, UndoBarrier, WeakBinding, WithCapacitor, Word};
     use crate::state::capacitor::{ConstantSpeedCapacitor, ConstantTimeCapacitor, SmoothCapacitor};
     use crate::state::SetAction::{Identity, Set};
     use crate::state::VecActionBasis::{Insert, Remove, Swap};
+    use crate::util::marker::MainThreadMarker;
     use crate::util::numeric::Norm;
     use crate::util::test_util::HeapChecker;
     use crate::util::Vector;
@@ -3181,7 +3215,7 @@ mod test {
     #[derive(Clone)]
     struct BUM<F>(F) where F: FnMut(Box<dyn DirectlyInvertible>, Slock) -> bool + Send + 'static;
     impl<F> InverseListener for BUM<F> where F: Clone + FnMut(Box<dyn DirectlyInvertible>, Slock) -> bool + Send + 'static {
-        fn handle_inverse(&mut self, inverse_action: Box<dyn DirectlyInvertible>, bucket: UndoBucket, s: Slock) -> bool {
+        fn handle_inverse(&mut self, inverse_action: Box<dyn DirectlyInvertible>, _bucket: UndoBucket, s: Slock) -> bool {
             (self.0)(inverse_action, s)
         }
 
@@ -3194,10 +3228,18 @@ mod test {
         BUM(f)
     }
 
+    fn mslock_owner() -> SlockOwner<MainThreadMarker> {
+        unsafe {
+            mark_thread_main()
+        }
+
+        slock_main_owner()
+    }
+
     #[test]
     fn test_numeric() {
         let _h = HeapChecker::new();
-        let c = slock_owner();
+        let c = mslock_owner();
 
         let s: Store<i32> = Store::new(2);
         let derived_sig;
@@ -3245,7 +3287,7 @@ mod test {
     #[test]
     fn test_join() {
         let _h = HeapChecker::new();
-        let s = slock_owner();
+        let s = mslock_owner();
 
         let x: Store<i32> = Store::new(3);
         let y: Store<bool> = Store::new(false);
@@ -3267,7 +3309,7 @@ mod test {
     #[test]
     fn test_join_map() {
         let _h = HeapChecker::new();
-        let s = slock_owner();
+        let s = mslock_owner();
 
         let x: Store<i32> = Store::new(3);
         let y: Store<bool> = Store::new(false);
@@ -3300,7 +3342,7 @@ mod test {
     #[test]
     fn test_token_store() {
         let _h = HeapChecker::new();
-        let s = slock_owner();
+        let s = mslock_owner();
         let token: TokenStore<i32> = TokenStore::new(1);
         // let token = Store::new(1);
 
@@ -3337,7 +3379,7 @@ mod test {
     #[test]
     fn test_action_listener() {
         let _h = HeapChecker::new();
-        let s = slock_owner();
+        let s = mslock_owner();
         let state = Store::new(0);
         // these are technically not "true" derived stores
         // but the restrictions are somewhat loose
@@ -3385,7 +3427,7 @@ mod test {
     #[test]
     fn test_action_filter() {
         let _h = HeapChecker::new();
-        let s = slock_owner();
+        let s = mslock_owner();
         let state = Store::new_with_filter(0);
         state.action_filter(|curr, action, _s| {
             match action {
@@ -3403,7 +3445,7 @@ mod test {
     #[test]
     fn test_inverse_listener() {
         let _h = HeapChecker::new();
-        let s = slock_owner();
+        let s = mslock_owner();
         let state = Store::new(0);
         let vec: Vec<Box<dyn DirectlyInvertible>> = Vec::new();
         let vectors = Arc::new(Mutex::new(Some(vec)));
@@ -3426,14 +3468,14 @@ mod test {
         drop(l);
         for (i, mut item) in res.take(90) {
             assert_eq!(*state.borrow(s.marker()), (99 - i) * (99 - i));
-            item.invert(s.marker());
+            item.invert(s.marker().try_to_main_slock().unwrap());
         }
     }
 
     #[test]
     fn test_inverse_listener_combine() {
         let _h = HeapChecker::new();
-        let s = slock_owner();
+        let s = mslock_owner();
         let state = Store::new(0);
         let vec: Option<Box<dyn DirectlyInvertible>> = None;
         let vectors = Arc::new(Mutex::new(Some(vec)));
@@ -3448,7 +3490,7 @@ mod test {
             }
             else {
                 unsafe {
-                    l.as_mut().unwrap().right_multiply(inv, s);
+                    l.as_mut().unwrap().right_multiply(inv, s.try_to_main_slock().unwrap());
                 }
             }
             true
@@ -3466,7 +3508,7 @@ mod test {
     #[test]
     fn test_general_listener() {
         let _h = HeapChecker::new();
-        let s = slock_owner();
+        let s = mslock_owner();
         let state = Store::new(0);
         let set_counter = Buffer::new(0);
         let scb = set_counter.downgrade();
@@ -3488,7 +3530,7 @@ mod test {
 
     #[test]
     fn test_properly_marked_derived_no_panic() {
-        let s = slock_owner();
+        let s = mslock_owner();
         let state = Store::new(0);
         let derived = DerivedStore::new(0);
         let b = derived.binding();
@@ -3504,7 +3546,7 @@ mod test {
         // even if intermediate signals are dropped
         // downstream signals remain unaffected
         let _h = HeapChecker::new();
-        let s = slock_owner();
+        let s = mslock_owner();
         let store = Store::new(0);
         let middle = store.map(|x| *x, s.marker());
         let bottom = middle.map(|x| *x, s.marker());
@@ -3530,7 +3572,7 @@ mod test {
     #[test]
     fn test_signal_early_freeing() {
         let _h = HeapChecker::new();
-        let s = slock_owner();
+        let s = mslock_owner();
         let store = Store::new(0);
         {
             let _h = HeapChecker::new();
@@ -3544,7 +3586,7 @@ mod test {
     #[test]
     #[should_panic]
     fn test_signal_no_early_freeing_without_clear() {
-        let s = slock_owner();
+        let s = mslock_owner();
         let store = Store::new(0);
         {
             let _h = HeapChecker::new();
@@ -3558,7 +3600,7 @@ mod test {
     #[test]
     fn test_join_no_early_freeing() {
         let h = HeapChecker::new();
-        let s = slock_owner();
+        let s = mslock_owner();
 
         let left = Store::new(0);
         let right = Store::new(0);
@@ -3593,7 +3635,7 @@ mod test {
     #[test]
     fn test_string() {
         let _h = HeapChecker::new();
-        let s = slock_owner();
+        let s = mslock_owner();
         let actions: Arc<Mutex<Vec<Box<dyn DirectlyInvertible>>>> = Arc::new(Mutex::new(Vec::new()));
         let store = Store::new(EditingString("asdfasdf".to_string()));
         let mut strings: Vec<String> = Vec::new();
@@ -3624,7 +3666,7 @@ mod test {
     #[test]
     fn test_string_compress() {
         let _h = HeapChecker::new();
-        let s = slock_owner();
+        let s = mslock_owner();
         let state = Store::new(EditingString("asfasdf".to_string()));
         let vec: Option<Box<dyn DirectlyInvertible>> = None;
         let vectors = Arc::new(Mutex::new(Some(vec)));
@@ -3639,7 +3681,7 @@ mod test {
             }
             else {
                 unsafe {
-                    l.as_mut().unwrap().right_multiply(inv, s);
+                    l.as_mut().unwrap().right_multiply(inv, s.try_to_main_slock().unwrap());
                 }
             }
             true
@@ -3663,7 +3705,7 @@ mod test {
     #[test]
     fn test_vec() {
         let _h = HeapChecker::new();
-        let s = slock_owner();
+        let s = mslock_owner();
         let actions: Arc<Mutex<Vec<Box<dyn DirectlyInvertible>>>> = Arc::new(Mutex::new(Vec::new()));
         let store: Store<Vec<Store<i32>>> = Store::new(vec![Store::new(2), Store::new(3)]);
         let mut items: Vec<Vec<i32>> = Vec::new();
@@ -3736,7 +3778,7 @@ mod test {
     #[test]
     fn test_vec_collapsed() {
         let _h = HeapChecker::new();
-        let s = slock_owner();
+        let s = mslock_owner();
         let store: Store<Vec<Store<i32>>> = Store::new(vec![Store::new(1)]);
         let vec: Option<Box<dyn DirectlyInvertible>> = None;
         let vectors = Arc::new(Mutex::new(Some(vec)));
@@ -3751,7 +3793,7 @@ mod test {
             }
             else {
                 unsafe {
-                    l.as_mut().unwrap().right_multiply(inv, s);
+                    l.as_mut().unwrap().right_multiply(inv, s.try_to_main_slock().unwrap());
                 }
             }
             true
@@ -3798,7 +3840,7 @@ mod test {
     #[test]
     fn test_subtree_general_listener() {
         let _h = HeapChecker::new();
-        let s = slock_owner();
+        let s = mslock_owner();
         let store = Store::new(vec![Store::new(1)]);
         let count = Arc::new(Mutex::new(0));
         let c = count.clone();
@@ -4037,7 +4079,7 @@ mod test {
     #[test]
     fn test_vector_action() {
         let _h = HeapChecker::new();
-        let s = slock_owner();
+        let s = mslock_owner();
         let actions: Arc<Mutex<Vec<Box<dyn DirectlyInvertible>>>> = Arc::new(Mutex::new(Vec::new()));
         let store = Store::new(Vector([1, 2]));
         let weak = Arc::downgrade(&actions);
@@ -4070,7 +4112,7 @@ mod test {
     #[test]
     fn test_vector_string() {
         let _h = HeapChecker::new();
-        let s = slock_owner();
+        let s = mslock_owner();
         let actions: Arc<Mutex<Vec<Box<dyn DirectlyInvertible>>>> = Arc::new(Mutex::new(Vec::new()));
         let store = Store::new(Vector([EditingString("asdfasdf".to_string())]));
         let mut strings: Vec<String> = Vec::new();
@@ -4101,7 +4143,7 @@ mod test {
     #[test]
     fn test_vector_string_collapsed() {
         let _h = HeapChecker::new();
-        let s = slock_owner();
+        let s = mslock_owner();
         let state = Store::new(Vector([EditingString("asfasdf".to_string())]));
         let vec: Option<Box<dyn DirectlyInvertible>> = None;
         let vectors = Arc::new(Mutex::new(Some(vec)));
@@ -4116,7 +4158,7 @@ mod test {
             }
             else {
                 unsafe {
-                    l.as_mut().unwrap().right_multiply(inv, s);
+                    l.as_mut().unwrap().right_multiply(inv, s.try_to_main_slock().unwrap());
                 }
             }
             true
@@ -4140,7 +4182,7 @@ mod test {
     #[test]
     fn test_filter() {
         let _h = HeapChecker::new();
-        let s = slock_owner();
+        let s = mslock_owner();
         let state = Store::new_with_filter(0);
         state.action_filter(|curr, action, _s| {
             if *curr > 50 {
@@ -4171,7 +4213,7 @@ mod test {
             }
             else {
                 unsafe {
-                    l.as_mut().unwrap().right_multiply(inv, s);
+                    l.as_mut().unwrap().right_multiply(inv, s.try_to_main_slock().unwrap());
                 }
             }
             true
@@ -4190,7 +4232,7 @@ mod test {
     #[test]
     fn test_buffer() {
         let _h = HeapChecker::new();
-        let s = slock_owner();
+        let s = mslock_owner();
         let state = Store::new(EditingString("asfasdf".to_string()));
         let buffer = Buffer::new(Word::identity());
         let buffer_writer = buffer.downgrade();
@@ -4220,7 +4262,7 @@ mod test {
     #[test]
     fn test_nested_undo() {
         let _h = HeapChecker::new();
-        let slock = slock_owner();
+        let slock = mslock_owner();
         let s = slock.marker();
 
         let action: Buffer<Vec<Box<dyn DirectlyInvertible>>> = Buffer::new(Vec::new());
@@ -4276,7 +4318,7 @@ mod test {
     #[test]
     fn test_basic_coupler() {
         let _h = HeapChecker::new();
-        let slock = slock_owner();
+        let slock = mslock_owner();
         let s = slock.marker();
 
         let s1 = Store::new(1);

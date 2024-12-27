@@ -1,3 +1,4 @@
+use quarve::core::clock_signal;
 use quarve::event::EventModifiers;
 use quarve::prelude::*;
 use quarve::state::Filterless;
@@ -5,6 +6,7 @@ use quarve::view::color_view::EmptyView;
 use quarve::view::control::{Button, Dropdown};
 use quarve::view::image_view::ImageView;
 use quarve::view::scroll::ScrollView;
+use quarve::view::text::TextModifier;
 
 mod config;
 
@@ -32,6 +34,9 @@ fn view(s: MSlock) -> impl IVP {
         true
     }, s);
 
+    let color = clock_signal(s)
+        .map(|c| rgb(((*c * 255.0) as u64 % 255) as u8, 120, 120), s);
+
     VStack::hetero_options(VStackOptions::default().align(HorizontalAlignment::Center))
         .push(
             Dropdown::new(selection.binding())
@@ -42,15 +47,21 @@ fn view(s: MSlock) -> impl IVP {
         .push(
             ScrollView::vertical(
                 vstack()
-                    .push(GREEN.intrinsic(100, 100))
-                    .push(BLUE.intrinsic(100, 100))
-                    .push(RED.intrinsic(200, 100))
+                    .push(
+                        button("Click Me!", |_| println!("Clicked"))
+                            .text_font("SignikaNegative-Regular.ttf")
+                    )
+                    .push(RED.intrinsic(200, 400))
+                    .push(button("Click Me 3!", |_| println!("Clicked")))
+                    .frame(F)
             )
         )
-        .push(
-            RED.intrinsic(200, 100)
-                .cursor(Cursor::Pointer)
-        )
+        .push(button("Click Me 2!", |_| println!("Clicked 2")))
+        // .push(
+        //     ColorView::new_signal(color)
+        //         .intrinsic(100, 100)
+        //         .cursor(Cursor::Pointer)
+        // )
         .push(
             Button::new_with_label(BLUE.intrinsic(100, 100), |s| {
                 println!("Hello")

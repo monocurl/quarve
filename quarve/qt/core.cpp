@@ -21,9 +21,9 @@ back_main_loop() {
 
 extern "C" void
 back_run_main(fat_pointer box) {
-    QTimer::singleShot(0, [=]{
+    QMetaObject::invokeMethod(QCoreApplication::instance(), [=] {
         front_execute_fn_once(box);
-    });
+    }, Qt::QueuedConnection);
 }
 
 extern "C" void

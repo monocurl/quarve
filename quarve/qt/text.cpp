@@ -1,11 +1,67 @@
+#include <QLabel>
+#include <QFontDatabase>
+#include <QHash>
+#include <QFile>
+
 #include "../inc/util.h"
 #include "color.h"
+#include "debug.h"
 #include "front.h"
+
+static QHash<QString, QFont> fontCache;
+
+// TODO probably not the best way to do this for Qt
+static QString
+createFontCacheKey(const QString& fontPath, double size, bool bold, bool italic) {
+    return QString("%1;:;-%2-%3-%4").arg(fontPath).arg(size).arg(bold).arg(italic);
+}
+
+static QFont
+getFont(const uint8_t* fontPath, double size, bool bold, bool italic) {
+    QString path = fontPath ? QString::fromUtf8(reinterpret_cast<const char*>(fontPath)) : QString();
+    QString cacheKey = createFontCacheKey(path, size, bold, italic);
+
+    if (fontCache.contains(cacheKey)) {
+        return fontCache[cacheKey];
+    }
+
+    QFont font;
+    if (fontPath) {
+        // Load font directly from file
+        QFile fontFile(path);
+        if (fontFile.open(QIODevice::ReadOnly)) {
+            int id = QFontDatabase::addApplicationFontFromData(fontFile.readAll());
+            if (id != -1) {
+                QString family = QFontDatabase::applicationFontFamilies(id).at(0);
+                font = QFont(family);
+            } else {
+                fprintf(stderr, "quarve: unable to load font %s; defaulting to system\n", fontPath);
+                font = QFont();
+            }
+            fontFile.close();
+        } else {
+            fprintf(stderr, "quarve: unable to open font file %s; defaulting to system\n", fontPath);
+            font = QFont();
+        }
+    } else {
+        font = QFont();
+    }
+
+    font.setPointSizeF(size);
+    font.setBold(bold);
+    font.setItalic(italic);
+
+    fontCache[cacheKey] = font;
+    return font;
+}
 
 extern "C" void*
 back_text_init()
 {
-    return nullptr;
+    QLabel* label = new QLabel();
+    label->setTextInteractionFlags(Qt::NoTextInteraction);
+    label->setWordWrap(true);
+    return label;
 }
 
 extern "C" void
@@ -21,14 +77,58 @@ back_text_update(
     color front,
     uint8_t const* font_path,
     double font_size
-) {
+)
+{
+    QLabel* label = static_cast<QLabel*>(view);
 
+    QFont font = getFont(font_path, font_size, bold, italic);
+    label->setFont(font);
+
+    label->setTextFormat(Qt::PlainText);
+    label->setText(QString::fromUtf8(reinterpret_cast<const char*>(str)));
+
+    // set stylesheet
+    QString style = QString("QLabel { color: rgba(%1, %2, %3, %4); ").arg(
+        front.r).arg(front.g).arg(front.b).arg(front.a);
+
+    if (back.a > 0) {
+        style += QString("background-color: rgba(%1, %2, %3, %4); ").arg(
+            back.r).arg(back.g).arg(back.b).arg(back.a);
+    }
+
+    if (underline && strikethrough) {
+        style += "text-decoration: underline line-through; ";
+    }
+    else if (underline) {
+        style += "text-decoration: underline; ";
+    }
+    else if (strikethrough) {
+        style += "text-decoration: line-through; ";
+    }
+
+    style += "}";
+    label->setStyleSheet(style);
+
+    if (max_lines > 0) {
+        label->setMaximumHeight(label->fontMetrics().height() * max_lines);
+    } else {
+        label->setMaximumHeight(QWIDGETSIZE_MAX);
+    }
 }
 
 extern "C" size
 back_text_size(void* view, size suggested)
 {
-    return (size) { 0, 0 };
+    QLabel* label = static_cast<QLabel*>(view);
+
+    QSize hint = label->fontMetrics().boundingRect(
+        QRect(0, 0, suggested.w, 0),
+        Qt::TextWordWrap | Qt::AlignLeft | Qt::AlignTop,
+        label->text()
+    ).size();
+
+    return {static_cast<double>(hint.width()),
+            static_cast<double>(hint.height())};
 }
 
 // MARK: textfield

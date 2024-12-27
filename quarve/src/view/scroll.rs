@@ -1,12 +1,13 @@
 use std::ffi::c_void;
 use std::marker::PhantomData;
+
 use crate::core::{Environment, MSlock};
-use crate::{native};
+use crate::native;
 use crate::native::view::scroll::{scroll_view_set_x, scroll_view_set_y};
 use crate::state::{Bindable, Binding, Buffer, Filterless, Store};
 use crate::util::geo;
 use crate::util::geo::{Rect, ScreenUnit, Size};
-use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, NativeViewState, Subtree, View, ViewProvider, ViewRef};
+use crate::view::{EnvRef, IntoViewProvider, NativeView, NativeViewState, Subtree, View, ViewProvider, ViewRef, WeakInvalidator};
 
 pub struct ScrollView<E, I>
     where E: Environment,
@@ -202,9 +203,6 @@ impl<E, P, BX, BY> ViewProvider<E> for ScrollViewVP<E, P, BX, BY>
             }
             else {
                 unsafe {
-                    // note that window is not none
-                    // since it's only none when we are taking the backing from
-                    // another view
                     NativeView::new(native::view::scroll::init_scroll_view(self.vertical, self.horizontal, self.binding_y.clone(), self.binding_x.clone(), s), s)
                 }
             }
