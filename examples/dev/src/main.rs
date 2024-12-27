@@ -3,6 +3,7 @@ use quarve::prelude::*;
 use quarve::state::Filterless;
 use quarve::view::color_view::EmptyView;
 use quarve::view::control::Button;
+use quarve::view::image_view::ImageView;
 
 mod config;
 
@@ -34,6 +35,9 @@ fn view(_s: MSlock) -> impl IVP {
             Button::new_with_label(BLUE.intrinsic(100, 100), |s| {
                 println!("Hello")
             })
+        )
+        .push(
+            ImageView::named("rose.png")
         )
         .push(
             EmptyView.intrinsic(100, 100)
