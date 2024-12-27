@@ -100,7 +100,7 @@ back_menu_button_init(uint8_t const* title, uint8_t const* keyEquivalent, uint8_
         button->setShortcut(sequence);
     }
 
-    QObject::connect(button, &QAction::triggered, button, [button]{
+    QObject::connect(button, &QAction::triggered, [button]{
         if (button->callback.p0 != NULL) {
             front_execute_fn_mut(button->callback);
         }

@@ -7,4 +7,5 @@ back_view_button_init() {
 
 extern "C" void
 back_view_button_update(void *_view, uint8_t clicked) {
+
 }

@@ -27,6 +27,7 @@ fn view(_s: MSlock) -> impl IVP {
         .push(BLACK.intrinsic(100, 100))
         .push(
             RED.intrinsic(200, 100)
+                .cursor(Cursor::Pointer)
         )
         .push(
             EmptyView.intrinsic(100, 100)
