@@ -47,6 +47,7 @@ public:
 
         this->needsLayout = true;
 
+
         QPointer<Window> safeThis = this;
         QTimer::singleShot(0, [safeThis]() {
             if (safeThis) {
@@ -58,6 +59,7 @@ public:
 private:
     void layout() {
         if (!needsLayout || !this->handle.p0) {
+            this->needsLayout = false;
             return;
         }
 
@@ -129,13 +131,14 @@ protected:
             }
             else if (event->type() == QEvent::MouseButtonPress ||
                      event->type() == QEvent::MouseButtonRelease ||
+                     event->type() == QEvent::MouseButtonDblClick ||
                      event->type() == QEvent::MouseMove) {
                 valid = true;
 
                 QMouseEvent* mouseEvent = static_cast<QMouseEvent*>(event);
                 be.is_mouse = true;
 
-                if (event->type() == QEvent::MouseButtonPress) {
+                if (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonDblClick) {
                     if (mouseEvent->button() == Qt::LeftButton) {
                         be.is_left_button = true;
                         be.is_down = true;

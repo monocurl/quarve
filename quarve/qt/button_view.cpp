@@ -1,6 +1,7 @@
 #include <QtWidgets>
 
 #include "../inc/util.h"
+#include "debug.h"
 #include "cursor_view.h"
 
 extern "C" void *

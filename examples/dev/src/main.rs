@@ -2,6 +2,7 @@ use quarve::event::EventModifiers;
 use quarve::prelude::*;
 use quarve::state::Filterless;
 use quarve::view::color_view::EmptyView;
+use quarve::view::control::Button;
 
 mod config;
 
@@ -28,6 +29,11 @@ fn view(_s: MSlock) -> impl IVP {
         .push(
             RED.intrinsic(200, 100)
                 .cursor(Cursor::Pointer)
+        )
+        .push(
+            Button::new_with_label(BLUE.intrinsic(100, 100), |s| {
+                println!("Hello")
+            })
         )
         .push(
             EmptyView.intrinsic(100, 100)
