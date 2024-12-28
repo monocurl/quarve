@@ -163,6 +163,23 @@ public:
         front_free_fn_mut(callback);
     }
 
+    // https://stackoverflow.com/a/46997337
+    void setHeight (int nRows)
+    {
+        if (nRows) {
+            QTextDocument *pdoc = this->document();
+            QFontMetrics fm(pdoc->defaultFont());
+            QMargins margins = this->contentsMargins();
+            int nHeight = fm.lineSpacing() * nRows +
+                (pdoc->documentMargin() + this->frameWidth()) * 2 +
+                margins.top() + margins.bottom();
+            this->setMaximumHeight(nHeight);
+        }
+        else {
+            this->setMaximumHeight(QWIDGETSIZE_MAX);
+        }
+    }
+
 protected:
     void focusInEvent(QFocusEvent* event) override {
         QTextEdit::focusInEvent(event);
@@ -274,11 +291,6 @@ back_text_field_update(
         style += "background: transparent; border: none; ";
     }
 
-    QPalette p = field->palette();
-    p.setColor(QPalette::Base, Qt::red); // BG
-    p.setColor(QPalette::Text, Qt::white); // (plain) TEXT
-    field->setPalette(p);
-
     if (underline) {
         style += "text-decoration: underline; ";
     }
@@ -296,10 +308,7 @@ back_text_field_update(
     }
 
     // Handle line limiting
-    double max_height = max_lines == 0 ?
-           QWIDGETSIZE_MAX :
-           field->fontMetrics().height() * max_lines;
-    field->setMaximumHeight(max_height);
+    field->setHeight(max_lines);
 }
 
 extern "C" size
@@ -313,8 +322,15 @@ back_text_field_size(void* view, size suggested)
         field->toPlainText()
     ).size();
 
+    QTextDocument *pdoc = field->document();
+    QFontMetrics fm(pdoc->defaultFont());
+    QMargins margins = field->contentsMargins();
+    int height = hint.height() +
+        (pdoc->documentMargin() + field->frameWidth()) * 2 +
+        margins.top() + margins.bottom();
+
     return { static_cast<double>(hint.width()),
-             static_cast<double>(std::min(hint.height(), field->maximumHeight())) };
+             static_cast<double>(std::min(height, field->maximumHeight())) };
 }
 
 extern "C" void

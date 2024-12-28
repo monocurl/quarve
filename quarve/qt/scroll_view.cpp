@@ -23,21 +23,25 @@ public:
         setBackgroundRole(QPalette::NoRole);
         this->setStyleSheet("QScrollArea, QScrollArea > QWidget > .QWidget { background: transparent; }");
 
+        /*
         connect(horizontalScrollBar(), &QScrollBar::valueChanged, this,
             [this](int) { handleScroll(); });
         connect(verticalScrollBar(), &QScrollBar::valueChanged, this,
             [this](int) { handleScroll(); });
+        */
     }
 
     void setScrollPosition(double x, double y) {
         ignore_scroll = true;
 
+        /*
         if (horizontalScrollBar()->value() != x) {
             horizontalScrollBar()->setValue(x);
         }
         if (verticalScrollBar()->value() != y) {
             verticalScrollBar()->setValue(y);
         }
+        */
 
         ignore_scroll = false;
     }
