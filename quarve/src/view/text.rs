@@ -288,6 +288,8 @@ mod text_field {
             self
         }
 
+        /// Set `max_lines` to 0 to indicate an
+        /// unlimited amount of lines are allowed
         pub fn max_lines(mut self, max_lines: u32) -> Self {
             self.max_lines = max_lines;
             self

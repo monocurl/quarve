@@ -137,3 +137,18 @@ back_view_scroll_set_y(void *backing, double value)
         scroll.ignore_scroll = NO;
     }
 }
+
+@interface ContentView: NSView
+@end
+
+@implementation ContentView
+- (BOOL) isFlipped {
+    return YES;
+}
+@end
+
+void *
+back_view_scroll_content_init()
+{
+    return [[ContentView alloc] init];
+}

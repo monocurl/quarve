@@ -550,6 +550,7 @@ pub mod view {
             binding_y: FatPointer,
             binding_x: FatPointer
         ) -> *mut c_void;
+        fn back_view_scroll_content_init() -> *mut c_void;
 
         fn back_view_scroll_set_x(backing: *mut c_void, value: f64);
         fn back_view_scroll_set_y(backing: *mut c_void, value: f64);
@@ -780,7 +781,7 @@ pub mod view {
         use std::ffi::c_void;
 
         use crate::core::MSlock;
-        use crate::native::view::{back_view_scroll_init, back_view_scroll_set_x, back_view_scroll_set_y};
+        use crate::native::view::{back_view_scroll_content_init, back_view_scroll_init, back_view_scroll_set_x, back_view_scroll_set_y};
         use crate::state::{Binding, Filterless, SetAction};
         use crate::util::geo::ScreenUnit;
 
@@ -825,6 +826,12 @@ pub mod view {
         {
             unsafe {
                 back_view_scroll_set_y(scroll, value)
+            }
+        }
+
+        pub fn scroll_view_content(_s: MSlock) -> *mut c_void {
+            unsafe {
+                back_view_scroll_content_init()
             }
         }
     }

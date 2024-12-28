@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 
 use crate::core::{Environment, MSlock};
 use crate::native;
-use crate::native::view::scroll::{scroll_view_set_x, scroll_view_set_y};
+use crate::native::view::scroll::{scroll_view_content, scroll_view_set_x, scroll_view_set_y};
 use crate::state::{Bindable, Binding, Buffer, Filterless, Store};
 use crate::util::geo;
 use crate::util::geo::{Rect, ScreenUnit, Size};
@@ -122,7 +122,9 @@ impl<E, I, BX, BY> IntoViewProvider<E> for ScrollViewBinding<E, I, BX, BY>
             binding_x: self.binding_x,
             binding_y: self.binding_y,
             backing: 0 as *mut c_void,
-            content: self.content.into_view_provider(env, s).into_view(s),
+            content: ScrollViewContent {
+                subview: self.content.into_view_provider(env, s).into_view(s)
+            }.into_view(s),
             phantom: Default::default(),
         }
     }
@@ -139,9 +141,70 @@ impl<E, I> IntoViewProvider<E> for ScrollView<E, I> where E: Environment, I: Int
             binding_x: Store::new(0.0).binding(),
             binding_y: Store::new(0.0).binding(),
             backing: 0 as *mut c_void,
-            content: self.content.into_view_provider(env, s).into_view(s),
+            content: ScrollViewContent {
+                subview: self.content.into_view_provider(env, s).into_view(s)
+            }.into_view(s),
             phantom: Default::default(),
         }
+    }
+}
+
+struct ScrollViewContent<E, P> where E: Environment, P: ViewProvider<E> {
+    subview: View<E, P>
+}
+
+impl<E, P> ViewProvider<E> for ScrollViewContent<E, P>
+    where E: Environment, P: ViewProvider<E>
+{
+    type UpContext = P::UpContext;
+    type DownContext = P::DownContext;
+
+    fn intrinsic_size(&mut self, s: MSlock) -> Size {
+        self.subview.intrinsic_size(s)
+    }
+
+    fn xsquished_size(&mut self, s: MSlock) -> Size {
+        self.subview.xsquished_size(s)
+    }
+
+    fn xstretched_size(&mut self, s: MSlock) -> Size {
+        self.subview.xstretched_size(s)
+    }
+
+    fn ysquished_size(&mut self, s: MSlock) -> Size {
+        self.subview.ysquished_size(s)
+    }
+
+    fn ystretched_size(&mut self, s: MSlock) -> Size {
+        self.subview.ystretched_size(s)
+    }
+
+    fn up_context(&mut self, s: MSlock) -> Self::UpContext {
+        self.subview.up_context(s)
+    }
+
+    fn init_backing(&mut self, _invalidator: WeakInvalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+        let ret = if let Some((view, bs)) = backing_source {
+            self.subview.take_backing(bs.subview, env, s);
+            view
+        }
+        else {
+            unsafe {
+                NativeView::new(scroll_view_content(s), s)
+            }
+        };
+
+        subtree.push_subview(&self.subview, env, s);
+        ret
+    }
+
+    fn layout_up(&mut self, _subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, _s: MSlock) -> bool {
+        true
+    }
+
+    fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
+        let ret = self.subview.layout_down_with_context(frame.full_rect(), layout_context, env, s);
+        (ret, ret)
     }
 }
 

@@ -7,6 +7,7 @@
 #include <Qt>
 
 #include "../inc/util.h"
+#include "qt_util.h"
 #include "front.h"
 #include "debug.h"
 
@@ -23,25 +24,21 @@ public:
         setBackgroundRole(QPalette::NoRole);
         this->setStyleSheet("QScrollArea, QScrollArea > QWidget > .QWidget { background: transparent; }");
 
-        /*
         connect(horizontalScrollBar(), &QScrollBar::valueChanged, this,
             [this](int) { handleScroll(); });
         connect(verticalScrollBar(), &QScrollBar::valueChanged, this,
             [this](int) { handleScroll(); });
-        */
     }
 
     void setScrollPosition(double x, double y) {
         ignore_scroll = true;
 
-        /*
         if (horizontalScrollBar()->value() != x) {
             horizontalScrollBar()->setValue(x);
         }
         if (verticalScrollBar()->value() != y) {
             verticalScrollBar()->setValue(y);
         }
-        */
 
         ignore_scroll = false;
     }
@@ -96,7 +93,16 @@ back_view_scroll_set_x(void* backing, double value) {
     scroll->setScrollPosition(value, scroll->verticalScrollBar()->value());
 }
 
-extern "C" void back_view_scroll_set_y(void* backing, double value) {
+extern "C" void
+back_view_scroll_set_y(void* backing, double value) {
     ScrollView* scroll = static_cast<ScrollView*>(backing);
     scroll->setScrollPosition(scroll->horizontalScrollBar()->value(), value);
+}
+
+extern "C" void *
+back_view_scroll_content_init()
+{
+    QWidget* ret = new QWidget{};
+    ret->setProperty(QUARVE_BACKEND_MOVED_PROPERTY, true);
+    return ret;
 }

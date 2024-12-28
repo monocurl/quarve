@@ -1,7 +1,8 @@
+use quarve::core::clock_signal;
 use quarve::event::EventModifiers;
 use quarve::prelude::*;
 use quarve::state::{Filterless, TokenStore};
-use quarve::view::color_view::EmptyView;
+use quarve::view::color_view::{ColorView, EmptyView};
 use quarve::view::control::{Button, Dropdown};
 use quarve::view::image_view::ImageView;
 use quarve::view::scroll::ScrollView;
@@ -36,6 +37,31 @@ fn view(s: MSlock) -> impl IVP {
     let selected = TokenStore::new(Some(1));
     let current = Store::new("A".to_string());
     let current2 = Store::new("A".to_string());
+    let color = clock_signal(s)
+        .map(|u| rgb((((u * 255.0) as u64) % 255) as u8, 127, 100), s);
+
+
+    let clock = clock_signal(s);
+    let signal = clock
+        .map(|c| {
+            let amount = (10.0 * c.sin() + 10.0) as i32;
+            (0..amount)
+                .into_iter()
+                .collect::<Vec<i32>>()
+        }, s);
+
+    let dynamic_flex = signal.sig_flexmap_options(
+        |i, _s| {
+            BLUE.padding(10)
+                .layer(Layer::default().border(GREEN, 1).radius(3))
+                .intrinsic(100 + 10 * i, 20 + 5 * i)
+        },
+        FlexStackOptions::default()
+            .align(FlexAlign::Start)
+            .cross_gap(10.0)
+            .wrap()
+    ).intrinsic(800, 600);
+
 
     VStack::hetero_options(VStackOptions::default().align(HorizontalAlignment::Center))
         .push(
@@ -69,9 +95,10 @@ fn view(s: MSlock) -> impl IVP {
                             .max_lines(2)
                             .text_font("SignikaNegative-Regular.ttf")
                     )
-                    .push(RED.intrinsic(200, 400))
+                    .push(dynamic_flex)
+                    .push(ColorView::new_signal(color).intrinsic(200, 400))
                     .push(button("Click Me 3!", |_| println!("Clicked")))
-                    .frame(F.intrinsic(400, 1000).unlimited_stretch().align(Alignment::Center))
+                    .frame(F.unlimited_width().align(Alignment::Trailing))
             )
         )
         .push(button("Click Me 2!", |_| println!("Clicked 2")))

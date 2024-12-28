@@ -1,4 +1,5 @@
 #include <QtWidgets>
+#include <QAbstractScrollArea>
 #include <QMenuBar>
 
 #include <vector>
@@ -6,6 +7,7 @@
 
 #include "debug.h"
 #include "color.h"
+#include "qt_util.h"
 #include "../inc/util.h"
 #include "front.h"
 
@@ -336,7 +338,9 @@ back_view_set_frame(void *_view, double left, double top, double width, double h
     }
 
     if (view->pos().x() != li || view->pos().y() != ti) {
-        view->move(li, ti);
+        if (!view->property(QUARVE_BACKEND_MOVED_PROPERTY).isValid()) {
+            view->move(li, ti);
+        }
     }
 }
 
