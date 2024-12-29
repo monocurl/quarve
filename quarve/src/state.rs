@@ -3164,7 +3164,7 @@ mod signal {
         }
 
         impl<T> SignalOrValue<FixedSignal<T>> where T: Send + 'static {
-            pub fn value(t: T) -> Self {
+            pub const fn value(t: T) -> Self {
                 SignalOrValue::Value(t)
             }
         }

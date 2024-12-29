@@ -119,9 +119,19 @@ mod view {
 }
 
 mod modifiers {
+    use crate::prelude::ScreenUnit;
+    use crate::state::FixedSignal;
     pub use crate::view::modifers::*;
+    use crate::view::util::Color;
 
     pub const F: Frame = Frame::new();
+    pub const L: Layer<
+        FixedSignal<Color>,
+        FixedSignal<ScreenUnit>,
+        FixedSignal<Color>,
+        FixedSignal<ScreenUnit>,
+        FixedSignal<f32>,
+    > = Layer::new();
 }
 
 mod global {

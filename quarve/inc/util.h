@@ -12,6 +12,19 @@ enum button_type {
     BUTTON_TYPE_DELETE = 3,
 };
 
+// quarve/native.rs
+enum textview_callback {
+    TEXTVIEW_CALLBACK_KEYCODE_TAB = 0,
+    TEXTVIEW_CALLBACK_KEYCODE_UNTAB = 1,
+    TEXTVIEW_CALLBACK_KEYCODE_NEWLINE = 2,
+    TEXTVIEW_CALLBACK_KEYCODE_ALT_NEWLINE = 3,
+    TEXTVIEW_CALLBACK_KEYCODE_ESCAPE = 4,
+    TEXTVIEW_CALLBACK_KEYCODE_LEFT = 5,
+    TEXTVIEW_CALLBACK_KEYCODE_RIGHT = 6,
+    TEXTVIEW_CALLBACK_KEYCODE_DOWN = 7,
+    TEXTVIEW_CALLBACK_KEYCODE_UP = 8,
+};
+
 typedef struct fat_pointer {
     void const *p0;
     void const *p1;

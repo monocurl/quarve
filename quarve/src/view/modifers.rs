@@ -139,6 +139,10 @@ mod identity_modifier {
             self.source.layout_down(subtree, frame, layout_context, env, s)
         }
 
+        fn finalize_frame(&self, frame: Rect, s: MSlock) {
+            self.source.finalize_frame(frame, s);
+        }
+
         fn pre_show(&mut self, s: MSlock) {
             self.source.pre_show(s)
         }
@@ -267,7 +271,7 @@ mod provider_modifier {
               P: ViewProvider<E>,
               M: ProviderModifier<E, P::UpContext, P::DownContext>
     {
-        provider: P,
+        source: P,
         modifier: M,
         enabled: bool,
         phantom: PhantomData<E>
@@ -283,7 +287,7 @@ mod provider_modifier {
 
         fn into_view_provider(self, env: &E::Const, s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
             ProviderVPModifier {
-                provider: self.provider.into_view_provider(env, s),
+                source: self.provider.into_view_provider(env, s),
                 modifier: self.modifier,
                 enabled: true,
                 phantom: PhantomData
@@ -301,94 +305,98 @@ mod provider_modifier {
 
         fn intrinsic_size(&mut self, s: MSlock) -> Size {
             if self.enabled {
-                self.modifier.intrinsic_size(&mut self.provider, s)
+                self.modifier.intrinsic_size(&mut self.source, s)
             } else {
-                self.provider.intrinsic_size(s)
+                self.source.intrinsic_size(s)
             }
         }
 
         fn xsquished_size(&mut self, s: MSlock) -> Size {
             if self.enabled {
-                self.modifier.xsquished_size(&mut self.provider, s)
+                self.modifier.xsquished_size(&mut self.source, s)
             } else {
-                self.provider.xsquished_size(s)
+                self.source.xsquished_size(s)
             }
         }
 
         fn xstretched_size(&mut self, s: MSlock) -> Size {
             if self.enabled {
-                self.modifier.xstretched_size(&mut self.provider, s)
+                self.modifier.xstretched_size(&mut self.source, s)
             } else {
-                self.provider.xstretched_size(s)
+                self.source.xstretched_size(s)
             }
         }
 
         fn ysquished_size(&mut self, s: MSlock) -> Size {
             if self.enabled {
-                self.modifier.ysquished_size(&mut self.provider, s)
+                self.modifier.ysquished_size(&mut self.source, s)
             } else {
-                self.provider.ysquished_size(s)
+                self.source.ysquished_size(s)
             }
         }
 
         fn ystretched_size(&mut self, s: MSlock) -> Size {
             if self.enabled {
-                self.modifier.ystretched_size(&mut self.provider, s)
+                self.modifier.ystretched_size(&mut self.source, s)
             } else {
-                self.provider.ystretched_size(s)
+                self.source.ystretched_size(s)
             }
         }
 
         fn up_context(&mut self, s: MSlock) -> Self::UpContext {
-            self.provider.up_context(s)
+            self.source.up_context(s)
         }
 
         fn init_backing(&mut self, invalidator: WeakInvalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
             if let Some((nv, m)) = backing_source {
                 self.modifier.init(&invalidator, Some(m.modifier), s);
-                self.provider.init_backing(invalidator, subtree, Some((nv, m.provider)), env, s)
+                self.source.init_backing(invalidator, subtree, Some((nv, m.source)), env, s)
             }
             else {
                 self.modifier.init(&invalidator, None, s);
-                self.provider.init_backing(invalidator, subtree, None, env, s)
+                self.source.init_backing(invalidator, subtree, None, env, s)
             }
 
         }
 
         fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
             if self.enabled {
-                self.modifier.layout_up(&mut self.provider, subtree, env, s)
+                self.modifier.layout_up(&mut self.source, subtree, env, s)
             } else {
-                self.provider.layout_up(subtree, env, s)
+                self.source.layout_up(subtree, env, s)
             }
         }
 
         fn layout_down(&mut self, subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
             if self.enabled {
-                self.modifier.layout_down(&mut self.provider, subtree, frame, layout_context, env, s)
+                self.modifier.layout_down(&mut self.source, subtree, frame, layout_context, env, s)
             } else {
-                self.provider.layout_down(subtree, frame, layout_context, env, s)
+                self.source.layout_down(subtree, frame, layout_context, env, s)
             }
         }
 
+        fn finalize_frame(&self, frame: Rect, s: MSlock) {
+            self.source.finalize_frame(frame, s);
+        }
+
         fn pre_show(&mut self, s: MSlock) {
-            self.provider.pre_show(s)
+            self.source.pre_show(s)
         }
 
         fn post_show(&mut self, s: MSlock) {
-            self.provider.post_show(s)
+            self.source.post_show(s)
         }
 
         fn pre_hide(&mut self, s: MSlock) {
-            self.provider.pre_hide(s)
+            self.source.pre_hide(s)
         }
 
         fn post_hide(&mut self, s: MSlock) {
-            self.provider.post_hide(s)
+            self.source.post_hide(s)
         }
 
         fn focused(&self, rel_depth: u32, s: MSlock) {
-            self.provider.focused(rel_depth, s);
+            self.source.focused(rel_depth, s);
             // currently it gets notifications regardless of enabled status
             // i think this makes most sense?
             self.modifier.focused(s);
@@ -396,19 +404,19 @@ mod provider_modifier {
 
         fn unfocused(&self, rel_depth: u32, s: MSlock) {
             self.modifier.unfocused(s);
-            self.provider.unfocused(rel_depth, s);
+            self.source.unfocused(rel_depth, s);
         }
 
         fn push_environment(&mut self, env: &mut E::Variable, s: MSlock) {
-            self.provider.push_environment(env, s);
+            self.source.push_environment(env, s);
         }
 
         fn pop_environment(&mut self, env: &mut E::Variable, s: MSlock) {
-            self.provider.pop_environment(env, s);
+            self.source.pop_environment(env, s);
         }
 
         fn handle_event(&self, e: &Event, s: MSlock) -> EventResult {
-            self.provider.handle_event(e, s)
+            self.source.handle_event(e, s)
         }
     }
 
@@ -423,7 +431,7 @@ mod provider_modifier {
         fn into_conditional_view_provider(self, e: &E::Const, s: MSlock)
                                           -> impl ConditionalVPModifier<E, UpContext=<Self::Modifying as IntoViewProvider<E>>::UpContext, DownContext=<Self::Modifying as IntoViewProvider<E>>::DownContext> {
             ProviderVPModifier {
-                provider: self.provider.into_conditional_view_provider(e, s),
+                source: self.provider.into_conditional_view_provider(e, s),
                 modifier: self.modifier,
                 enabled: true,
                 phantom: PhantomData,
@@ -439,13 +447,13 @@ mod provider_modifier {
         fn enable(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) {
             if !self.enabled {
                 self.enabled = true;
-                self.provider.enable(subtree, env, s);
+                self.source.enable(subtree, env, s);
             }
         }
 
         fn disable(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) {
             if self.enabled {
-                self.provider.disable(subtree, env, s);
+                self.source.disable(subtree, env, s);
                 self.enabled = false;
             }
         }
@@ -780,29 +788,29 @@ mod provider_modifier {
             // reposition
             let (view, used) = src.layout_down(subtree, chosen, layout_context, env, s);
             let mut translation = Point::new(0.0,0.0);
-            match self.alignment.horizontal() {
+            translation.x = match self.alignment.horizontal() {
                 HorizontalAlignment::Leading => {
-                    translation.x = -used.x;
+                    -used.x
                 }
                 HorizontalAlignment::Center => {
-                    translation.x = chosen.w / 2.0 - (used.x + used.w) / 2.0;
+                    chosen.w / 2.0 - (used.x + used.w) / 2.0
                 }
                 HorizontalAlignment::Trailing => {
-                    translation.x = chosen.w - (used.x + used.w);
+                    chosen.w - (used.x + used.w)
                 }
-            }
+            };
 
-            match self.alignment.vertical() {
+            translation.y = match self.alignment.vertical() {
                 VerticalAlignment::Top => {
-                    translation.y = -used.y;
+                    -used.y
                 }
                 VerticalAlignment::Center => {
-                    translation.y = chosen.h / 2.0 - (used.y + used.h) / 2.0;
+                    chosen.h / 2.0 - (used.y + used.h) / 2.0
                 }
                 VerticalAlignment::Bottom => {
-                    translation.y = chosen.h - (used.y + used.h);
+                    chosen.h - (used.y + used.h)
                 }
-            }
+            };
 
             subtree.translate_post_layout_down(translation, s);
             (view.translate(translation), chosen.full_rect())
@@ -838,6 +846,7 @@ mod layer_modifier {
 
     use crate::core::{Environment, MSlock};
     use crate::native;
+    use crate::native::view::layer::set_layer_view_frame;
     use crate::state::{FixedSignal, Signal, SignalOrValue};
     use crate::util::geo::{Rect, ScreenUnit, Size};
     use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, View, ViewProvider, ViewRef, WeakInvalidator};
@@ -856,6 +865,19 @@ mod layer_modifier {
     impl Default for Layer<FixedSignal<Color>, FixedSignal<ScreenUnit>, FixedSignal<Color>, FixedSignal<ScreenUnit>, FixedSignal<f32>>
     {
         fn default() -> Self {
+            Layer {
+                background_color: SignalOrValue::value(Color::clear()),
+                corner_radius: SignalOrValue::value(0.0),
+                border_color: SignalOrValue::value(Color::clear()),
+                border_width: SignalOrValue::value(0.0),
+                opacity: SignalOrValue::value(1.0),
+            }
+        }
+    }
+
+    impl Layer<FixedSignal<Color>, FixedSignal<ScreenUnit>, FixedSignal<Color>, FixedSignal<ScreenUnit>, FixedSignal<f32>>
+    {
+        pub const fn new() -> Self {
             Layer {
                 background_color: SignalOrValue::value(Color::clear()),
                 corner_radius: SignalOrValue::value(0.0),
@@ -1134,6 +1156,10 @@ mod layer_modifier {
         fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
             let used = self.view.layout_down_with_context(frame.full_rect(), layout_context, env, s);
             (used, used)
+        }
+
+        fn finalize_frame(&self, frame: Rect, s: MSlock) {
+            set_layer_view_frame(self.backing, frame, s);
         }
     }
 
@@ -1440,7 +1466,7 @@ mod when_modifier {
                 enabled: self.enabled,
                 last_enabled: true,
                 parent_enabled: true,
-                provider: self.provider.into_conditional_view_provider(env, s),
+                source: self.provider.into_conditional_view_provider(env, s),
                 phantom: PhantomData,
             }
         }
@@ -1457,7 +1483,7 @@ mod when_modifier {
                 enabled: self.enabled,
                 last_enabled: true,
                 parent_enabled: true,
-                provider: self.provider.into_conditional_view_provider(env, s),
+                source: self.provider.into_conditional_view_provider(env, s),
                 phantom: PhantomData,
             }
         }
@@ -1467,7 +1493,7 @@ mod when_modifier {
         enabled: S,
         parent_enabled: bool,
         last_enabled: bool,
-        provider: P,
+        source: P,
         phantom: PhantomData<E>
     }
 
@@ -1488,27 +1514,27 @@ mod when_modifier {
         type DownContext = P::DownContext;
 
         fn intrinsic_size(&mut self, s: MSlock) -> Size {
-            self.provider.intrinsic_size(s)
+            self.source.intrinsic_size(s)
         }
 
         fn xsquished_size(&mut self, s: MSlock) -> Size {
-            self.provider.xsquished_size(s)
+            self.source.xsquished_size(s)
         }
 
         fn xstretched_size(&mut self, s: MSlock) -> Size {
-            self.provider.xstretched_size(s)
+            self.source.xstretched_size(s)
         }
 
         fn ysquished_size(&mut self, s: MSlock) -> Size {
-            self.provider.ysquished_size(s)
+            self.source.ysquished_size(s)
         }
 
         fn ystretched_size(&mut self, s: MSlock) -> Size {
-            self.provider.ystretched_size(s)
+            self.source.ystretched_size(s)
         }
 
         fn up_context(&mut self, s: MSlock) -> Self::UpContext {
-            self.provider.up_context(s)
+            self.source.up_context(s)
         }
 
         fn init_backing(&mut self, invalidator: WeakInvalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
@@ -1522,61 +1548,65 @@ mod when_modifier {
                 true
             }, s);
 
-            self.provider.init_backing(invalidator, subtree, backing_source.map(|(nv, bs)| (nv, bs.provider)), env, s)
+            self.source.init_backing(invalidator, subtree, backing_source.map(|(nv, bs)| (nv, bs.source)), env, s)
         }
 
         fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
             if self.last_enabled != self.fully_enabled(s) {
                 if self.fully_enabled(s) {
-                    self.provider.enable(subtree, env, s);
+                    self.source.enable(subtree, env, s);
                 } else {
-                    self.provider.disable(subtree, env, s);
+                    self.source.disable(subtree, env, s);
                 }
 
                 self.last_enabled = self.fully_enabled(s);
             }
 
-            self.provider.layout_up(subtree, env, s)
+            self.source.layout_up(subtree, env, s)
         }
 
         fn layout_down(&mut self, subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
-            self.provider.layout_down(subtree, frame, layout_context, env, s)
+            self.source.layout_down(subtree, frame, layout_context, env, s)
+        }
+
+        fn finalize_frame(&self, frame: Rect, s: MSlock) {
+            self.source.finalize_frame(frame, s);
         }
 
         fn pre_show(&mut self, s: MSlock) {
-            self.provider.pre_show(s)
+            self.source.pre_show(s)
         }
 
         fn post_show(&mut self, s: MSlock) {
-            self.provider.post_show(s)
+            self.source.post_show(s)
         }
 
         fn pre_hide(&mut self, s: MSlock) {
-            self.provider.pre_hide(s)
+            self.source.pre_hide(s)
         }
 
         fn post_hide(&mut self, s: MSlock) {
-            self.provider.post_hide(s)
+            self.source.post_hide(s)
         }
 
         fn focused(&self, rel_depth: u32, s: MSlock) {
-            self.provider.focused(rel_depth, s);
+            self.source.focused(rel_depth, s);
         }
 
         fn unfocused(&self, rel_depth: u32, s: MSlock) {
-            self.provider.unfocused(rel_depth, s);
+            self.source.unfocused(rel_depth, s);
         }
 
         fn push_environment(&mut self, env: &mut E::Variable, s: MSlock) {
-            self.provider.push_environment(env, s);
+            self.source.push_environment(env, s);
         }
 
         fn pop_environment(&mut self, env: &mut E::Variable, s: MSlock) {
-            self.provider.pop_environment(env, s);
+            self.source.pop_environment(env, s);
         }
 
         fn handle_event(&self, e: &Event, s: MSlock) -> EventResult {
-            self.provider.handle_event(e, s)
+            self.source.handle_event(e, s)
         }
     }
 
@@ -1642,7 +1672,7 @@ mod env_modifier {
 
         fn into_view_provider(self, env: &E::Const, s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
             EnvModifierVP {
-                wrapping: self.wrapping.into_view_provider(env, s),
+                source: self.wrapping.into_view_provider(env, s),
                 modifier: self.modifier,
                 enabled: true,
                 enabled_during_last_push: false,
@@ -1658,7 +1688,7 @@ mod env_modifier {
 
         fn into_conditional_view_provider(self, env: &E::Const, s: MSlock) -> impl ConditionalVPModifier<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
             EnvModifierVP {
-                wrapping: self.wrapping.into_conditional_view_provider(env, s),
+                source: self.wrapping.into_conditional_view_provider(env, s),
                 modifier: self.modifier,
                 enabled: true,
                 enabled_during_last_push: false,
@@ -1668,7 +1698,7 @@ mod env_modifier {
     }
 
     struct EnvModifierVP<E, P, M> where E: Environment, P: ViewProvider<E>, M: EnvironmentModifier<E> {
-        wrapping: P,
+        source: P,
         modifier: M,
         enabled: bool,
         enabled_during_last_push: bool,
@@ -1681,65 +1711,69 @@ mod env_modifier {
         type DownContext = P::DownContext;
 
         fn intrinsic_size(&mut self, s: MSlock) -> Size {
-            self.wrapping.intrinsic_size(s)
+            self.source.intrinsic_size(s)
         }
 
         fn xsquished_size(&mut self, s: MSlock) -> Size {
-            self.wrapping.xsquished_size(s)
+            self.source.xsquished_size(s)
         }
 
         fn xstretched_size(&mut self, s: MSlock) -> Size {
-            self.wrapping.xstretched_size(s)
+            self.source.xstretched_size(s)
         }
 
         fn ysquished_size(&mut self, s: MSlock) -> Size {
-            self.wrapping.ysquished_size(s)
+            self.source.ysquished_size(s)
         }
 
         fn ystretched_size(&mut self, s: MSlock) -> Size {
-            self.wrapping.ystretched_size(s)
+            self.source.ystretched_size(s)
         }
 
         fn up_context(&mut self, s: MSlock) -> Self::UpContext {
-            self.wrapping.up_context(s)
+            self.source.up_context(s)
         }
 
         fn init_backing(&mut self, invalidator: WeakInvalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
             self.modifier.init(invalidator.clone(), s);
 
-            self.wrapping.init_backing(invalidator, subtree, backing_source.map(|(nv, bs)| (nv, bs.wrapping)), env, s)
+            self.source.init_backing(invalidator, subtree, backing_source.map(|(nv, bs)| (nv, bs.source)), env, s)
         }
 
         fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
-            self.wrapping.layout_up(subtree, env, s)
+            self.source.layout_up(subtree, env, s)
         }
 
         fn layout_down(&mut self, subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
-            self.wrapping.layout_down(subtree, frame, layout_context, env, s)
+            self.source.layout_down(subtree, frame, layout_context, env, s)
+        }
+
+        fn finalize_frame(&self, frame: Rect, s: MSlock) {
+            self.source.finalize_frame(frame, s);
         }
 
         fn pre_show(&mut self, s: MSlock) {
-            self.wrapping.pre_show(s)
+            self.source.pre_show(s)
         }
 
         fn post_show(&mut self, s: MSlock) {
-            self.wrapping.post_show(s)
+            self.source.post_show(s)
         }
 
         fn pre_hide(&mut self, s: MSlock) {
-            self.wrapping.pre_hide(s)
+            self.source.pre_hide(s)
         }
 
         fn post_hide(&mut self, s: MSlock) {
-            self.wrapping.post_hide(s)
+            self.source.post_hide(s)
         }
 
         fn focused(&self, rel_depth: u32, s: MSlock) {
-            self.wrapping.focused(rel_depth, s)
+            self.source.focused(rel_depth, s)
         }
 
         fn unfocused(&self, rel_depth: u32, s: MSlock) {
-            self.wrapping.unfocused(rel_depth, s)
+            self.source.unfocused(rel_depth, s)
         }
 
         fn push_environment(&mut self, env: &mut E::Variable, s: MSlock) {
@@ -1747,18 +1781,18 @@ mod env_modifier {
                 self.modifier.push_environment(env, s);
                 self.enabled_during_last_push = true;
             }
-            self.wrapping.push_environment(env, s)
+            self.source.push_environment(env, s)
         }
 
         fn pop_environment(&mut self, env: &mut E::Variable, s: MSlock) {
-            self.wrapping.pop_environment(env, s);
+            self.source.pop_environment(env, s);
             if self.enabled_during_last_push {
                 self.modifier.pop_environment(env, s);
             }
         }
 
         fn handle_event(&self, e: &Event, s: MSlock) -> EventResult {
-            self.wrapping.handle_event(e, s)
+            self.source.handle_event(e, s)
         }
     }
 
@@ -1770,7 +1804,7 @@ mod env_modifier {
             // enable calls, rather than having all of these separate checks
             if !self.enabled {
                 self.enabled = true;
-                self.wrapping.enable(subtree, env, s);
+                self.source.enable(subtree, env, s);
                 self.pop_environment(env.0.variable_env_mut(), s);
                 self.push_environment(env.0.variable_env_mut(), s);
                 subtree.invalidate_subtree(env, s);
@@ -1780,7 +1814,7 @@ mod env_modifier {
         fn disable(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) {
             if self.enabled {
                 self.enabled = false;
-                self.wrapping.disable(subtree, env, s);
+                self.source.disable(subtree, env, s);
                 self.pop_environment(env.0.variable_env_mut(), s);
                 self.push_environment(env.0.variable_env_mut(), s);
                 subtree.invalidate_subtree(env, s);
@@ -1835,7 +1869,7 @@ mod show_hide_modifier {
               F3: FnMut(MSlock) + 'static,
               F4: FnMut(MSlock) + 'static,
     {
-        wrapping: P,
+        source: P,
         pre_show: F1,
         post_show: F2,
         pre_hide: F3,
@@ -1856,7 +1890,7 @@ mod show_hide_modifier {
 
         fn into_view_provider(self, env: &E::Const, s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
             ShowHideVP {
-                wrapping: self.wrapping.into_view_provider(env, s),
+                source: self.wrapping.into_view_provider(env, s),
                 pre_show: self.pre_show,
                 post_show: self.post_show,
                 pre_hide: self.pre_hide,
@@ -1878,79 +1912,83 @@ mod show_hide_modifier {
         type DownContext = P::DownContext;
 
         fn intrinsic_size(&mut self, s: MSlock) -> Size {
-            self.wrapping.intrinsic_size(s)
+            self.source.intrinsic_size(s)
         }
 
         fn xsquished_size(&mut self, s: MSlock) -> Size {
-            self.wrapping.xsquished_size(s)
+            self.source.xsquished_size(s)
         }
 
         fn xstretched_size(&mut self, s: MSlock) -> Size {
-            self.wrapping.xstretched_size(s)
+            self.source.xstretched_size(s)
         }
 
         fn ysquished_size(&mut self, s: MSlock) -> Size {
-            self.wrapping.ysquished_size(s)
+            self.source.ysquished_size(s)
         }
 
         fn ystretched_size(&mut self, s: MSlock) -> Size {
-            self.wrapping.ystretched_size(s)
+            self.source.ystretched_size(s)
         }
 
         fn up_context(&mut self, s: MSlock) -> Self::UpContext {
-            self.wrapping.up_context(s)
+            self.source.up_context(s)
         }
 
         fn init_backing(&mut self, invalidator: WeakInvalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
-            self.wrapping.init_backing(invalidator, subtree, backing_source.map(|(nv, bs)| (nv, bs.wrapping)), env, s)
+            self.source.init_backing(invalidator, subtree, backing_source.map(|(nv, bs)| (nv, bs.source)), env, s)
         }
 
         fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
-            self.wrapping.layout_up(subtree, env, s)
+            self.source.layout_up(subtree, env, s)
         }
 
         fn layout_down(&mut self, subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
-            self.wrapping.layout_down(subtree, frame, layout_context, env, s)
+            self.source.layout_down(subtree, frame, layout_context, env, s)
+        }
+
+        fn finalize_frame(&self, frame: Rect, s: MSlock) {
+            self.source.finalize_frame(frame, s);
         }
 
         fn pre_show(&mut self, s: MSlock) {
             (self.pre_show)(s);
-            self.wrapping.pre_show(s)
+            self.source.pre_show(s)
         }
 
         fn post_show(&mut self, s: MSlock) {
-            self.wrapping.post_show(s);
+            self.source.post_show(s);
             (self.post_show)(s);
         }
 
         fn pre_hide(&mut self, s: MSlock) {
             (self.pre_hide)(s);
-            self.wrapping.pre_hide(s);
+            self.source.pre_hide(s);
         }
 
         fn post_hide(&mut self, s: MSlock) {
-            self.wrapping.post_hide(s);
+            self.source.post_hide(s);
             (self.post_hide)(s);
         }
 
         fn focused(&self, rel_depth: u32, s: MSlock) {
-            self.wrapping.focused(rel_depth, s);
+            self.source.focused(rel_depth, s);
         }
 
         fn unfocused(&self, rel_depth: u32, s: MSlock) {
-            self.wrapping.unfocused(rel_depth, s);
+            self.source.unfocused(rel_depth, s);
         }
 
         fn push_environment(&mut self, env: &mut E::Variable, s: MSlock) {
-            self.wrapping.push_environment(env, s);
+            self.source.push_environment(env, s);
         }
 
         fn pop_environment(&mut self, env: &mut E::Variable, s: MSlock) {
-            self.wrapping.pop_environment(env, s);
+            self.source.pop_environment(env, s);
         }
 
         fn handle_event(&self, e: &Event, s: MSlock) -> EventResult {
-            self.wrapping.handle_event(e, s)
+            self.source.handle_event(e, s)
         }
     }
 
@@ -2126,6 +2164,10 @@ mod key_listener {
 
         fn layout_down(&mut self, subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
             self.source.layout_down(subtree, frame, layout_context, env, s)
+        }
+
+        fn finalize_frame(&self, frame: Rect, s: MSlock) {
+            self.source.finalize_frame(frame, s);
         }
 
         fn pre_show(&mut self, s: MSlock) {

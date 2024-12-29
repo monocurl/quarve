@@ -1,12 +1,14 @@
-mod inner_view;
 pub use inner_view::*;
-
-mod view;
+pub use into_view_provider::*;
 pub use view::*;
+pub use view_provider::*;
+
+mod inner_view;
+mod view;
 
 mod into_view_provider {
     use crate::core::{Environment, MSlock};
-    use crate::state::{Signal};
+    use crate::state::Signal;
     use crate::util::geo::ScreenUnit;
     use crate::view::modifers::{Layer, LayerIVP, LayerModifiable, post_hide_wrap, post_show_wrap, pre_hide_wrap, pre_show_wrap};
     use crate::view::util::Color;
@@ -25,6 +27,36 @@ mod into_view_provider {
 
         fn into_view_provider(self, env: &E::Const, s: MSlock)
             -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext>;
+
+        #[cfg(all(target_os = "macos", not(feature="qt_backend")))]
+        fn cfg_cocoa<P>(self, modifier: impl FnOnce(Self) -> P) -> P
+            where P: IntoViewProvider<E>
+        {
+             modifier(self)
+        }
+
+        #[cfg(any(not(target_os = "macos"), feature="qt_backend"))]
+        #[allow(unused_variables)]
+        fn cfg_cocoa<P>(self, modifier: impl FnOnce(Self) -> P) -> Self
+            where P: IntoViewProvider<E>
+        {
+            self
+        }
+
+        #[cfg(all(target_os = "macos", not(feature="qt_backend")))]
+        #[allow(unused_variables)]
+        fn cfg_qt<P>(self, modifier: impl FnOnce(Self) -> P) -> Self
+            where P: IntoViewProvider<E>
+        {
+            self
+        }
+
+        #[cfg(any(not(target_os = "macos"), feature="qt_backend"))]
+        fn cfg_qt<P>(self, modifier: impl FnOnce(Self) -> P) -> P
+            where P: IntoViewProvider<E>
+        {
+            modifier(self)
+        }
 
         // FIXME pre_show, layer methods, and related should be optimized for ShowHideIVP/LayerIVP
         fn pre_show(self, f: impl FnMut(MSlock) + 'static)
@@ -64,11 +96,8 @@ mod into_view_provider {
         }
     }
 }
-pub use into_view_provider::*;
 
 mod view_provider;
-pub use view_provider::*;
-
 pub mod layout;
 pub mod modifers;
 pub mod util;

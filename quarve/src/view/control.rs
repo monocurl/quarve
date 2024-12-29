@@ -127,6 +127,10 @@ mod button {
             (ours, used)
         }
 
+        fn finalize_frame(&self, frame: Rect, s: MSlock) {
+            self.source.finalize_frame(frame, s);
+        }
+
         fn pre_show(&mut self, s: MSlock) {
             self.source.pre_show(s)
         }

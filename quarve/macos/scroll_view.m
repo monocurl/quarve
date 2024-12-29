@@ -138,10 +138,10 @@ back_view_scroll_set_y(void *backing, double value)
     }
 }
 
-@interface ContentView: NSView
+@interface ScrollContentView: NSView
 @end
 
-@implementation ContentView
+@implementation ScrollContentView
 - (BOOL) isFlipped {
     return YES;
 }
@@ -150,5 +150,5 @@ back_view_scroll_set_y(void *backing, double value)
 void *
 back_view_scroll_content_init()
 {
-    return [[ContentView alloc] init];
+    return [[ScrollContentView alloc] init];
 }

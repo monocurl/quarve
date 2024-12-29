@@ -32,6 +32,10 @@ public:
         }
     }
 
+    void setPaintRect(QRectF rect) {
+        this->paintRect = rect;
+    }
+
 protected:
     void paintEvent(QPaintEvent* event) override {
         QWidget::paintEvent(event);
@@ -43,7 +47,11 @@ protected:
         painter.setBrush(bgColor);
         painter.setPen(Qt::NoPen);
         painter.setRenderHint(QPainter::Antialiasing);
-        QRectF rect = this->rect().adjusted(borderWidth / 2.0, borderWidth / 2.0, -borderWidth / 2.0, -borderWidth / 2.0);
+
+        QPoint pos = this->pos();
+        QRectF rect = this->paintRect
+            .translated(-pos.x(), -pos.y())
+            .adjusted(borderWidth / 2.0, borderWidth / 2.0, -borderWidth / 2.0, -borderWidth / 2.0);
         painter.drawRoundedRect(rect, cornerRadius, cornerRadius);
 
         // border
@@ -57,6 +65,7 @@ protected:
 private:
     QColor backgroundColor = Qt::white;
     QColor borderColor = Qt::black;
+    QRectF paintRect{};
     int borderWidth = 1;
     int cornerRadius = 0;
 };
@@ -70,7 +79,7 @@ back_view_layer_init()
 extern "C" void
 back_view_layer_update(void *_view, color background_color, color border_color, double corner_radius, double border_width, float opacity)
 {
-    LayerWidget* view = (LayerWidget*) _view;
+    LayerWidget* view = static_cast<LayerWidget*>(_view);
 
     view->setBackgroundColor(QColor(
         background_color.r,
@@ -89,5 +98,18 @@ back_view_layer_update(void *_view, color background_color, color border_color, 
     view->setCornerRadius(static_cast<int>(corner_radius));
     view->setOpacity(static_cast<double>(opacity));
 
+    view->update();
+}
+
+extern "C" void
+back_view_layer_set_frame(void *_view, double left, double top, double width, double height)
+{
+    LayerWidget* view = static_cast<LayerWidget*>(_view);
+    view->setPaintRect(QRectF{
+        left,
+        top,
+        width,
+        height,
+    });
     view->update();
 }

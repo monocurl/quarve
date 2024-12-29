@@ -232,6 +232,7 @@ int performing_subview_insertion = 0;
     static FieldEditor *fieldEditor = nil;
     if (!fieldEditor) {
         fieldEditor = [[FieldEditor alloc] init];
+        [fieldEditor textContainer].lineFragmentPadding = 0;
         fieldEditor.fieldEditor = YES;
     }
     return fieldEditor;

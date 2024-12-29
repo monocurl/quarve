@@ -149,8 +149,8 @@ impl<E, I> IntoViewProvider<E> for ScrollView<E, I> where E: Environment, I: Int
     }
 }
 
-struct ScrollViewContent<E, P> where E: Environment, P: ViewProvider<E> {
-    subview: View<E, P>
+pub(crate) struct ScrollViewContent<E, P> where E: Environment, P: ViewProvider<E> {
+    pub(crate) subview: View<E, P>
 }
 
 impl<E, P> ViewProvider<E> for ScrollViewContent<E, P>

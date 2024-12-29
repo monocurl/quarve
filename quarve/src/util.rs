@@ -1,3 +1,6 @@
+pub use options::*;
+pub use vector::*;
+
 pub(crate) mod rust_util {
     use std::marker::PhantomData;
     use std::ops::Deref;
@@ -117,6 +120,7 @@ pub(crate) mod test_util {
 mod vector {
     use std::fmt::Debug;
     use std::ops::{Add, Mul, Sub};
+
     use crate::state::Stateful;
     use crate::util::numeric::{Lerp, Norm};
 
@@ -263,8 +267,6 @@ mod vector {
         }
     }
 }
-pub use vector::*;
-
 
 pub mod numeric {
     pub trait Lerp
@@ -383,6 +385,7 @@ pub mod geo {
     // if a ui element is this large, in some cases
     // it will deduce there must have been a rendering error
     pub const EFFECTIVELY_UNBOUNDED: f64 = 1e5;
+    pub const EPSILON: f64 = 1e-3;
 
     #[derive(Copy, Clone, Default, Debug, PartialEq)]
     #[repr(C)]
@@ -620,4 +623,3 @@ mod options {
         fn options(&mut self) -> &mut Self::Options;
     }
 }
-pub use options::*;

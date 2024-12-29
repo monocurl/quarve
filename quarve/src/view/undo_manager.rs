@@ -512,6 +512,10 @@ impl<E, P> ViewProvider<E> for UndoManagerVP<E, P>
         self.source.layout_down(subtree, frame, layout_context, env, s)
     }
 
+    fn finalize_frame(&self, frame: Rect, s: MSlock) {
+        self.source.finalize_frame(frame, s);
+    }
+
     fn pre_show(&mut self, s: MSlock) {
         self.undo_manager.update_menus(s);
         self.source.pre_show(s)

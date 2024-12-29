@@ -1,8 +1,12 @@
 use std::marker::PhantomData;
+
+pub use upcontext_adapter::*;
+pub use upcontext_setter::*;
+
 use crate::core::{Environment, MSlock};
 use crate::event::{Event, EventResult};
 use crate::util::geo::{Rect, Size};
-use crate::view::{EnvRef, InnerView, IntoViewProvider, WeakInvalidator, NativeView, Subtree, View};
+use crate::view::{EnvRef, InnerView, IntoViewProvider, NativeView, Subtree, View, WeakInvalidator};
 
 pub trait ViewProvider<E>: Sized + 'static
     where E: Environment
@@ -78,6 +82,27 @@ pub trait ViewProvider<E>: Sized + 'static
     ) -> (Rect, Rect);
 
     // callback methods
+    /// This is an important method since
+    /// the requested frame will not always be the actual
+    /// frame chosen for a view, since certain backends
+    /// don't support a subview being outside of the parent view.
+    /// To resolve this, quarve always sets the bounds of a view
+    /// to be the union of the suggested view and the bounds of its
+    /// subviews. Howeever, this means that the bounds of a view
+    /// may differ from the requested frame.
+    ///
+    /// In such a case, this method is useful as it gives the
+    /// exact finalized request in parent coordinates. In native code,
+    /// one can then perform adjustments to counteract the effect
+    /// of this view's expansion to its child bounds.
+    ///
+    /// * `frame` : the finalized suggested coordinates of this view
+    /// in parent coordinates
+    #[allow(unused_variables)]
+    fn finalize_frame(&self, frame: Rect, s: MSlock) {
+
+    }
+
     #[allow(unused_variables)]
     fn pre_show(&mut self, s: MSlock) {
 
@@ -127,10 +152,11 @@ pub trait ViewProvider<E>: Sized + 'static
 
 mod upcontext_setter {
     use std::marker::PhantomData;
+
     use crate::core::{Environment, MSlock};
     use crate::event::{Event, EventResult};
     use crate::util::geo::{Rect, Size};
-    use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, Subtree, ViewProvider};
+    use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, ViewProvider, WeakInvalidator};
 
     pub struct UpContextSetter<E, P, U>(P, U, PhantomData<E>)
         where E: Environment,
@@ -212,6 +238,10 @@ mod upcontext_setter {
             self.0.layout_down(subtree, frame, layout_context, env, s)
         }
 
+        fn finalize_frame(&self, frame: Rect, s: MSlock) {
+            self.0.finalize_frame(frame, s);
+        }
+
         fn pre_show(&mut self, s: MSlock) {
             self.0
                 .pre_show(s)
@@ -258,15 +288,15 @@ mod upcontext_setter {
         }
     }
 }
-pub use upcontext_setter::*;
 
 mod upcontext_adapter {
     use std::marker::PhantomData;
+
     use crate::core::{Environment, MSlock};
     use crate::event::{Event, EventResult};
     use crate::state::slock_cell::MainSlockCell;
     use crate::util::geo::{Rect, Size};
-    use crate::view::{EnvRef, WeakInvalidator, NativeView, Subtree, ViewProvider};
+    use crate::view::{EnvRef, NativeView, Subtree, ViewProvider, WeakInvalidator};
 
     pub struct UpContextAdapter<E, P, U>(P, PhantomData<MainSlockCell<(U, E)>>)
         where E: Environment,
@@ -331,6 +361,10 @@ mod upcontext_adapter {
             self.0.layout_down(subtree, frame, layout_context, env, s)
         }
 
+        fn finalize_frame(&self, frame: Rect, s: MSlock) {
+            self.0.finalize_frame(frame, s);
+        }
+
         fn pre_show(&mut self, s: MSlock) {
             self.0
                 .pre_show(s)
@@ -377,7 +411,6 @@ mod upcontext_adapter {
         }
     }
 }
-pub use upcontext_adapter::*;
 
 // when need to return None for Option<impl ViewProvider> and need concrete type
 pub struct UnreachableProvider<E, U, D>(pub PhantomData<(E, U, D)>) where E: Environment, U: 'static, D: 'static;
@@ -431,6 +464,10 @@ impl<E, U, D> ViewProvider<E> for UnreachableProvider<E, U, D>
     }
 
     fn layout_down(&mut self, _subtree: &Subtree<E>, _frame: Size, _layout_context: &D, _env: &mut EnvRef<E>, _s: MSlock) -> (Rect, Rect) {
+        unreachable!()
+    }
+
+    fn finalize_frame(&self, _frame: Rect, _s: MSlock) {
         unreachable!()
     }
 }

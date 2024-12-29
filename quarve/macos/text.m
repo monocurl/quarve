@@ -18,7 +18,7 @@ font_for(uint8_t const* name, double size, uint8_t bold, uint8_t italic)
     NSString *font_name = name ? [NSString stringWithUTF8String:(const char *)name] : @"SystemFont";
     NSString *cache_key = [NSString stringWithFormat:@"%@;:;-%.2f-%d-%d", font_name, size, bold, italic];
 
-    NSFont *cached_font = [font_cache objectForKey:cache_key];;
+    NSFont *cached_font = [font_cache objectForKey:cache_key];
     if (cached_font) {
         return cached_font;
     }
@@ -58,7 +58,10 @@ font_for(uint8_t const* name, double size, uint8_t bold, uint8_t italic)
     return font;
 }
 
-void*
+// TODO spent an eternity trying to figure out
+// why the font doesn't line up sometimes
+// i still don't really know
+void *
 back_text_init()
 {
     NSTextField *label = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 2, 2)];
@@ -66,7 +69,6 @@ back_text_init()
     [label setSelectable:NO];
     label.bezeled = NO;
     label.drawsBackground = NO;
-
     return label;
 }
 
@@ -84,11 +86,10 @@ back_text_update(
     uint8_t const* font_path,
     double font_size
 ) {
-    NSTextField* tf = view;
+    NSTextField *tf = (NSTextField *)view;
 
-    NSString* string = [NSString stringWithUTF8String:(const char *)str];
-
-    NSMutableAttributedString* astr = [[NSMutableAttributedString alloc] initWithString:string];
+    NSString *string = [NSString stringWithUTF8String:(const char *)str];
+    NSMutableAttributedString *astr = [[NSMutableAttributedString alloc] initWithString:string];
     NSRange fullRange = NSMakeRange(0, string.length);
 
     NSFont *font = font_for(font_path, font_size, bold, italic);
@@ -117,6 +118,7 @@ back_text_update(
                                                 blue:front.b/255.0
                                                alpha:front.a/255.0];
     [astr addAttribute:NSForegroundColorAttributeName value:foregroundColor range:fullRange];
+
     if (![tf.attributedStringValue isEqualToAttributedString: astr]) {
         tf.attributedStringValue = astr;
         tf.font = font;
@@ -127,7 +129,6 @@ back_text_update(
         // but this preserves the attributes upon selection
         tf.allowsEditingTextAttributes = underline || strikethrough || back.a != 0;
     }
-
     [astr release];
 
     tf.maximumNumberOfLines = max_lines;
@@ -279,6 +280,7 @@ back_text_field_init(
     tf.focused_token = token;
     tf.scheduled_focused = NO;
     tf.drawsBackground = NO;
+    tf.bordered = NO;
     tf.bezeled = NO;
 
     if (unstyled) {
@@ -384,34 +386,33 @@ back_text_field_paste(void *view)
 @property int32_t page_id;
 @property BOOL executing_back;
 @property BOOL dragging;
-@property NSUInteger initialSelectionIndex;
 @end
 
 @implementation TextView
 - (BOOL)textView:(NSTextView *)textView doCommandBySelector:(SEL)commandSelector {
     if (commandSelector == @selector(cancelOperation:)) {
-        if (!front_execute_key_callback(self.key_handler, 4)) {
+        if (!front_execute_key_callback(self.key_handler, TEXTVIEW_CALLBACK_KEYCODE_ESCAPE)) {
             [textView.window makeFirstResponder:nil];
         }
         return YES;
     }
     else if (commandSelector == @selector(moveUp:)) {
-        if (front_execute_key_callback(self.key_handler, 8)) {
+        if (front_execute_key_callback(self.key_handler, TEXTVIEW_CALLBACK_KEYCODE_UP)) {
             return YES;
         }
     }
     else if (commandSelector == @selector(moveDown:)) {
-        if (front_execute_key_callback(self.key_handler, 7)) {
+        if (front_execute_key_callback(self.key_handler, TEXTVIEW_CALLBACK_KEYCODE_DOWN)) {
             return YES;
         }
     }
     else if (commandSelector == @selector(moveLeft:)) {
-        if (front_execute_key_callback(self.key_handler, 5)) {
+        if (front_execute_key_callback(self.key_handler, TEXTVIEW_CALLBACK_KEYCODE_LEFT)) {
             return YES;
         }
     }
     else if (commandSelector == @selector(moveRight:)) {
-        if (front_execute_key_callback(self.key_handler, 6)) {
+        if (front_execute_key_callback(self.key_handler, TEXTVIEW_CALLBACK_KEYCODE_RIGHT)) {
             return YES;
         }
     }
@@ -443,50 +444,6 @@ back_text_field_paste(void *view)
     }
 }
 
-- (void)handleEvent:(NSEvent*)event {
-    return;
-    switch (event.type) {
-        case NSEventTypeLeftMouseDown: {
-            // Initial setup for mouse tracking
-            [self.window makeFirstResponder:self];
-            NSPoint initialPoint = [self convertPoint:event.locationInWindow fromView:nil];
-
-            self.initialSelectionIndex = [self characterIndexForInsertionAtPoint:initialPoint];
-            self.dragging = YES;
-
-            NSRange selectionRange = NSMakeRange(self.initialSelectionIndex, 0);
-            [self setSelectedRange:selectionRange];
-            break;
-        }
-        case NSEventTypeLeftMouseUp:
-            self.dragging = NO;
-            break;
-        case NSEventTypeLeftMouseDragged:
-            if (self.window.firstResponder == self && self.dragging) {
-                NSPoint currentPoint = [self convertPoint:event.locationInWindow fromView:nil];
-
-                NSUInteger selectionIndex = [self characterIndexForInsertionAtPoint:currentPoint];
-
-
-                NSRange selectionRange = NSMakeRange(MIN(selectionIndex, self.initialSelectionIndex),
-                                                     ABS((int) selectionIndex - (int) self.initialSelectionIndex));
-                [self setSelectedRange:selectionRange];
-            }
-            break;
-        case NSEventTypeRightMouseDown:
-            [self rightMouseDown:event];
-            break;
-        case NSEventTypeRightMouseDragged:
-            [self rightMouseDragged:event];
-            break;
-        case NSEventTypeRightMouseUp:
-            [self rightMouseUp:event];
-            break;
-        default:
-            break;
-    }
-}
-
 - (BOOL)becomeFirstResponder {
     front_set_token_binding(self.selected, 1, (int32_t) self.page_id);
     return [super becomeFirstResponder];
@@ -498,25 +455,25 @@ back_text_field_paste(void *view)
 }
 
 - (void)insertTab:(id)sender {
-    if (!front_execute_key_callback(self.key_handler, 0)) {
+    if (!front_execute_key_callback(self.key_handler, TEXTVIEW_CALLBACK_KEYCODE_TAB)) {
         [super insertTab: sender];
     }
 }
 
 - (void)insertBacktab:(id) sender {
-    if (!front_execute_key_callback(self.key_handler, 1)) {
+    if (!front_execute_key_callback(self.key_handler, TEXTVIEW_CALLBACK_KEYCODE_UNTAB)) {
         [super insertBacktab:sender];
     }
 }
 
 - (void)insertNewline:(id) sender {
-    if (!front_execute_key_callback(self.key_handler, 2)) {
+    if (!front_execute_key_callback(self.key_handler, TEXTVIEW_CALLBACK_KEYCODE_NEWLINE)) {
         [super insertNewline:sender];
     }
 }
 
 - (void)insertNewlineIgnoringFieldEditor:(id) sender {
-    if (!front_execute_key_callback(self.key_handler, 3)) {
+    if (!front_execute_key_callback(self.key_handler, TEXTVIEW_CALLBACK_KEYCODE_ALT_NEWLINE)) {
         [super insertNewlineIgnoringFieldEditor:sender];
     }
 }
@@ -545,6 +502,9 @@ back_text_view_init()
     [tv setAutoresizingMask:NSViewWidthSizable];
 
     tv.page_id = 0;
+
+    tv.textContainerInset = NSMakeSize(0, 0);
+    [tv textContainer].lineFragmentPadding = 0;
 
     tv.drawsBackground = NO;
     tv.richText = NO;

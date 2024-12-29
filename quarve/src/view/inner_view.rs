@@ -1,17 +1,20 @@
 use std::any::Any;
-use std::cell::{Cell};
+use std::cell::Cell;
 use std::ffi::c_void;
 use std::sync::{Arc, Weak};
 use std::sync::atomic::{AtomicBool, Ordering};
+
 use crate::core::{Environment, MSlock, Slock, WindowViewCallback};
 use crate::event::{Event, EventResult};
 use crate::native;
+use crate::native::backend::AUTO_CLIPS_CHILDREN;
 use crate::native::view::{view_add_child_at, view_clear_children, view_remove_child, view_set_frame};
 use crate::state::Buffer;
-use crate::state::slock_cell::{MainSlockCell};
+use crate::state::slock_cell::MainSlockCell;
+use crate::util::geo;
 use crate::util::geo::{Point, Rect, ScreenUnit, Size};
 use crate::util::rust_util::PhantomUnsendUnsync;
-use crate::view::{EnvRef, WeakInvalidator, View};
+use crate::view::{EnvRef, View, WeakInvalidator};
 use crate::view::util::SizeContainer;
 use crate::view::view_provider::ViewProvider;
 
@@ -196,11 +199,22 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
 
         self.needs_layout_down.set(false);
 
+        let expand_self = AUTO_CLIPS_CHILDREN && !self.graph.native_view.clips_subviews;
+        let additional_translation = self.last_view_frame.origin() - self.last_bounding_rect.origin();
+
         // we cannot finalize our frame until parent has finished translate calls
         // but we can finalize subview frames
         self.graph.subviews
             .iter()
-            .for_each(|sv| sv.borrow_main(s).finalize_view_frame(s));
+            .for_each(|sv| {
+                let mut sv = sv.borrow_mut_main(s);
+                if expand_self {
+                    // translate according to inflated self
+                    // if necessary
+                    sv.translate(additional_translation, s);
+                }
+                sv.finalize_view_frame(s)
+            });
 
         exclusion
     }
@@ -387,7 +401,17 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
 
     fn finalize_view_frame(&self, s: MSlock) {
         debug_assert!(!self.needs_layout_down.get());
-        view_set_frame(self.native_view(), self.last_view_frame, s)
+        // look at subviews
+        let frame = if AUTO_CLIPS_CHILDREN && !self.graph.native_view.clips_subviews {
+            self.last_bounding_rect
+        }
+        else {
+            self.last_view_frame
+        };
+
+        self.provider.finalize_frame(self.last_view_frame, s);
+
+        view_set_frame(self.native_view(), frame, s)
     }
 
     fn scroll_offset(&self, s: MSlock) -> Point {
@@ -862,7 +886,7 @@ impl<'a, E> Subtree<'a, E> where E: Environment {
     // precondition: all subviews explicitly had their layout_down method
     // called
     pub fn translate_post_layout_down(&self, by: Point, s: MSlock) {
-        if by.x == 0.0 && by.y == 0.0 {
+        if by.x.abs() < geo::EPSILON && by.y.abs() < geo::EPSILON {
             return;
         }
 

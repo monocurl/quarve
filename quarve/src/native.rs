@@ -534,6 +534,7 @@ pub mod view {
         /* layer view methods */
         fn back_view_layer_init() -> *mut c_void;
         fn back_view_layer_update(view: *mut c_void, bg_color: Color, border_color: Color, corner_radius: f64, border_width: f64, opacity: f32) -> *mut c_void;
+        fn back_view_layer_set_frame(view: *mut c_void, left: f64, top: f64, width: f64, height: f64);
 
         /* image view methods */
         fn back_view_image_init(path: *const u8) -> *mut c_void;
@@ -703,7 +704,8 @@ pub mod view {
         use std::ffi::c_void;
 
         use crate::core::MSlock;
-        use crate::native::view::{back_view_layer_init, back_view_layer_update};
+        use crate::native::view::{back_view_layer_init, back_view_layer_set_frame, back_view_layer_update};
+        use crate::prelude::Rect;
         use crate::view::util::Color;
 
         pub fn init_layer_view(_s: MSlock) -> *mut c_void {
@@ -730,6 +732,12 @@ pub mod view {
                     border_width,
                     opacity
                 );
+            }
+        }
+
+        pub fn set_layer_view_frame(view: *mut c_void, frame: Rect, _s: MSlock) {
+            unsafe {
+                back_view_layer_set_frame(view, frame.x, frame.y, frame.w, frame.h)
             }
         }
     }
@@ -1564,4 +1572,12 @@ pub mod path {
 
         PathBuf::from(string)
     }
+}
+
+pub mod backend {
+    #[cfg(any(not(target_os = "macos"), feature = "qt_backend"))]
+    pub const AUTO_CLIPS_CHILDREN: bool = true;
+
+    #[cfg(all(target_os = "macos", not(feature = "qt_backend")))]
+    pub const AUTO_CLIPS_CHILDREN: bool = false;
 }

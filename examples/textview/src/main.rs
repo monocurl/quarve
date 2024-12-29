@@ -1,5 +1,6 @@
 use std::sync::mpsc::channel;
 use std::thread;
+
 use quarve::core::slock_owner;
 use quarve::prelude::*;
 use quarve::state::{StoreContainerSource, StoreContainerView};
@@ -69,6 +70,10 @@ impl TextViewProvider<Env> for TVP {
         t: 10.0,
     };
 
+    fn font_size() -> ScreenUnit {
+        20.
+    }
+
     fn init(&mut self, state: StoreContainerView<TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>>, s: MSlock) {
         // see multithread example for more information about how multithreading works
         // here, whenever there is a change to state, we request a rerender of all lines
@@ -86,13 +91,22 @@ impl TextViewProvider<Env> for TVP {
         // worker thread that applies formatting
         thread::spawn(move || {
             while receiver.recv().is_ok() {
+
                 let slock = slock_owner();
                 let s = slock.marker();
+
+                // if there were duplicate notifications,
+                // clear through them
+                loop {
+                    if receiver.try_recv().is_err() {
+                        break;
+                    }
+                }
 
                 let page = state.page(0, s);
                 let mut bold = false;
                 for run in page.runs(s).iter() {
-                    // in efficient implementation character by character,
+                    // inefficient implementation character by character,
                     // but simple for example
                     let c = run.content(s);
 
@@ -122,12 +136,13 @@ impl TextViewProvider<Env> for TVP {
         // line number for every single run
         Text::from_signal(number.map(|u| (u + 1).to_string(), s))
             .frame(
-                F.intrinsic(100, 20)
+                F.intrinsic(100, 0)
                     .unlimited_height()
                     .align(Alignment::TopTrailing)
             )
-            .offset(-100, 0)
+            .offset(-103, 0)
             .text_color(GRAY)
+            .text_size(20)
     }
 
     // no background or foreground

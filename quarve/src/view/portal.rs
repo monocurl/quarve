@@ -1,10 +1,11 @@
 use std::cell::RefCell;
 use std::ptr;
 use std::rc::{Rc, Weak};
+
 use crate::core::{Environment, MSlock};
 use crate::event::{Event, EventResult};
 use crate::util::geo::{Rect, Size};
-use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, Subtree, ToArcViewBase, View, ViewProvider};
+use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, ToArcViewBase, View, ViewProvider, WeakInvalidator};
 use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
 
 struct PortalInner<E, U, D>
@@ -227,7 +228,7 @@ impl<E, U, D, I, W> IntoViewProvider<E> for PortalSenderIVP<E, U, D, I, W>
         PortalSenderVP {
             portal: self.portal,
             content: Rc::new(self.view.into_view_provider(env, s).into_view(s)),
-            wrapping: self.wrapping.into_view_provider(env, s),
+            source: self.wrapping.into_view_provider(env, s),
             invalidator: None,
             conditional_enabled: true,
             mounted: false,
@@ -246,7 +247,7 @@ impl<E, U, D, I, W> ConditionalIVPModifier<E> for PortalSenderIVP<E, U, D, I, W>
         PortalSenderVP {
             portal: self.portal,
             content: Rc::new(self.view.into_view_provider(env, s).into_view(s)),
-            wrapping: self.wrapping.into_conditional_view_provider(env, s),
+            source: self.wrapping.into_conditional_view_provider(env, s),
             invalidator: None,
             conditional_enabled: true,
             mounted: false
@@ -260,7 +261,7 @@ struct PortalSenderVP<E, U, D, P, W>
           W: ViewProvider<E>
 {
     portal: Portal<E, U, D>,
-    wrapping: W,
+    source: W,
     content: Rc<View<E, P>>,
     conditional_enabled: bool,
     mounted: bool,
@@ -336,27 +337,27 @@ impl<E, U, D, P, W> ViewProvider<E> for PortalSenderVP<E, U, D, P, W>
     type DownContext = W::DownContext;
 
     fn intrinsic_size(&mut self, s: MSlock) -> Size {
-        self.wrapping.intrinsic_size(s)
+        self.source.intrinsic_size(s)
     }
 
     fn xsquished_size(&mut self, s: MSlock) -> Size {
-        self.wrapping.xsquished_size(s)
+        self.source.xsquished_size(s)
     }
 
     fn xstretched_size(&mut self, s: MSlock) -> Size {
-        self.wrapping.xstretched_size(s)
+        self.source.xstretched_size(s)
     }
 
     fn ysquished_size(&mut self, s: MSlock) -> Size {
-        self.wrapping.ysquished_size(s)
+        self.source.ysquished_size(s)
     }
 
     fn ystretched_size(&mut self, s: MSlock) -> Size {
-        self.wrapping.ysquished_size(s)
+        self.source.ysquished_size(s)
     }
 
     fn up_context(&mut self, s: MSlock) -> Self::UpContext {
-        self.wrapping.up_context(s)
+        self.source.up_context(s)
     }
 
     fn init_backing(&mut self, invalidator: WeakInvalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
@@ -367,10 +368,10 @@ impl<E, U, D, P, W> ViewProvider<E> for PortalSenderVP<E, U, D, P, W>
                 self.content.take_backing(this, env, s);
             }
 
-            self.wrapping.init_backing(invalidator, subtree, Some((nv, src.wrapping)), env, s)
+            self.source.init_backing(invalidator, subtree, Some((nv, src.source)), env, s)
         }
         else {
-            self.wrapping.init_backing(invalidator, subtree, None, env, s)
+            self.source.init_backing(invalidator, subtree, None, env, s)
         };
         assert_eq!(subtree.len(), 0, "Portal Sender must be attached to a view with zero children!");
         ret
@@ -381,7 +382,7 @@ impl<E, U, D, P, W> ViewProvider<E> for PortalSenderVP<E, U, D, P, W>
             self.try_mount(s);
         }
 
-        let ret = self.wrapping.layout_up(subtree, env, s);
+        let ret = self.source.layout_up(subtree, env, s);
         assert_eq!(subtree.len(), 0, "Portal Sender must be attached to a view with zero children!");
         ret
     }
@@ -393,44 +394,48 @@ impl<E, U, D, P, W> ViewProvider<E> for PortalSenderVP<E, U, D, P, W>
             }
         }
 
-        self.wrapping.layout_down(subtree, frame, layout_context, env, s)
+        self.source.layout_down(subtree, frame, layout_context, env, s)
+    }
+
+    fn finalize_frame(&self, frame: Rect, s: MSlock) {
+        self.source.finalize_frame(frame, s);
     }
 
     fn pre_show(&mut self, s: MSlock) {
-        self.wrapping.pre_show(s)
+        self.source.pre_show(s)
     }
 
     fn post_show(&mut self, s: MSlock) {
-        self.wrapping.post_show(s)
+        self.source.post_show(s)
     }
 
     fn pre_hide(&mut self, s: MSlock) {
         self.unmount(s);
-        self.wrapping.pre_hide(s)
+        self.source.pre_hide(s)
     }
 
     fn post_hide(&mut self, s: MSlock) {
-        self.wrapping.post_hide(s)
+        self.source.post_hide(s)
     }
 
     fn focused(&self, rel_depth: u32, s: MSlock) {
-        self.wrapping.focused(rel_depth, s);
+        self.source.focused(rel_depth, s);
     }
 
     fn unfocused(&self, rel_depth: u32, s: MSlock) {
-        self.wrapping.unfocused(rel_depth, s);
+        self.source.unfocused(rel_depth, s);
     }
 
     fn push_environment(&mut self, env: &mut E::Variable, s: MSlock) {
-        self.wrapping.push_environment(env, s);
+        self.source.push_environment(env, s);
     }
 
     fn pop_environment(&mut self, env: &mut E::Variable, s: MSlock) {
-        self.wrapping.pop_environment(env, s);
+        self.source.pop_environment(env, s);
     }
 
     fn handle_event(&self, e: &Event, s: MSlock) -> EventResult {
-        self.wrapping.handle_event(e, s)
+        self.source.handle_event(e, s)
     }
 }
 
@@ -444,12 +449,12 @@ impl<E, U, D, P, W> ConditionalVPModifier<E> for PortalSenderVP<E, U, D, P, W>
     fn enable(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) {
         self.conditional_enabled = true;
         self.try_mount(s);
-        self.wrapping.enable(subtree, env, s);
+        self.source.enable(subtree, env, s);
     }
 
     fn disable(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) {
         self.unmount(s);
-        self.wrapping.disable(subtree, env, s);
+        self.source.disable(subtree, env, s);
         self.conditional_enabled = false;
     }
 }

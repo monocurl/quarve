@@ -69,6 +69,8 @@ fn view(s: MSlock) -> impl IVP {
                 .option("Damascus")
                 .option("Solidarity")
                 .intrinsic(100, 30)
+                .padding(10)
+                .border(BLUE, 1)
         )
         .push(
             Text::from_signal(selected.map(|s| {
@@ -102,13 +104,14 @@ fn view(s: MSlock) -> impl IVP {
             )
         )
         .push(button("Click Me 2!", |_| println!("Clicked 2")))
-        // .push(
-        //     ColorView::new_signal(color)
-        //         .intrinsic(100, 100)
-        //         .cursor(Cursor::Pointer)
-        // )
         .push(
-            Button::new_with_label(BLUE.intrinsic(100, 100), |s| {
+            RED.intrinsic(100, 100)
+                .offset(-20, 0)
+                .padding(10)
+                .layer(L.radius(25).bg_color(rgba(255, 255, 255, 100)))
+        )
+        .push(
+            Button::new_with_label(BLUE.intrinsic(100, 100), |_s| {
                 println!("Hello")
             })
         )

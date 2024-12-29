@@ -2,6 +2,7 @@ use std::ffi::c_void;
 
 use crate::core::{Environment, MSlock};
 use crate::native;
+use crate::native::view::layer::set_layer_view_frame;
 use crate::state::{FixedSignal, Signal, SignalOrValue};
 use crate::util::geo::{Rect, Size, UNBOUNDED};
 use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, ViewProvider, WeakInvalidator};
@@ -70,6 +71,10 @@ impl<E, S> ViewProvider<E> for ColorView<S> where E: Environment, S: Signal<Targ
 
     fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, _layout_context: &Self::DownContext, _env: &mut EnvRef<E>, _s: MSlock) -> (Rect, Rect) {
         (frame.full_rect(), frame.full_rect())
+    }
+
+    fn finalize_frame(&self, frame: Rect, s: MSlock) {
+        set_layer_view_frame(self.1, frame, s);
     }
 }
 

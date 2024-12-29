@@ -2140,6 +2140,7 @@ mod text_view {
         use crate::view::{EnvRef, IntoViewProvider, NativeView, NativeViewState, Subtree, TrivialContextViewRef, View, ViewProvider, ViewRef, WeakInvalidator};
         use crate::view::layout::{BindingVMap, LayoutProvider, VStackOptions};
         use crate::view::menu::MenuChannel;
+        use crate::view::scroll::ScrollViewContent;
         use crate::view::text::{AttributeSet, Page, Run, TextViewState, ToCharAttribute, ToRunAttribute};
 
         thread_local! {
@@ -2290,13 +2291,18 @@ mod text_view {
                     new_page_coordinator(sp.clone(), state_clone.clone(), p.view(), yb.clone(), hb.clone(), s)
                 }, VStackOptions::default().spacing(0.0)).into_view_provider(env, s).into_view(s);
 
+                // ensures is properly positioned
+                let hosted_pages = ScrollViewContent {
+                    subview: pages,
+                }.into_view(s);
+
                 TextViewVP {
                     _provider: shared_provider,
                     state: self.state,
                     scroll_y: y,
                     height: h,
                     scroll_view: 0 as *mut c_void,
-                    pages,
+                    pages: hosted_pages,
                 }
             }
         }
@@ -2979,7 +2985,7 @@ mod text_view {
                     page: self.page,
                     provider: self.provider,
                     text_view: 0 as *mut c_void,
-                    last_up_width: -1.0,
+                    width_change: false,
                     last_size: Default::default(),
                     invalidator: None,
                     select_all_menu: env.channels.select_all_menu.clone(),
@@ -2996,7 +3002,7 @@ mod text_view {
             provider: Arc<MainSlockCell<P>>,
             text_view: *mut c_void,
 
-            last_up_width: ScreenUnit,
+            width_change: bool,
             last_size: Size,
             invalidator: Option<WeakInvalidator<E>>,
 
@@ -3144,13 +3150,14 @@ mod text_view {
                         let mut gui = *run.gui_info.borrow(s);
                         let next_code_units = utf16_chars + gui.codeunits + if i < lines - 1 { 1 } else { 0 };
 
-                        if gui.dirty || self.last_up_width != self.last_size.w {
+                        if gui.dirty || self.width_change {
                             // calculating line height
                             gui.page_height = text_view_get_line_height(self.text_view, i, utf16_chars..utf16_chars + gui.codeunits, self.last_size.w, s);
+                            gui.dirty = true;
                         }
 
                         // only send flush if necessary
-                        if gui.line != i || gui.dirty {
+                        if gui.dirty || gui.line != i {
                             gui.dirty = false;
                             gui.line = i;
                             run.gui_info.apply(Set(gui), s);
@@ -3170,7 +3177,7 @@ mod text_view {
                     } else { None };
                     self.page.gui_info.apply(Set(gui), s);
 
-                    self.last_up_width = self.last_size.w;
+                    self.width_change = false;
                 }
 
                 true
@@ -3183,13 +3190,11 @@ mod text_view {
                 // very ugly, but cold branch anyways
                 // note that we can't invalidate right now
                 // as that's a double borrow. Might find way to relax this in future
-                if (rect.w - self.last_size.w).abs() > 1e-3 {
+                if (rect.w - self.last_size.w).abs() > geo::EPSILON {
+                    self.width_change = true;
                     let inv = self.invalidator.clone().unwrap();
                     run_main_async(move |s| {
-                        let Some(invalidator) = inv.upgrade() else {
-                            return;
-                        };
-                        invalidator.invalidate(s);
+                        inv.try_upgrade_invalidate(s);
                     });
                 }
                 self.last_size = rect.size();
