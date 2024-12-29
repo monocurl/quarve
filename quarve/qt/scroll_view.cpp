@@ -77,7 +77,7 @@ back_view_scroll_init(
     fat_pointer vertical_offset,
     fat_pointer horizontal_offset
 ) {
-    ScrollView* scroll = new ScrollView(horizontal_offset, vertical_offset);
+    auto* scroll = new ScrollView(horizontal_offset, vertical_offset);
 
     scroll->setVerticalScrollBarPolicy(
         allow_vertical ? Qt::ScrollBarAsNeeded : Qt::ScrollBarAlwaysOff);

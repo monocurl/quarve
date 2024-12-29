@@ -28,7 +28,7 @@ fn counter(s: MSlock) -> impl IVP {
         .push(button.bold())
         .push(display)
         .text_color(BLACK)
-        .frame(F.intrinsic(400, 400).align(Center).unlimited_stretch())
+        .frame(F.intrinsic(400, 400).unlimited_stretch())
         .background(WHITE)
 }
 ```

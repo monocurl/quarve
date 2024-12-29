@@ -209,6 +209,7 @@ mod text_field {
     use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, ViewProvider, WeakInvalidator};
     use crate::view::menu::MenuChannel;
 
+    // TODO add undo barriers to this
     pub struct TextField<B>
         where B: Binding<Filterless<String>> + Clone,
     {
@@ -289,7 +290,7 @@ mod text_field {
         }
 
         /// Set `max_lines` to 0 to indicate an
-        /// unlimited amount of lines are allowed
+        /// unlimited amount of lines is allowed
         pub fn max_lines(mut self, max_lines: u32) -> Self {
             self.max_lines = max_lines;
             self
@@ -663,7 +664,7 @@ mod text_view {
                 }
             }
 
-            // cant exactly use a word since a single modification doesnt always have a single inverse
+            // cant exactly use a word since a single modification doesn't always have a single inverse
             #[derive(Debug)]
             pub enum RangedBasis<A> where A: ToCharAttribute {
                 Insert {
@@ -1148,7 +1149,7 @@ mod text_view {
 
                 /// Due to a race condition, modification of text contents
                 /// may only be performed on the main thread
-                // (technically an undo could be called on other threads, but this wont happen in practice)
+                // (technically an undo could be called on other threads, but this won't happen in practice)
                 pub(crate) fn replace(&self, range: Range<usize>, with: impl Into<String>, s: MSlock) {
                     self.replace_with_attributes(
                         range, with,
@@ -1514,7 +1515,7 @@ mod text_view {
                     for (i, store) in stores.into_iter().enumerate() {
                         // basically a clone
                         // we use the function to determine when to return false
-                        // rather than weak/strong (we also dont need to worry about cycles)
+                        // rather than weak/strong (we also don't need to worry about cycles)
                         let my_state = state.downgrade().upgrade().unwrap();
                         store.listen(move |val, s| {
                             let mut state = my_state.borrow_mut(s);
@@ -2224,6 +2225,9 @@ mod text_view {
                 false
             }
 
+            /// For now, run decorations are behind the page view due to
+            /// difficulties with getting it to work with Qt
+            /// In the future, it may be moved to above the main page view
             fn run_decoration(
                 &self,
                 number: impl Signal<Target=usize>,
@@ -2235,6 +2239,9 @@ mod text_view {
                 &self, page: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock
             ) -> impl IntoViewProvider<E, DownContext=()>;
 
+            /// Make sure to set the frame to only take what is necessary
+            /// As otherwise on Qt you may intercept all mouse events inadvertently from the
+            /// main text edit
             fn page_foreground(
                 &self, page: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>,
                 cursor: impl Signal<Target=Option<Point>>,
@@ -2570,16 +2577,14 @@ mod text_view {
             type DownContext = ();
 
             fn into_view_provider(self, env: &E::Const, s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
-                let lp = PageCoordinatorLP {
+                PageCoordinatorLP {
                     _provider: self.provider,
                     background: self.background.into_view_provider(env, s).into_view(s),
                     page_view: self.page_view.into_view_provider(env, s).into_view(s),
                     decorations: self.decorations.into_view_provider(env, s).into_view(s),
                     foreground: self.foreground.into_view_provider(env, s).into_view(s),
                     phantom: PhantomData
-                };
-
-                lp.into_layout_view_provider()
+                }.into_layout_view_provider()
             }
         }
 
@@ -2607,8 +2612,8 @@ mod text_view {
                   V: ViewProvider<E, DownContext=()>,
                   F: ViewProvider<E, DownContext=()>,
         {
-            type DownContext = ();
             type UpContext = ();
+            type DownContext = ();
 
             fn intrinsic_size(&mut self, s: MSlock) -> Size {
                 self.page_view.intrinsic_size(s)
@@ -2619,7 +2624,7 @@ mod text_view {
             }
 
             fn init(&mut self, _invalidator: WeakInvalidator<E>, subtree: &mut Subtree<E>, source_provider: Option<Self>, env: &mut EnvRef<E>, s: MSlock) {
-                if let Some(other) = source_provider {
+                if let Some( other) = source_provider {
                     self.background.take_backing(other.background, env, s);
                     self.page_view.take_backing(other.page_view, env, s);
                     self.decorations.take_backing(other.decorations, env, s);
@@ -2627,8 +2632,10 @@ mod text_view {
                 }
 
                 subtree.push_subview(&self.background, env, s);
-                subtree.push_subview(&self.page_view, env, s);
+                // TODO it should be possible to make this in front of the page
+                // but qt is unfortunately making this hard. Doesn't matter for gutter view
                 subtree.push_subview(&self.decorations, env, s);
+                subtree.push_subview(&self.page_view, env, s);
                 subtree.push_subview(&self.foreground, env, s);
             }
 
@@ -2719,7 +2726,7 @@ mod text_view {
             map: Option<M>,
             buffered_views: Arc<MainSlockCell<Word<VecActionBasis<V>>>>,
             views: Vec<View<E, VP>>,
-            // for any view index, whether or not it is actually
+            // for any view index, whether it is actually
             // displayed
             view_displayed: Vec<bool>,
             to_vp: F,
@@ -2956,7 +2963,9 @@ mod text_view {
                     y += h;
                 }
 
-                (frame.full_rect(), frame.full_rect())
+                // use empty frame for this view
+                // as it sometimes interferes with Qt operations
+                (Rect::default(), frame.full_rect())
             }
         }
 
@@ -3061,7 +3070,7 @@ mod text_view {
                 text_view_set_page_id(backing, self.page.id, s);
                 let backing_id = backing as usize;
 
-                // mark all lines as dirty initially so we can update lines
+                // mark all lines as dirty initially, so we can update lines
                 for run in self.page.runs.borrow(s).iter() {
                     let mut gui = *run.gui_info.borrow(s);
                     gui.dirty = true;
@@ -3187,7 +3196,7 @@ mod text_view {
                 let total_height = self.page.gui_info.borrow(s).content_height;
                 let rect = Rect::new(0.0, 0.0, frame.w, total_height);
 
-                // very ugly, but cold branch anyways
+                // very ugly, but cold branch anyway
                 // note that we can't invalidate right now
                 // as that's a double borrow. Might find way to relax this in future
                 if (rect.w - self.last_size.w).abs() > geo::EPSILON {
@@ -3230,7 +3239,6 @@ mod text_view {
                 if *self.full_state.selected_page.borrow(s) == Some(token) {
                     self.full_state.selected_page.apply(Set(None), s);
                 }
-
 
                 text_view_unfocus(self.text_view, s);
 
@@ -3379,7 +3387,7 @@ mod text_view {
                             true
                         }, s);
                         // make sure to set it before we add
-                        // the listener so we don't invalidate instantly
+                        // the listener, so we don't invalidate instantly
                         run.gui_info.apply(Set(curr), s);
 
                         let invalidator_copy = weak_inv.clone();

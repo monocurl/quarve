@@ -160,6 +160,8 @@ public:
             }
         });
 
+        setUndoRedoEnabled(false);
+
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
         setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -372,33 +374,32 @@ back_text_field_paste(void *view)
 // MARK: textview
 class TextView : public QTextEdit {
 public:
+    fat_pointer text_view_state{};
+    fat_pointer selected{};
+    fat_pointer key_handler{};
+    bool executing_back;
+    int32_t page_id;
+
     TextView() : QTextEdit(), executing_back(false), page_id(0) {
         setFrameStyle(QFrame::NoFrame);
         setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         setContentsMargins(0, 0, 0, 0);
         document()->setDocumentMargin(0);
+        this->setStyleSheet(QString("QTextEdit { background: transparent; border: none; } "));
 
         setAcceptRichText(false);
         setUndoRedoEnabled(false);
         setAutoFormatting(QTextEdit::AutoNone);
 
-        // Connect text change handler
         connect(document(), &QTextDocument::contentsChange, this,
             [this](int position, int removed, int added) {
-                std::cerr << "Executed Contents Change " << std::endl;
                 if (!executing_back) {
-                    QString addedText = document()->toPlainText().mid(position, added);
+                    QString addedText = added ? document()->toPlainText().mid(position, added) : QString();
                     front_replace_textview_range(text_view_state, position, removed,
                         reinterpret_cast<const uint8_t*>(addedText.toUtf8().constData()));
-                }
-            });
 
-        // Connect selection change handler
-        connect(this, &QTextEdit::selectionChanged, this,
-            [this]() {
-                std::cerr << "Executed Selection Change " << std::endl;
-                if (!executing_back) {
+                    // sometimes it doesn't notify properly (such as after option delete)
                     QTextCursor cursor = textCursor();
                     front_set_textview_selection(text_view_state,
                         cursor.selectionStart(),
@@ -406,64 +407,80 @@ public:
                 }
             });
 
-        installEventFilter(this);
+        connect(document(), &QTextDocument::cursorPositionChanged, this,
+            [this]() {
+                if (!executing_back) {
+                    QTextCursor cursor = textCursor();
+                    front_set_textview_selection(text_view_state,
+                        cursor.selectionStart(),
+                        cursor.selectionEnd() - cursor.selectionStart());
+                }
+            });
     }
 
-    bool eventFilter(QObject *obj, QEvent *event) override {
-        if (event->type() == QEvent::KeyPress) {
-            QKeyEvent *keyEvent = static_cast<QKeyEvent *>(event);
-
-            if (keyEvent->key() == Qt::Key_Escape) {
-                if (front_execute_key_callback(key_handler, TEXTVIEW_CALLBACK_KEYCODE_ESCAPE)) {
-                    return true;
-                }
-                clearFocus();
-                return true;
+protected:
+    void keyPressEvent(QKeyEvent* keyEvent) override {
+        if (keyEvent->key() == Qt::Key_Escape) {
+            if (front_execute_key_callback(key_handler, TEXTVIEW_CALLBACK_KEYCODE_ESCAPE)) {
+                keyEvent->accept();
+                return;
             }
-            else if (keyEvent->key() == Qt::Key_Tab) {
-                if (front_execute_key_callback(key_handler, TEXTVIEW_CALLBACK_KEYCODE_TAB)) {
-                    return true;
-                }
+            clearFocus();
+            keyEvent->accept();
+            return;
+        }
+        else if (keyEvent->key() == Qt::Key_Tab) {
+            if (front_execute_key_callback(key_handler, TEXTVIEW_CALLBACK_KEYCODE_TAB)) {
+                keyEvent->accept();
+                return;
             }
-            else if (keyEvent->key() == Qt::Key_Backtab) {
-                if (front_execute_key_callback(key_handler, TEXTVIEW_CALLBACK_KEYCODE_UNTAB)) {
-                    return true;
-                }
+        }
+        else if (keyEvent->key() == Qt::Key_Backtab) {
+            if (front_execute_key_callback(key_handler, TEXTVIEW_CALLBACK_KEYCODE_UNTAB)) {
+                keyEvent->accept();
+                return;
             }
-            else if (keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter) {
-                if (keyEvent->modifiers() & Qt::ShiftModifier) {
-                    if (front_execute_key_callback(key_handler, TEXTVIEW_CALLBACK_KEYCODE_NEWLINE)) {
-                        return true;
-                    }
-                } else {
-                    if (front_execute_key_callback(key_handler, TEXTVIEW_CALLBACK_KEYCODE_ALT_NEWLINE)) {
-                        return true;
-                    }
+        }
+        else if (keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter) {
+            if (keyEvent->modifiers() & Qt::ShiftModifier) {
+                if (front_execute_key_callback(key_handler, TEXTVIEW_CALLBACK_KEYCODE_ALT_NEWLINE)) {
+                    keyEvent->accept();
+                    return;
                 }
-            }
-            else if (keyEvent->key() == Qt::Key_Up) {
-                if (front_execute_key_callback(key_handler, TEXTVIEW_CALLBACK_KEYCODE_UP)) {
-                    return true;
-                }
-            }
-            else if (keyEvent->key() == Qt::Key_Down) {
-                if (front_execute_key_callback(key_handler, TEXTVIEW_CALLBACK_KEYCODE_DOWN)) {
-                    return true;
-                }
-            }
-            else if (keyEvent->key() == Qt::Key_Left) {
-                if (front_execute_key_callback(key_handler, TEXTVIEW_CALLBACK_KEYCODE_LEFT)) {
-                    return true;
-                }
-            }
-            else if (keyEvent->key() == Qt::Key_Right) {
-                if (front_execute_key_callback(key_handler, TEXTVIEW_CALLBACK_KEYCODE_RIGHT)) {
-                    return true;
+            } else {
+                if (front_execute_key_callback(key_handler, TEXTVIEW_CALLBACK_KEYCODE_NEWLINE)) {
+                    keyEvent->accept();
+                    return;
                 }
             }
         }
+        else if (keyEvent->key() == Qt::Key_Up) {
+            if (front_execute_key_callback(key_handler, TEXTVIEW_CALLBACK_KEYCODE_UP)) {
+                keyEvent->accept();
+                return;
+            }
+        }
+        else if (keyEvent->key() == Qt::Key_Down) {
+            if (front_execute_key_callback(key_handler, TEXTVIEW_CALLBACK_KEYCODE_DOWN)) {
+                keyEvent->accept();
+                return;
+            }
+        }
+        else if (keyEvent->key() == Qt::Key_Left) {
+            if (front_execute_key_callback(key_handler, TEXTVIEW_CALLBACK_KEYCODE_LEFT)) {
+                keyEvent->accept();
+                return;
+            }
+        }
+        else if (keyEvent->key() == Qt::Key_Right) {
+            if (front_execute_key_callback(key_handler, TEXTVIEW_CALLBACK_KEYCODE_RIGHT)) {
+                keyEvent->accept();
+                return;
+            }
+        }
 
-        return QTextEdit::eventFilter(obj, event);
+        // fallthrough
+        QTextEdit::keyPressEvent(keyEvent);
     }
 
     void focusInEvent(QFocusEvent *e) override {
@@ -481,12 +498,6 @@ public:
         front_free_textview_state(text_view_state);
         front_free_key_callback(key_handler);
     }
-
-    fat_pointer text_view_state{};
-    fat_pointer selected{};
-    fat_pointer key_handler{};
-    bool executing_back;
-    int32_t page_id;
 };
 
 extern "C" void *
@@ -650,7 +661,6 @@ back_text_view_get_line_height(void *tv, size_t line, size_t start, size_t end, 
     auto* textView = static_cast<TextView*>(tv);
     QTextBlock block = textView->document()->findBlock(start);
     double ret = block.layout()->boundingRect().height();
-    std::cerr << "Return Line Height " << ret << '\n';
     return ret;
 }
 

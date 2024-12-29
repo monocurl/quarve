@@ -2,6 +2,7 @@
 #import "util.h"
 #import "color.h"
 #import "front.h"
+#import "layout_view.h"
 
 static NSMutableDictionary* font_cache = nil;
 

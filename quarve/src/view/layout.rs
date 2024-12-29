@@ -1,14 +1,18 @@
+pub use general_layout::*;
+pub use vec_layout::*;
+
 mod general_layout {
     use std::marker::PhantomData;
+
     use crate::core::{Environment, MSlock};
     use crate::event::{Event, EventResult};
-    use crate::state::slock_cell::{MainSlockCell};
+    use crate::state::slock_cell::MainSlockCell;
     use crate::util::geo::{Rect, Size};
-    use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, Subtree, ViewProvider};
+    use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, ViewProvider, WeakInvalidator};
 
     pub trait LayoutProvider<E>: Sized + 'static where E: Environment {
-        type DownContext: 'static;
         type UpContext: 'static;
+        type DownContext: 'static;
 
         fn into_layout_view_provider(self) -> LayoutViewProvider<E, Self> {
             LayoutViewProvider(self, PhantomData)
@@ -133,13 +137,23 @@ mod general_layout {
         }
     }
 }
-pub use general_layout::*;
 
 mod vec_layout {
+    pub use binding_layout::*;
+    pub use flex::*;
+    pub use hetero_layout::*;
+    pub use hstack::*;
+    pub use impls::*;
+    pub use macros::*;
+    pub use signal_layout::*;
+    pub use vstack::*;
+    pub use zstack::*;
+
     use crate::core::{Environment, MSlock};
     use crate::util::FromOptions;
     use crate::util::geo::{Rect, Size};
-    use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, ViewProvider, ViewRef};
+    use crate::view::{EnvRef, IntoViewProvider, ViewProvider, ViewRef, WeakInvalidator};
+
     // workaround for TAIT
     fn into_view_provider<E, I>(i: I, e: &E::Const, s: MSlock)
                                 -> impl ViewProvider<E, UpContext=I::UpContext, DownContext=I::DownContext> + 'static
@@ -446,15 +460,15 @@ mod vec_layout {
             }
         }
     }
-    pub use macros::*;
 
     // FIXME could make more organized
     mod hetero_layout {
         use std::marker::PhantomData;
+
         use crate::core::{Environment, MSlock};
         use crate::util::geo::{Rect, Size};
-        use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, Subtree, UpContextAdapter, View, ViewProvider, ViewRef};
-        use crate::view::layout::{VecLayoutProvider};
+        use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, UpContextAdapter, View, ViewProvider, ViewRef, WeakInvalidator};
+        use crate::view::layout::VecLayoutProvider;
 
         pub trait HeteroIVPNode<E, U, D> : 'static where E: Environment, U: 'static, D: 'static {
             fn into_layout(self, env: &E::Const, build: impl HeteroVPNode<E, U, D>, s: MSlock) -> impl HeteroVPNode<E, U, D>;
@@ -736,14 +750,14 @@ mod vec_layout {
             }
         }
     }
-    pub use hetero_layout::*;
 
     mod binding_layout {
         use std::marker::PhantomData;
+
         use crate::core::{Environment, MSlock};
-        use crate::state::{StateFilter, Binding, Buffer, GroupAction, GroupBasis, StoreContainer, VecActionBasis, Word};
+        use crate::state::{Binding, Buffer, GroupAction, GroupBasis, StateFilter, StoreContainer, VecActionBasis, Word};
         use crate::util::geo::{Rect, Size};
-        use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, Subtree, UpContextAdapter, View, ViewProvider};
+        use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, UpContextAdapter, View, ViewProvider, WeakInvalidator};
         use crate::view::layout::vec_layout::into_view_provider;
         use crate::view::layout::VecLayoutProvider;
 
@@ -1035,16 +1049,16 @@ mod vec_layout {
             }
         }
     }
-    pub use binding_layout::*;
 
     mod signal_layout {
         use std::marker::PhantomData;
+
         use crate::core::{Environment, MSlock};
         use crate::state::Signal;
         use crate::util::geo::{Rect, Size};
-        use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, Subtree, UpContextAdapter, View, ViewProvider};
-        use crate::view::layout::{VecLayoutProvider};
+        use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, UpContextAdapter, View, ViewProvider, WeakInvalidator};
         use crate::view::layout::vec_layout::into_view_provider;
+        use crate::view::layout::VecLayoutProvider;
 
         // FIXME make a view buffer to avoid over allocating
         pub struct VecSignalLayout<E, T, S, M, P, L>
@@ -1224,14 +1238,13 @@ mod vec_layout {
             }
         }
     }
-    pub use signal_layout::*;
 
     mod vstack {
         use crate::core::{Environment, MSlock};
-        use crate::util::{FromOptions};
+        use crate::util::FromOptions;
         use crate::util::geo::{HorizontalAlignment, Point, Rect, ScreenUnit, Size, VerticalDirection};
-        use crate::view::layout::{VecLayoutProvider};
         use crate::view::{EnvRef, TrivialContextViewRef, ViewRef};
+        use crate::view::layout::VecLayoutProvider;
         use crate::view::util::SizeContainer;
 
         #[derive(Default)]
@@ -1420,14 +1433,13 @@ mod vec_layout {
             }
         }
     }
-    pub use vstack::*;
 
     mod hstack {
         use crate::core::{Environment, MSlock};
         use crate::util::FromOptions;
         use crate::util::geo::{HorizontalDirection, Point, Rect, ScreenUnit, Size, VerticalAlignment};
-        use crate::view::layout::{VecLayoutProvider};
         use crate::view::{EnvRef, TrivialContextViewRef, ViewRef};
+        use crate::view::layout::VecLayoutProvider;
         use crate::view::util::SizeContainer;
 
         pub struct HStack(SizeContainer, HStackOptions);
@@ -1614,7 +1626,6 @@ mod vec_layout {
             }
         }
     }
-    pub use hstack::*;
 
     mod zstack {
         use crate::core::{Environment, MSlock};
@@ -1732,7 +1743,6 @@ mod vec_layout {
             }
         }
     }
-    pub use zstack::*;
 
     mod flex {
         use crate::core::{Environment, MSlock};
@@ -2254,16 +2264,15 @@ mod vec_layout {
             }
         }
     }
-    pub use flex::*;
 
     mod impls {
-        use crate::state::{FixedSignal, Signal, StoreContainer, Binding, StateFilter};
+        use crate::{impl_binding_layout_extension, impl_hetero_layout, impl_iterator_layout_extension, impl_signal_layout_extension};
         use crate::core::Environment;
-        use crate::view::IntoViewProvider;
         use crate::core::MSlock;
-        use crate::{impl_hetero_layout, impl_binding_layout_extension, impl_signal_layout_extension, impl_iterator_layout_extension};
-        use crate::view::layout::{VecSignalLayout, VecBindingLayout, VecLayoutProvider, VStack, ZStack, HStack, FlexStack};
-        use crate::util::{FromOptions};
+        use crate::state::{Binding, FixedSignal, Signal, StateFilter, StoreContainer};
+        use crate::util::FromOptions;
+        use crate::view::IntoViewProvider;
+        use crate::view::layout::{FlexStack, HStack, VecBindingLayout, VecLayoutProvider, VecSignalLayout, VStack, ZStack};
 
         impl_signal_layout_extension!(VStack, SignalVMap, sig_vmap, sig_vmap_options, where E: Environment);
         impl_binding_layout_extension!(VStack, BindingVMap, binding_vmap, binding_vmap_options, where E: Environment);
@@ -2293,6 +2302,4 @@ mod vec_layout {
         impl_hetero_layout!(FlexStack, flexstack);
         pub use flexstack;
     }
-    pub use impls::*;
 }
-pub use vec_layout::*;

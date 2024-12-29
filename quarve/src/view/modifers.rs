@@ -2331,6 +2331,9 @@ mod cursor {
     }
 
     pub trait CursorModifiable<E>: IntoViewProvider<E> where E: Environment {
+        /// TODO this is currently platform dependent
+        /// as on qt it will be cursor for entire subtree
+        /// but for cocoa it's only this view
         fn cursor(self, cursor: Cursor) -> impl IntoViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext>;
     }
 

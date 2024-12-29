@@ -2,9 +2,8 @@ use quarve::core::clock_signal;
 use quarve::event::EventModifiers;
 use quarve::prelude::*;
 use quarve::state::{Filterless, TokenStore};
-use quarve::view::color_view::{ColorView, EmptyView};
-use quarve::view::control::{Button, Dropdown};
-use quarve::view::image_view::ImageView;
+use quarve::view::color_view::ColorView;
+use quarve::view::control::Dropdown;
 use quarve::view::scroll::ScrollView;
 use quarve::view::text::{Text, TextField, TextModifier};
 
@@ -40,7 +39,6 @@ fn view(s: MSlock) -> impl IVP {
     let color = clock_signal(s)
         .map(|u| rgb((((u * 255.0) as u64) % 255) as u8, 127, 100), s);
 
-
     let clock = clock_signal(s);
     let signal = clock
         .map(|c| {
@@ -62,75 +60,58 @@ fn view(s: MSlock) -> impl IVP {
             .wrap()
     ).intrinsic(800, 600);
 
-
-    VStack::hetero_options(VStackOptions::default().align(HorizontalAlignment::Center))
-        .push(
-            Dropdown::new(selection.binding())
-                .option("Damascus")
-                .option("Solidarity")
-                .intrinsic(100, 30)
-                .padding(10)
-                .border(BLUE, 1)
-        )
-        .push(
-            Text::from_signal(selected.map(|s| {
-                format!("{:?}", *s)
-            }, s))
-        )
-        .push(
-            TextField::new(current.binding())
-                .focused_if_eq(selected.binding(), 0)
-                .text_backcolor(BLACK)
-                .text_color(ORANGE)
-        )
-        .push(
-            TextField::new(current2.binding())
-                .focused_if_eq(selected.binding(), 1)
-                .text_backcolor(WHITE)
-                .text_color(BLUE)
-        )
-        .push(
-            ScrollView::vertical(
-                vstack()
-                    .push(
-                        text("This is a lot of text\n line 2\n line 3")
-                            .max_lines(2)
-                            .text_font("SignikaNegative-Regular.ttf")
-                    )
-                    .push(dynamic_flex)
-                    .push(ColorView::new_signal(color).intrinsic(200, 400))
-                    .push(button("Click Me 3!", |_| println!("Clicked")))
-                    .frame(F.unlimited_width().align(Alignment::Trailing))
+    ScrollView::vertical(
+        VStack::hetero_options(VStackOptions::default().align(HorizontalAlignment::Center))
+            .push(
+                Dropdown::new(selection.binding())
+                    .option("Damascus")
+                    .option("Solidarity")
+                    .intrinsic(100, 30)
+                    .padding(10)
+                    .border(BLUE, 1)
             )
-        )
-        .push(button("Click Me 2!", |_| println!("Clicked 2")))
-        .push(
-            RED.intrinsic(100, 100)
-                .offset(-20, 0)
-                .padding(10)
-                .layer(L.radius(25).bg_color(rgba(255, 255, 255, 100)))
-        )
-        .push(
-            Button::new_with_label(BLUE.intrinsic(100, 100), |_s| {
-                println!("Hello")
-            })
-        )
-        .push(
-            ImageView::named("rose.png")
-        )
-        .push(
-            EmptyView.intrinsic(100, 100)
-                .border(RED, 1)
-        )
-        .frame(
-            F.intrinsic(400, 400).unlimited_stretch()
-                .align(Alignment::Center)
-        )
-        .layer(
-            Layer::default()//.border(RED, 1)
-                .bg_color(PURPLE)
-                .radius(4)
-        )
+            .push(
+                Text::from_signal(selected.map(|s| {
+                    format!("{:?}", *s)
+                }, s))
+            )
+            .push(
+                TextField::new(current2.binding())
+                    .focused_if_eq(selected.binding(), 1)
+                    .text_backcolor(WHITE)
+                    .text_color(BLUE)
+            )
+            .push(
+                TextField::new(current.binding())
+                    .focused_if_eq(selected.binding(), 0)
+                    .text_backcolor(BLACK)
+                    .text_color(ORANGE)
+            )
+            .push(
+                text("This is a lot of text\n line 2\n line 3")
+                    .max_lines(2)
+                    .text_font("SignikaNegative-Regular.ttf")
+            )
+            .push(dynamic_flex)
+            .push(ColorView::new_signal(color).intrinsic(200, 400))
+            .push(button("Click Me 3!", |_| println!("Clicked")))
+            .push(button("Click Me 2!", |_| println!("Clicked 2")))
+            .push(
+                RED.intrinsic(100, 100)
+                    .offset(-20, 0)
+                    .padding(10)
+                    .layer(L.radius(25).bg_color(rgba(255, 255, 255, 100)))
+            )
+            .layer(
+                Layer::default()//.border(RED, 1)
+                    .bg_color(PURPLE)
+                    .radius(4)
+            )
+            .frame(
+                F.intrinsic(400, 400).unlimited_width()
+                    .align(Alignment::Center)
+            )
+    )
 }
 
 // The main code where you specify a view hierarchy

@@ -103,7 +103,9 @@ impl TextViewProvider<Env> for TVP {
                     }
                 }
 
+
                 let page = state.page(0, s);
+                println!("Content {:?}", page.build_full_content(s));
                 let mut bold = false;
                 for run in page.runs(s).iter() {
                     // inefficient implementation character by character,
