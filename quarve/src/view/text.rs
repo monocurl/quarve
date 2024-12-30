@@ -3327,8 +3327,6 @@ mod text_view {
                         EventResult::NotHandled
                     }
                     else if mouse_down && !intersects {
-                        // TODO
-                        println!("Release Focus");
                         EventResult::FocusRelease
                     }
                     else {

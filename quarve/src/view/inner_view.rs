@@ -430,7 +430,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         let mut curr = self.graph.superview.as_ref().and_then(|c| c.upgrade());
         while let Some(at) = curr {
             let this = at.borrow_main(s);
-            view = view.translate(this.view_rect(s).origin() + this.scroll_offset(s));
+            view = view.translate(this.view_rect(s).origin() - this.scroll_offset(s));
             curr = this.superview();
         }
 
