@@ -28,7 +28,7 @@ impl ApplicationProvider for App {
 
 fn view(s: MSlock) -> impl IVP {
     let selection = Store::new(None);
-    selection.listen(|a, s| {
+    selection.listen(|a, _s| {
         println!("Changed {:?}", a);
         true
     }, s);

@@ -1181,6 +1181,8 @@ mod store {
         fn ptr_eq(&self, other: &Self) -> bool;
 
         fn is_applying(&self, s: Slock<impl ThreadMarker>) -> bool;
+        fn is_borrowed(&self, s: Slock<impl ThreadMarker>) -> bool;
+
         fn apply(&self, action: impl IntoAction<<<F as StateFilter>::Target as Stateful>::Action, <F as StateFilter>::Target>, s: Slock<impl ThreadMarker>);
         fn apply_coupled(&self, action: impl IntoAction<<<F as StateFilter>::Target as Stateful>::Action, <F as StateFilter>::Target>, s: Slock<impl ThreadMarker>) {
             if !self.is_applying(s) {
@@ -1358,6 +1360,10 @@ mod store {
 
             fn is_applying(&self, s: Slock<impl ThreadMarker>) -> bool {
                 self.inner_ref().is_borrowed_mut(s)
+            }
+
+            fn is_borrowed(&self, s: Slock<impl ThreadMarker>) -> bool {
+                self.inner_ref().is_borrowed(s)
             }
 
             fn apply(&self, action: impl IntoAction<<<F as StateFilter>::Target as Stateful>::Action, <F as StateFilter>::Target>, s: Slock<impl ThreadMarker>) {

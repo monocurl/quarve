@@ -92,7 +92,7 @@ mod text {
             }
         }
     }
-    
+
     impl<S> Text<S> where S: Signal<Target=String> {
         pub fn from_signal(signal: S) -> Self {
             Text {
@@ -479,7 +479,7 @@ mod text_field {
             self.cut_menu.unset(s);
             self.paste_menu.unset(s);
         }
-        
+
         fn handle_event(&self, e: &Event, _s: MSlock) -> EventResult {
             if e.is_mouse() {
                 if let EventPayload::Mouse(MouseEvent::LeftDown, at) = &e.payload {
@@ -655,7 +655,7 @@ mod text_view {
                     }
                 }
             }
-            
+
             impl<A> Default for RangedAttributeHolder<A> where A: ToCharAttribute {
                 fn default() -> Self {
                     RangedAttributeHolder {
@@ -882,7 +882,8 @@ mod text_view {
                 // maintained more or less by state which adds the listeners
                 // for insertion, pagevp is responsible for setting it to true
                 pub content_dirty: bool,
-                pub attribute_dirty: bool,
+                pub run_attribute_dirty: bool,
+                pub char_attribute_dirty: bool,
                 // maintained by run
                 pub codeunits: usize,
 
@@ -908,6 +909,7 @@ mod text_view {
             use crate::view::text::text_view::state::attribute_holder::{AttributeHolder, RangedAttributeAction, RangedAttributeHolder, RangedBasis};
             use crate::view::text::text_view::state::AttributeSet;
             use crate::view::text::text_view::state::run_gui_info::RunGUIInfo;
+            use crate::view::text::ToCharAttribute;
             use crate::view::undo_manager::{history_elide, UndoBucket};
 
             pub struct Run<I, D> where I: AttributeSet, D: AttributeSet {
@@ -923,6 +925,67 @@ mod text_view {
 
                 intrinsic_attribute: Store<AttributeHolder<I::RunAttribute>>,
                 derived_attribute: DerivedStore<AttributeHolder<D::RunAttribute>>,
+            }
+
+            pub struct RunTransaction<'a, A> where A: ToCharAttribute {
+                content: &'a RangedAttributeHolder<A>,
+                actions: RangedAttributeAction<A>,
+                old: usize,
+            }
+
+            impl<'a, A> RunTransaction<'a, A> where A: ToCharAttribute {
+                pub fn set(&mut self, attribute: A, for_range: Range<usize>) {
+                    assert!(for_range.start >= self.old, "At this time, actions in a transaction must proceed strictly left to right");
+                    if self.content.range_definitely_equals(for_range.clone(), &attribute) {
+                        return
+                    }
+
+                    self.actions.actions.push(RangedBasis::Delete {
+                        at: for_range.start,
+                        len: for_range.len(),
+                    });
+                    self.actions.actions.push(RangedBasis::Insert {
+                        at: for_range.start,
+                        len: for_range.len(),
+                        attribute
+                    });
+
+                    self.old = for_range.end;
+                }
+
+                // FIXME, these two could be more efficient (no clones or vec)
+                pub fn modify(&mut self, mut f: impl FnMut(A) -> A, range: Range<usize>) {
+                    assert!(range.start >= self.old, "At this time, actions in a transaction must proceed strictly left to right");
+
+                    let subrange = self.content.subrange(range.clone()).attributes;
+
+                    let mut loc = range.start;
+                    let mut any_changed = false;
+                    let mut mapped_subrange: Vec<_> = subrange.into_iter().map(|(a, l)| {
+                        let attribute = f(a);
+                        // purposefully short circuit
+                        any_changed = any_changed || attribute != *self.content.attribute_at(loc);
+                        let ret = RangedBasis::Insert {
+                            at: loc,
+                            len: l,
+                            attribute,
+                        };
+                        loc += l;
+                        ret
+                    }).collect();
+
+                    if !any_changed {
+                        return;
+                    }
+
+                    self.actions.actions.push(RangedBasis::Delete {
+                        at: range.start,
+                        len: range.len(),
+                    });
+                    self.actions.actions.append(&mut mapped_subrange);
+
+                    self.old = range.end;
+                }
             }
 
             impl<I, D> StoreContainer for Run<I, D> where I: AttributeSet, D: AttributeSet {
@@ -962,7 +1025,8 @@ mod text_view {
                             added_decoration_listener: false,
                             added_vp_listener: false,
                             content_dirty: true,
-                            attribute_dirty: true,
+                            run_attribute_dirty: true,
+                            char_attribute_dirty: true,
                             codeunits,
                             line: 0,
                             page_height: 0.0,
@@ -978,8 +1042,8 @@ mod text_view {
                     let gui = run.gui_info.binding();
                     run.char_intrinsic_attribute.listen(move |_, s| {
                         let mut g = *gui.borrow(s);
-                        if !g.attribute_dirty {
-                            g.attribute_dirty = true;
+                        if !g.char_attribute_dirty {
+                            g.char_attribute_dirty = true;
                             gui.apply(Set(g), s);
                         }
                         true
@@ -988,8 +1052,8 @@ mod text_view {
                     let gui = run.gui_info.binding();
                     run.char_derived_attribute.listen(move |_, s| {
                         let mut g = *gui.borrow(s);
-                        if !g.attribute_dirty {
-                            g.attribute_dirty = true;
+                        if !g.char_attribute_dirty {
+                            g.char_attribute_dirty = true;
                             gui.apply(Set(g), s);
                         }
                         true
@@ -998,8 +1062,8 @@ mod text_view {
                     let gui = run.gui_info.binding();
                     run.intrinsic_attribute.listen(move |_, s| {
                         let mut g = *gui.borrow(s);
-                        if !g.attribute_dirty {
-                            g.attribute_dirty = true;
+                        if !g.run_attribute_dirty {
+                            g.run_attribute_dirty = true;
                             gui.apply(Set(g), s);
                         }
                         true
@@ -1008,8 +1072,8 @@ mod text_view {
                     let gui = run.gui_info.binding();
                     run.derived_attribute.listen(move |_, s| {
                         let mut g = *gui.borrow(s);
-                        if !g.attribute_dirty {
-                            g.attribute_dirty = true;
+                        if !g.run_attribute_dirty {
+                            g.run_attribute_dirty = true;
                             gui.apply(Set(g), s);
                         }
                         true
@@ -1149,9 +1213,6 @@ mod text_view {
                     }), s);
                 }
 
-                /// Due to a race condition, modification of text contents
-                /// may only be performed on the main thread
-                // (technically an undo could be called on other threads, but this won't happen in practice)
                 pub(crate) fn replace(&self, range: Range<usize>, with: impl Into<String>, s: MSlock) {
                     self.replace_with_attributes(
                         range, with,
@@ -1160,8 +1221,6 @@ mod text_view {
                     );
                 }
 
-                /// Due to a race condition, modification of text contents
-                /// may only be performed on the main thread
                 pub(crate) fn replace_with_attributes(
                     &self,
                     range: Range<usize>,
@@ -1217,122 +1276,72 @@ mod text_view {
                     self.debug_assertions(s);
                 }
 
-                pub fn set_char_intrinsic(&self, attribute: I::CharAttribute, for_range: Range<usize>, s: Slock<impl ThreadMarker>) {
-                    if self.char_intrinsic_attribute.borrow(s).range_definitely_equals(for_range.clone(), &attribute) {
-                        return
-                    }
-
-                    self.char_intrinsic_attribute.apply(RangedAttributeAction {
-                        actions: vec![
-                            RangedBasis::Delete {
-                                at: for_range.start,
-                                len: for_range.len(),
+                pub fn char_intrinsic_transaction(&self, transaction: impl FnOnce(&mut RunTransaction<I::CharAttribute>), s: Slock<impl ThreadMarker>) {
+                    let action = {
+                        let cia = self.char_intrinsic_attribute.borrow(s);
+                        let mut rt = RunTransaction {
+                            content: &cia,
+                            actions: RangedAttributeAction {
+                                actions: vec![],
                             },
-                            RangedBasis::Insert {
-                                at: for_range.start,
-                                len: for_range.len(),
-                                attribute
-                            }
-                        ],
-                    }, s);
+                            old: 0,
+                        };
 
-                    self.debug_assertions(s);
+                        transaction(&mut rt);
+                        rt.actions
+                    };
+
+                    if !action.actions.is_empty() {
+                        self.char_intrinsic_attribute.apply(action, s);
+                        self.debug_assertions(s);
+                    }
+                }
+
+                pub fn char_derived_transaction(&self, transaction: impl FnOnce(&mut RunTransaction<D::CharAttribute>), s: Slock<impl ThreadMarker>) {
+                    let action = {
+                        let cda = self.char_derived_attribute.borrow(s);
+                        let mut rt = RunTransaction {
+                            content: &cda,
+                            actions: RangedAttributeAction {
+                                actions: vec![],
+                            },
+                            old: 0,
+                        };
+
+                        transaction(&mut rt);
+                        rt.actions
+                    };
+
+                    if !action.actions.is_empty() {
+                        history_elide(|| {
+                            self.char_derived_attribute.apply(action, s);
+                        });
+                        self.debug_assertions(s);
+                    }
+                }
+
+                pub fn set_char_intrinsic(&self, attribute: I::CharAttribute, for_range: Range<usize>, s: Slock<impl ThreadMarker>) {
+                    self.char_intrinsic_transaction(move |r| {
+                        r.set(attribute, for_range);
+                    }, s);
                 }
 
                 pub fn set_char_derived(&self, attribute: D::CharAttribute, for_range: Range<usize>, s: Slock<impl ThreadMarker>) {
-                    if self.char_derived_attribute.borrow(s).range_definitely_equals(for_range.clone(), &attribute) {
-                        return
-                    }
-
-                    history_elide(|| {
-                        self.char_derived_attribute.apply(RangedAttributeAction {
-                            actions: vec![
-                                RangedBasis::Delete {
-                                    at: for_range.start,
-                                    len: for_range.len(),
-                                },
-                                RangedBasis::Insert {
-                                    at: for_range.start,
-                                    len: for_range.len(),
-                                    attribute
-                                }
-                            ],
-                        }, s);
-                    });
-
-                    self.debug_assertions(s);
-                }
-
-                // FIXME, these two could be more efficient (no clones or vec)
-                pub fn modify_char_intrinsic(&self, range: Range<usize>, mut f: impl FnMut(I::CharAttribute) -> I::CharAttribute, s: Slock<impl ThreadMarker>) {
-                    let cia = self.char_intrinsic_attribute.borrow(s);
-                    let subrange = cia.subrange(range.clone()).attributes;
-
-                    let mut loc = range.start;
-                    let mut any_changed = false;
-                    let mut mapped_subrange: Vec<_> = subrange.into_iter().map(|(a, l)| {
-                        let attribute = f(a);
-                        // purposefully short circuit
-                        any_changed = any_changed || attribute != *cia.attribute_at(loc);
-                        let ret = RangedBasis::Insert {
-                            at: loc,
-                            len: l,
-                            attribute,
-                        };
-                        loc += l;
-                        ret
-                    }).collect();
-
-                    if !any_changed {
-                        return;
-                    }
-
-                    mapped_subrange.insert(0, RangedBasis::Delete {
-                        at: range.start,
-                        len: range.len(),
-                    });
-
-                    self.char_intrinsic_attribute.apply(RangedAttributeAction {
-                        actions: mapped_subrange
+                    self.char_derived_transaction(move |r| {
+                        r.set(attribute, for_range);
                     }, s);
-
-                    self.debug_assertions(s);
                 }
 
-                pub fn modify_char_derived(&self, range: Range<usize>, mut f: impl FnMut(D::CharAttribute) -> D::CharAttribute, s: Slock<impl ThreadMarker>) {
-                    let cda = self.char_derived_attribute.borrow(s);
-                    let subrange = cda.subrange(range.clone()).attributes;
+                pub fn modify_char_intrinsic(&self, f: impl FnMut(I::CharAttribute) -> I::CharAttribute, range: Range<usize>, s: Slock<impl ThreadMarker>) {
+                    self.char_intrinsic_transaction(move |r| {
+                        r.modify(f, range);
+                    }, s);
+                }
 
-                    let mut loc = range.start;
-                    let mut any_changed = false;
-                    let mut mapped_subrange: Vec<_> = subrange.into_iter().map(|(a, l)| {
-                        let attribute = f(a);
-                        // purposefully short circuit
-                        any_changed = any_changed || attribute != *cda.attribute_at(loc);
-                        let ret = RangedBasis::Insert {
-                            at: loc,
-                            len: l,
-                            attribute,
-                        };
-                        loc += l;
-                        ret
-                    }).collect();
-
-                    if !any_changed {
-                        return;
-                    }
-
-                    mapped_subrange.insert(0, RangedBasis::Delete {
-                        at: range.start,
-                        len: range.len(),
-                    });
-                    history_elide(|| {
-                        self.char_derived_attribute.apply(RangedAttributeAction {
-                            actions: mapped_subrange
-                        }, s);
-                    });
-
-                    self.debug_assertions(s);
+                pub fn modify_char_derived(&self, range: Range<usize>, f: impl FnMut(D::CharAttribute) -> D::CharAttribute, s: Slock<impl ThreadMarker>) {
+                    self.char_derived_transaction(move |r| {
+                        r.modify(f, range);
+                    }, s);
                 }
 
                 pub fn content_action_listen(
@@ -1774,73 +1783,78 @@ mod text_view {
                         (end_run, end_char),
                         end,
                         move || {
-                        if own_undo_group {
-                            self.runs.undo_barrier(UndoBarrier::Weak, s);
-                        }
-
-                        // strategy:
-                        // 1) delete tips + intermediate runs
-
-                        if start_run == end_run {
-                            let range = start_char..end_char;
-                            self.run(start_run, s)
-                                .replace(range, "", s);
-                        } else {
-                            let start = self.run(start_run, s);
-                            start.replace(start_char..start.len(s), "", s);
-
-                            self.run(end_run, s)
-                                .replace(0..end_char, "", s);
-                        }
-
-                        if end_run > start_run + 1 {
-                            self.runs.apply(VecActionBasis::RemoveMany(start_run + 1..end_run), s);
-                        }
-
-                        // 2) if there was only one line and there's multiple segments, split this one run
-                        if start_run == end_run && segments.len() > 1 {
-                            let next = self.run(start_run, s).split_trail(start_char, s);
-                            self.runs.apply(VecActionBasis::Insert(next, start_run + 1), s);
-                        }
-
-                        // 3) if there were multiple lines and there's only one segment, merge the first and last
-                        if start_run < end_run && segments.len() == 1 {
-                            {
-                                let curr = self.run(start_run, s);
-                                let next = self.run(start_run + 1, s);
-                                curr.merge_from(next.deref(), s);
+                            if own_undo_group {
+                                self.runs.undo_barrier(UndoBarrier::Weak, s);
                             }
-                            self.remove_run_helper(start_run + 1, s);
-                        }
 
-                        // 4) handle insertion end points
-                        if segments.len() == 1 {
-                            self.run(start_run, s)
-                                .replace(start_char..start_char, segments[0], s);
-                        } else {
-                            self.run(start_run, s)
-                                .replace(start_char..start_char, segments[0], s);
+                            // strategy:
+                            // 1) delete tips + intermediate runs
 
-                            self.run(start_run + 1, s)
-                                .replace(0..0, segments[segments.len() - 1], s);
-                        }
+                            if start_run == end_run {
+                                let range = start_char..end_char;
+                                // a bit surprised that if statements don't create their own
+                                // drop scope apparently?
+                                self.run(start_run, s)
+                                    .replace(range, "", s);
+                            } else {
+                                let start = self.run(start_run, s);
+                                start.replace(start_char..start.len(s), "", s);
 
-                        // 5) handle intermediate runs relatively normally
-                        let intermediate_runs: Vec<Run<I, D>> = segments[1..(segments.len() - 1).max(1)].iter()
-                            .map(|seg| {
-                                let run = Run::new(s);
-                                run.replace(0..0, *seg, s);
-                                run
-                            })
-                            .collect();
-                        if !intermediate_runs.is_empty() {
-                            self.runs.apply(VecActionBasis::InsertMany(intermediate_runs, start_run + 1), s);
-                        }
+                                let end = self.run(end_run, s);
+                                end.replace(0..end_char, "", s);
+                            }
 
-                        if own_undo_group {
-                            self.runs.undo_barrier(UndoBarrier::Weak, s);
-                        }
-                    });
+                            if end_run > start_run + 1 {
+                                self.runs.apply(VecActionBasis::RemoveMany(start_run + 1..end_run), s);
+                            }
+
+                            // 2) if there was only one line and there's multiple segments, split this one run
+                            if start_run == end_run && segments.len() > 1 {
+                                let next = self.run(start_run, s)
+                                    .split_trail(start_char, s);
+
+                                self.runs.apply(VecActionBasis::Insert(next, start_run + 1), s);
+                            }
+
+                            // 3) if there were multiple lines and there's only one segment, merge the first and last
+                            if start_run < end_run && segments.len() == 1 {
+                                {
+                                    let curr = self.run(start_run, s);
+                                    let next = self.run(start_run + 1, s);
+                                    curr.merge_from(next.deref(), s);
+                                    drop((curr, next));
+                                }
+                                self.remove_run_helper(start_run + 1, s);
+                            }
+
+                            // 4) handle insertion end points
+                            if segments.len() == 1 {
+                                self.run(start_run, s)
+                                    .replace(start_char..start_char, segments[0], s);
+                            } else {
+                                self.run(start_run, s)
+                                    .replace(start_char..start_char, segments[0], s);
+
+                                self.run(start_run + 1, s)
+                                    .replace(0..0, segments[segments.len() - 1], s);
+                            }
+
+                            // 5) handle intermediate runs relatively normally
+                            let intermediate_runs: Vec<Run<I, D>> = segments[1..(segments.len() - 1).max(1)].iter()
+                                .map(|seg| {
+                                    let run = Run::new(s);
+                                    run.replace(0..0, *seg, s);
+                                    run
+                                })
+                                .collect();
+                            if !intermediate_runs.is_empty() {
+                                self.runs.apply(VecActionBasis::InsertMany(intermediate_runs, start_run + 1), s);
+                            }
+
+                            if own_undo_group {
+                                self.runs.undo_barrier(UndoBarrier::Weak, s);
+                            }
+                        });
                 }
 
                 pub fn build_full_content(&self, s: Slock<impl ThreadMarker>) -> String {
@@ -1991,6 +2005,22 @@ mod text_view {
                         );
                 }
             }
+
+            #[cfg(test)]
+            mod test {
+                use crate::view::text::{AttributeSet, CharAttribute, PageAttribute, RunAttribute};
+
+                struct AS;
+                impl AttributeSet for AS {
+                    type CharAttribute = CharAttribute;
+                    type RunAttribute = RunAttribute;
+                    type PageAttribute = PageAttribute;
+                }
+
+                pub fn test_weird_borrow() {
+                    // let s = Store
+                }
+            }
         }
 
         mod text_view_state {
@@ -2082,9 +2112,9 @@ mod text_view {
                 pub fn selected_page(&self, s: Slock<impl ThreadMarker>) -> Option<i32> {
                     let id = *self.selected_page.borrow(s);
                     id.and_then(|id| {
-                         self.pages.borrow(s).iter()
-                             .position(|page| page.id == id)
-                             .map(|i| i as i32)
+                        self.pages.borrow(s).iter()
+                            .position(|page| page.id == id)
+                            .map(|i| i as i32)
                     })
                 }
 
@@ -3020,8 +3050,8 @@ mod text_view {
         }
 
         struct PageVP<E, P, B> where
-                P: TextViewProvider<E>, E: Environment,
-                B: Binding<Filterless<ScreenUnit>>,
+            P: TextViewProvider<E>, E: Environment,
+            B: Binding<Filterless<ScreenUnit>>,
         {
             full_state: StoreContainerView<TextViewState<P::IntrinsicAttribute, P::DerivedAttribute>>,
             page: StoreContainerView<Page<P::IntrinsicAttribute, P::DerivedAttribute>>,
@@ -3096,7 +3126,8 @@ mod text_view {
                 for run in self.page.runs.borrow(s).iter() {
                     let mut gui = *run.gui_info.borrow(s);
                     gui.content_dirty = true;
-                    gui.attribute_dirty = true;
+                    gui.run_attribute_dirty = true;
+                    gui.char_attribute_dirty = true;
                     run.gui_info.apply(Set(gui), s);
                 }
 
@@ -3194,8 +3225,8 @@ mod text_view {
                             let gui = *run.gui_info.borrow(s);
                             let next_code_units = utf16_chars_copy + gui.codeunits + if i < lines - 1 { 1 } else { 0 };
 
-                            if (!end_applying_attributes && gui.attribute_dirty) || gui.content_dirty  {
-                                self.assign_attributes(utf16_chars_copy..next_code_units, i, run, s);
+                            if (!end_applying_attributes && (gui.run_attribute_dirty || gui.char_attribute_dirty)) || gui.content_dirty  {
+                                self.assign_attributes(utf16_chars_copy..next_code_units, i, run, gui.run_attribute_dirty, gui.char_attribute_dirty, s);
                             }
 
                             utf16_chars_copy = next_code_units;
@@ -3214,7 +3245,7 @@ mod text_view {
 
                             // if we changed the attributes, the content, or the width
                             // the line height may have changed
-                            if (gui.attribute_dirty && applied_attributes) ||
+                            if ((gui.run_attribute_dirty || gui.char_attribute_dirty) && applied_attributes) ||
                                 gui.content_dirty ||
                                 self.width_change
                             {
@@ -3222,14 +3253,15 @@ mod text_view {
                             }
 
                             // only send flush if necessary
-                            if (gui.attribute_dirty && applied_attributes)  ||
+                            if ((gui.run_attribute_dirty || gui.char_attribute_dirty) && applied_attributes)  ||
                                 gui.content_dirty ||
                                 self.width_change ||
                                 gui.line != i
                             {
                                 // we always apply attributes when there content change
                                 if applied_attributes || gui.content_dirty {
-                                    gui.attribute_dirty = false;
+                                    gui.run_attribute_dirty = false;
+                                    gui.char_attribute_dirty = false;
                                 }
                                 gui.content_dirty = false;
                                 gui.line = i;
@@ -3346,16 +3378,18 @@ mod text_view {
             where E: Environment, P: TextViewProvider<E>,
                   B: Binding<Filterless<ScreenUnit>>
         {
-            fn assign_attributes(&self, utf16_char_range: Range<usize>, line: usize, run: &Run<P::IntrinsicAttribute, P::DerivedAttribute>, s: MSlock) {
+            fn assign_attributes(&self, utf16_char_range: Range<usize>, line: usize, run: &Run<P::IntrinsicAttribute, P::DerivedAttribute>, do_run: bool, do_char: bool, s: MSlock) {
                 // adjust line attributes
-                let run_intrinsic = run.intrinsic(s);
-                let run_derived = run.derived(s);
-                text_view_set_run_attributes(self.text_view, line, utf16_char_range.clone(),
-                                             run_intrinsic.to_run_attribute().as_ref(),
-                                             run_derived.to_run_attribute().as_ref(), s);
+                if do_run {
+                    let run_intrinsic = run.intrinsic(s);
+                    let run_derived = run.derived(s);
+                    text_view_set_run_attributes(self.text_view, line, utf16_char_range.clone(),
+                                                 run_intrinsic.to_run_attribute().as_ref(),
+                                                 run_derived.to_run_attribute().as_ref(), s);
+                }
 
                 let string = run.content(s);
-                if string.is_empty() {
+                if string.is_empty() || !do_char {
                     return;
                 }
 
@@ -3413,7 +3447,8 @@ mod text_view {
                 let handle_run = move |run: &Run<P::IntrinsicAttribute, P::DerivedAttribute>, s: Slock| {
                     let mut curr = *run.gui_info.borrow(s);
                     curr.content_dirty = true;
-                    curr.attribute_dirty = true;
+                    curr.run_attribute_dirty = true;
+                    curr.char_attribute_dirty = true;
 
                     if !curr.added_vp_listener {
                         curr.added_vp_listener = true;
@@ -3463,17 +3498,20 @@ mod text_view {
                         run.gui_info.apply(Set(curr), s);
 
                         let invalidator_copy = weak_inv.clone();
-                        let mut old_attribute_dirty = false;
+                        let mut old_run_attribute_dirty = false;
+                        let mut old_char_attribute_dirty = false;
                         let mut old_content_dirty = false;
                         run.gui_info.listen(move |gui, s| {
                             let Some(invalidator) = invalidator_copy.upgrade() else {
                                 return false;
                             };
-                            if (gui.attribute_dirty && !old_attribute_dirty) ||
+                            if (gui.run_attribute_dirty && !old_run_attribute_dirty) ||
+                                (gui.char_attribute_dirty && !old_char_attribute_dirty) ||
                                 (gui.content_dirty && !old_content_dirty) {
                                 invalidator.invalidate(s);
                             }
-                            old_attribute_dirty = gui.attribute_dirty;
+                            old_char_attribute_dirty = gui.char_attribute_dirty;
+                            old_run_attribute_dirty = gui.run_attribute_dirty;
                             old_content_dirty = gui.content_dirty;
                             true
                         }, s);

@@ -47,12 +47,6 @@ extern void front_set_token_binding(fat_pointer box, uint8_t has_value, int32_t 
 // box: Box<dyn Fn(bool, i32, MSlock)>
 extern void front_free_token_binding(fat_pointer box);
 
-// box: Box<dyn Fn(u8, MSlock)>
-extern void front_set_bool_binding(fat_pointer box, uint8_t value);
-
-// box: Box<dyn Fn(u8, MSlock)>
-extern void front_free_bool_binding(fat_pointer box);
-
 // box is a page store container
 extern void front_replace_textview_range(fat_pointer box, size_t start, size_t end, uint8_t const* value);
 

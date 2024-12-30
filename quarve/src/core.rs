@@ -1231,6 +1231,7 @@ mod slock {
             thread_marker: PhantomData,
             is_nested: false,
         };
+
         SLOCK_INIT_LISTENER.lock().unwrap()
             .retain_mut(|f| f(ret.marker()));
         ret
@@ -1306,7 +1307,6 @@ mod slock {
         }
     }
 
-    #[cfg(debug_assertions)]
     impl<M> Drop for SlockOwner<M> where M: ThreadMarker {
         fn drop(&mut self) {
             if !self.is_nested {

@@ -28,7 +28,8 @@ struct BufferEvent {
 
 
 #[repr(C)]
-struct FatPointer(usize, usize);
+// apparently usize for the vtable is undefined behavior
+struct FatPointer(usize, *mut ());
 
 impl From<&dyn WindowNativeCallback> for FatPointer {
     fn from(value: &dyn WindowNativeCallback) -> Self {
@@ -185,9 +186,10 @@ mod callbacks {
 
     #[no_mangle]
     extern "C" fn front_free_fn_mut(bx: FatPointer) {
-        let _b: Box<dyn FnMut(MSlock)> = unsafe {
+        let b: Box<dyn FnMut(MSlock)> = unsafe {
             std::mem::transmute(bx)
         };
+        drop(b);
     }
 
     #[no_mangle]
@@ -249,27 +251,6 @@ mod callbacks {
     #[no_mangle]
     extern "C" fn front_free_token_binding(bx: FatPointer) {
         let _b: Box<dyn Fn(bool, i32, MSlock)> = unsafe {
-            std::mem::transmute(bx)
-        };
-    }
-
-    #[no_mangle]
-    extern "C" fn front_set_bool_binding(bx: FatPointer, value: u8) {
-        let s = unsafe {
-            slock_force_main_owner()
-        };
-        let b: Box<dyn Fn(u8, MSlock)> = unsafe {
-            std::mem::transmute(bx)
-        };
-
-        b(value, s.marker());
-
-        std::mem::forget(b);
-    }
-
-    #[no_mangle]
-    extern "C" fn front_free_bool_binding(bx: FatPointer) {
-        let _b: Box<dyn Fn(u8, MSlock)> = unsafe {
             std::mem::transmute(bx)
         };
     }

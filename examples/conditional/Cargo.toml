@@ -4,4 +4,4 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-quarve = { path = "../../quarve", features = ["qt_backend"] }
+quarve = { path = "../../quarve" }
