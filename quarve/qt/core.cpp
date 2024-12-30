@@ -180,11 +180,7 @@ protected:
         }
 
         if (valid) {
-            bool handled = front_window_dispatch_event(this->handle, be) != 0;
-            if (handled) {
-                std::cerr << "Skipping Event to Qt" << std::endl;
-            }
-            return handled;
+            return front_window_dispatch_event(this->handle, be) != 0;
         }
         // else fallthrough
 
@@ -234,6 +230,11 @@ extern "C" void
 back_window_set_size(void *_window, double w, double h) {
     QWidget* window = (QWidget*) _window;
     window->resize(w, h);
+
+    QRect screenGeometry = QApplication::primaryScreen()->geometry();
+    int x = (screenGeometry.width() - window->width()) / 2;
+    int y = (screenGeometry.height() - window->height()) / 2;
+    window->move(x, y);
 }
 
 extern "C" void
@@ -353,7 +354,17 @@ back_view_set_frame(void *_view, double left, double top, double width, double h
 
 extern "C" void
 back_free_view(void *_view) {
-    back_view_clear_children(_view);
+    // this
+    if (auto *abstractScroll = qobject_cast<QAbstractScrollArea *>(static_cast<QWidget*>(_view))) {
+        if (auto* scroll = qobject_cast<QScrollArea *>(abstractScroll)) {
+            scroll->takeWidget();
+        }
+        // for other scrolls (such as qtextedit), nothing needs to be done
+    }
+    else {
+        // children should be cleared since we'll free them manually
+        back_view_clear_children(_view);
+    }
 
     QWidget* view = (QWidget*) _view;
     delete view;

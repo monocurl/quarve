@@ -39,6 +39,11 @@ impl WindowProvider for MainWindow {
     }
 
     fn root(&self, env: &<Env as Environment>::Const, s: MSlock) -> impl ViewProvider<Env, DownContext=()> {
+        // admittedly, the actual constants used here
+        // could be done better as this doesn't scale very
+        // well. Nevertheless, you get most of the features
+        // as you do from html flex-box
+
         let static_flex = FlexStack::hetero_options(FlexStackOptions::default().gap(0.0))
             .push(
                 text("first")
