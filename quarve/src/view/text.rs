@@ -2219,7 +2219,7 @@ mod text_view {
 
             #[allow(unused_variables)]
             fn up_arrow(&mut self, state: &TextViewState<Self::IntrinsicAttribute, Self::DerivedAttribute>, page: &Page<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> bool {
-                if page.cursor.end_run(s) == 0 {
+                if page.cursor.start_run(s) == 0 {
                     let curr = state.selected_page(s);
                     if curr.is_some_and(|c| c != 0) {
                         state.set_selected_page(Some(curr.unwrap() - 1), s);

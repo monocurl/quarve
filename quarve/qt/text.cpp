@@ -13,6 +13,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QTextBlock>
+#include <QMimeData>
 
 #include "../inc/util.h"
 #include "color.h"
@@ -380,6 +381,11 @@ public:
     bool executing_back;
     int32_t page_id;
 
+    bool performing_bugged_paste{false};
+    int bugged_paste_remove{};
+    int bugged_paste_add{};
+
+
     TextView() : QTextEdit(), executing_back(false), page_id(0) {
         setFrameStyle(QFrame::NoFrame);
         setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -394,6 +400,15 @@ public:
 
         connect(document(), &QTextDocument::contentsChange, this,
             [this](int position, int removed, int added) {
+                if (performing_bugged_paste) {
+                    removed = bugged_paste_remove;
+                    added = bugged_paste_add;
+                    // now handled
+                    performing_bugged_paste = false;
+                }
+
+                if (removed == 0 && added == 0) return;
+
                 if (!executing_back) {
                     QString addedText = added ? document()->toPlainText().mid(position, added) : QString();
                     front_replace_textview_range(text_view_state, position, removed,
@@ -407,7 +422,17 @@ public:
                 }
             });
 
-        connect(document(), &QTextDocument::cursorPositionChanged, this,
+        connect(this, &QTextEdit::selectionChanged,
+            [this]() {
+                if (!executing_back) {
+                    QTextCursor cursor = textCursor();
+                    front_set_textview_selection(text_view_state,
+                        cursor.selectionStart(),
+                        cursor.selectionEnd() - cursor.selectionStart());
+                }
+            });
+
+        connect(this, &QTextEdit::cursorPositionChanged,
             [this]() {
                 if (!executing_back) {
                     QTextCursor cursor = textCursor();
@@ -419,6 +444,23 @@ public:
     }
 
 protected:
+    // because of qt bug
+    void insertFromMimeData(const QMimeData *source) override {
+        if (source->hasText()) {
+            QTextCursor cursor = textCursor();
+            if (cursor.selectionStart() == 0) {
+                performing_bugged_paste = true;
+                bugged_paste_remove = cursor.selectionEnd();
+                bugged_paste_add = source->text().length();
+            }
+
+            cursor.insertText(source->text());
+            setTextCursor(cursor);
+
+            performing_bugged_paste = false;
+        }
+    }
+
     void keyPressEvent(QKeyEvent* keyEvent) override {
         if (keyEvent->key() == Qt::Key_Escape) {
             if (front_execute_key_callback(key_handler, TEXTVIEW_CALLBACK_KEYCODE_ESCAPE)) {
@@ -463,6 +505,7 @@ protected:
                     int anchor = cursor.anchor();
 
                     // bug on empty line for some reason
+                    // https://bugreports.qt.io/browse/QTBUG-49062
                     if (position == anchor && cursor.block().text().isEmpty()) {
                         cursor.insertBlock();
                         setTextCursor(cursor);
@@ -656,9 +699,13 @@ back_text_view_set_selection(void *tv, size_t start, size_t len)
     textView->executing_back = true;
 
     QTextCursor cursor = textView->textCursor();
-    cursor.setPosition(start);
-    cursor.setPosition(start + len, QTextCursor::KeepAnchor);
-    textView->setTextCursor(cursor);
+    if (cursor.selectionStart() != (int) start ||
+        cursor.selectionEnd()   != (int) (start + len)) {
+
+        cursor.setPosition(start);
+        cursor.setPosition(start + len, QTextCursor::KeepAnchor);
+        textView->setTextCursor(cursor);
+    }
 
     textView->executing_back = false;
 }
