@@ -132,8 +132,8 @@ impl TextViewProvider<Env> for TVP {
         });
     }
 
+    // line number for every single run
     fn run_decoration(&self, number: impl Signal<Target=usize>, _run: &Run<Self::IntrinsicAttribute, Self::DerivedAttribute>, s: MSlock) -> impl IntoViewProvider<Env, DownContext=()> {
-        // line number for every single run
         Text::from_signal(number.map(|u| (u + 1).to_string(), s))
             .frame(
                 F.intrinsic(100, 0)
@@ -182,7 +182,7 @@ impl WindowProvider for MainWindow {
             // min
             Size::new(400.0, 400.0),
             // intrinsic
-            Size::new(800.0, 800.0),
+            Size::new(800.0, 600.0),
             // max
             Size::new(2400.0, 2000.0)
         )
@@ -194,8 +194,6 @@ impl WindowProvider for MainWindow {
         let content = Page::new(s);
         content.replace_range(0, 0, 0, 0, "Type with *asterisks* to \nbold certain text", s);
         state.insert_page(content, 0, s);
-        let content = Page::new(s);
-        state.insert_page(content, 1, s);
 
         // add undo support
         let undo_manager = UndoManager::new(&state, s);
