@@ -103,9 +103,7 @@ impl TextViewProvider<Env> for TVP {
                     }
                 }
 
-
                 let page = state.page(0, s);
-                println!("Content {:?}", page.build_full_content(s));
                 let mut bold = false;
                 for run in page.runs(s).iter() {
                     // inefficient implementation character by character,
@@ -196,6 +194,8 @@ impl WindowProvider for MainWindow {
         let content = Page::new(s);
         content.replace_range(0, 0, 0, 0, "Type with *asterisks* to \nbold certain text", s);
         state.insert_page(content, 0, s);
+        let content = Page::new(s);
+        state.insert_page(content, 1, s);
 
         // add undo support
         let undo_manager = UndoManager::new(&state, s);

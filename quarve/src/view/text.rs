@@ -881,7 +881,8 @@ mod text_view {
 
                 // maintained more or less by state which adds the listeners
                 // for insertion, pagevp is responsible for setting it to true
-                pub dirty: bool,
+                pub content_dirty: bool,
+                pub attribute_dirty: bool,
                 // maintained by run
                 pub codeunits: usize,
 
@@ -960,7 +961,8 @@ mod text_view {
                         gui_info: DerivedStore::new(RunGUIInfo {
                             added_decoration_listener: false,
                             added_vp_listener: false,
-                            dirty: true,
+                            content_dirty: true,
+                            attribute_dirty: true,
                             codeunits,
                             line: 0,
                             page_height: 0.0,
@@ -976,8 +978,8 @@ mod text_view {
                     let gui = run.gui_info.binding();
                     run.char_intrinsic_attribute.listen(move |_, s| {
                         let mut g = *gui.borrow(s);
-                        if !g.dirty {
-                            g.dirty = true;
+                        if !g.attribute_dirty {
+                            g.attribute_dirty = true;
                             gui.apply(Set(g), s);
                         }
                         true
@@ -986,8 +988,8 @@ mod text_view {
                     let gui = run.gui_info.binding();
                     run.char_derived_attribute.listen(move |_, s| {
                         let mut g = *gui.borrow(s);
-                        if !g.dirty {
-                            g.dirty = true;
+                        if !g.attribute_dirty {
+                            g.attribute_dirty = true;
                             gui.apply(Set(g), s);
                         }
                         true
@@ -996,8 +998,8 @@ mod text_view {
                     let gui = run.gui_info.binding();
                     run.intrinsic_attribute.listen(move |_, s| {
                         let mut g = *gui.borrow(s);
-                        if !g.dirty {
-                            g.dirty = true;
+                        if !g.attribute_dirty {
+                            g.attribute_dirty = true;
                             gui.apply(Set(g), s);
                         }
                         true
@@ -1006,8 +1008,8 @@ mod text_view {
                     let gui = run.gui_info.binding();
                     run.derived_attribute.listen(move |_, s| {
                         let mut g = *gui.borrow(s);
-                        if !g.dirty {
-                            g.dirty = true;
+                        if !g.attribute_dirty {
+                            g.attribute_dirty = true;
                             gui.apply(Set(g), s);
                         }
                         true
@@ -1016,7 +1018,7 @@ mod text_view {
                     let gui = run.gui_info.binding();
                     run.content.listen(move |c,  s| {
                         let mut g = *gui.borrow(s);
-                        g.dirty = true;
+                        g.content_dirty = true;
                         g.codeunits = c.0.encode_utf16().count();
                         gui.apply(Set(g), s);
                         true
@@ -2147,6 +2149,9 @@ mod text_view {
         thread_local! {
             pub(crate) static IN_TEXTVIEW_FRONT_CALLBACK: Cell<bool> = Cell::new(false)
         }
+        // when handling groups of attribute changes, proceed in chunks
+        // we can do more advanced heuristic later
+        pub(crate) const PAGE_RUNCHUNK_SIZE: usize = 20;
 
         pub trait TextViewProvider<E> : 'static where E: Environment {
             type IntrinsicAttribute: AttributeSet;
@@ -2462,30 +2467,31 @@ mod text_view {
         }
 
         // all components of a page
-        struct PageCoordinator<E, B, P, D, F>
+        struct PageCoordinator<E, B, P, D, F, Y>
             where E: Environment,
                   E::Const: AsRef<StandardConstEnv>,
                   B: IntoViewProvider<E, DownContext=()>,
                   P: TextViewProvider<E>,
+                  Y: Binding<Filterless<ScreenUnit>>,
                   D: IntoViewProvider<E, DownContext=()>,
                   F: IntoViewProvider<E, DownContext=()>
         {
             provider: Arc<MainSlockCell<P>>,
             background: B,
-            page_view: PageIVP<E, P>,
+            page_view: PageIVP<E, P, Y>,
             decorations: D,
             foreground: F,
             phantom: PhantomData<E>
         }
 
-        fn new_page_coordinator<E, P>(
+        fn new_page_coordinator<E, P, B: Binding<Filterless<ScreenUnit>> + Clone>(
             provider: Arc<MainSlockCell<P>>,
             full_state: StoreContainerView<TextViewState<P::IntrinsicAttribute, P::DerivedAttribute>>,
             page: StoreContainerView<Page<P::IntrinsicAttribute, P::DerivedAttribute>>,
-            y: impl Binding<Filterless<ScreenUnit>>,
-            height: impl Binding<Filterless<ScreenUnit>>,
+            y: B,
+            height: B,
             s: MSlock
-        ) -> PageCoordinator<E, impl IntoViewProvider<E, DownContext=()>, P, impl IntoViewProvider<E, DownContext=()>, impl IntoViewProvider<E, DownContext=()>>
+        ) -> PageCoordinator<E, impl IntoViewProvider<E, DownContext=()>, P, impl IntoViewProvider<E, DownContext=()>, impl IntoViewProvider<E, DownContext=()>, B>
             where E: Environment,
                   E::Const: AsRef<StandardConstEnv>,
                   P: TextViewProvider<E>
@@ -2525,8 +2531,8 @@ mod text_view {
                 let background = _background(long_page, long_s, static_provider);
                 let decorations = RunDecorationsIVP {
                     page: page.clone(),
-                    scroll_y: y,
-                    scroll_h: height,
+                    scroll_y: y.clone(),
+                    scroll_h: height.clone(),
                     map: move |run, s| {
                         // TODO dont like this unsafe
                         // safety:
@@ -2558,6 +2564,8 @@ mod text_view {
                     full_state,
                     page,
                     provider,
+                    scroll_y: y,
+                    scroll_h: height,
                 },
                 decorations,
                 foreground,
@@ -2565,11 +2573,12 @@ mod text_view {
             }
         }
 
-        impl<E, B, P, D, F> IntoViewProvider<E> for PageCoordinator<E, B, P, D, F>
+        impl<E, B, P, D, F, Y> IntoViewProvider<E> for PageCoordinator<E, B, P, D, F, Y>
             where E: Environment,
                   E::Const: AsRef<StandardConstEnv>,
                   B: IntoViewProvider<E, DownContext=()>,
                   P: TextViewProvider<E>,
+                  Y: Binding<Filterless<ScreenUnit>>,
                   D: IntoViewProvider<E, DownContext=()>,
                   F: IntoViewProvider<E, DownContext=()>,
         {
@@ -2615,8 +2624,8 @@ mod text_view {
             type UpContext = ();
             type DownContext = ();
 
-            fn intrinsic_size(&mut self, s: MSlock) -> Size {
-                self.page_view.intrinsic_size(s)
+            fn intrinsic_size(&mut self, _s: MSlock) -> Size {
+                Size::default()
             }
 
             fn up_context(&mut self, _s: MSlock) -> Self::UpContext {
@@ -2859,7 +2868,7 @@ mod text_view {
 
                 // invalidate when this page position changes
                 let inv = invalidator.clone();
-                self.page.gui_info.map(move |gui| (gui.start_y_pos, gui.content_height), s).diff_listen(move |_, s| {
+                self.page.gui_info.map(move |gui| gui.start_y_pos, s).diff_listen(move |_, s| {
                     inv.try_upgrade_invalidate(s)
                 }, s);
 
@@ -2924,7 +2933,6 @@ mod text_view {
                     }
                 }
 
-
                 let scroll_y = *self.scroll_y.borrow(s);
                 let mut effective_y_pos = self.page.gui_info.borrow(s).start_y_pos - scroll_y;
                 let want_range = 0.0 .. *self.scroll_h.borrow(s);
@@ -2970,19 +2978,23 @@ mod text_view {
         }
 
         // just the text
-        struct PageIVP<E, P>
+        struct PageIVP<E, P, B>
             where P: TextViewProvider<E>,
                   E: Environment,
-                  E::Const: AsRef<StandardConstEnv>
+                  E::Const: AsRef<StandardConstEnv>,
+                  B: Binding<Filterless<ScreenUnit>>,
         {
             full_state: StoreContainerView<TextViewState<P::IntrinsicAttribute, P::DerivedAttribute>>,
             page: StoreContainerView<Page<P::IntrinsicAttribute, P::DerivedAttribute>>,
             provider: Arc<MainSlockCell<P>>,
+            scroll_y: B,
+            scroll_h: B,
         }
 
-        impl<E, P> IntoViewProvider<E> for PageIVP<E, P>
+        impl<E, P, B> IntoViewProvider<E> for PageIVP<E, P, B>
             where E: Environment, P: TextViewProvider<E>,
-                  E::Const: AsRef<StandardConstEnv>
+                  E::Const: AsRef<StandardConstEnv>,
+                  B: Binding<Filterless<ScreenUnit>>,
         {
             type UpContext = ();
             type DownContext = ();
@@ -2994,6 +3006,8 @@ mod text_view {
                     page: self.page,
                     provider: self.provider,
                     text_view: 0 as *mut c_void,
+                    scroll_y: self.scroll_y,
+                    scroll_h: self.scroll_h,
                     width_change: false,
                     last_size: Default::default(),
                     invalidator: None,
@@ -3005,11 +3019,16 @@ mod text_view {
             }
         }
 
-        struct PageVP<E, P> where P: TextViewProvider<E>, E: Environment {
+        struct PageVP<E, P, B> where
+                P: TextViewProvider<E>, E: Environment,
+                B: Binding<Filterless<ScreenUnit>>,
+        {
             full_state: StoreContainerView<TextViewState<P::IntrinsicAttribute, P::DerivedAttribute>>,
             page: StoreContainerView<Page<P::IntrinsicAttribute, P::DerivedAttribute>>,
             provider: Arc<MainSlockCell<P>>,
             text_view: *mut c_void,
+            scroll_y: B,
+            scroll_h: B,
 
             width_change: bool,
             last_size: Size,
@@ -3021,8 +3040,11 @@ mod text_view {
             paste_menu: MenuChannel,
         }
 
-        impl<E, P> ViewProvider<E> for PageVP<E, P>
-            where E: Environment, P: TextViewProvider<E>
+        impl<E, P, B> ViewProvider<E> for PageVP<E, P, B>
+            where E: Environment,
+                  P: TextViewProvider<E>,
+                  B: Binding<Filterless<ScreenUnit>>,
+
         {
             type UpContext = ();
             type DownContext = ();
@@ -3073,7 +3095,8 @@ mod text_view {
                 // mark all lines as dirty initially, so we can update lines
                 for run in self.page.runs.borrow(s).iter() {
                     let mut gui = *run.gui_info.borrow(s);
-                    gui.dirty = true;
+                    gui.content_dirty = true;
+                    gui.attribute_dirty = true;
                     run.gui_info.apply(Set(gui), s);
                 }
 
@@ -3085,6 +3108,20 @@ mod text_view {
 
                 let inv = invalidator.clone();
                 self.page.cursor.listen(move |_, _, _, _, s| {
+                    inv.try_upgrade_invalidate(s)
+                }, s);
+
+                // scroll related changes
+                let inv = invalidator.clone();
+                self.scroll_y.listen(move |_, s| {
+                    inv.try_upgrade_invalidate(s)
+                }, s);
+                let inv = invalidator.clone();
+                self.page.gui_info.map(move |gui| gui.start_y_pos, s).diff_listen(move |_, s| {
+                    inv.try_upgrade_invalidate(s)
+                }, s);
+                let inv = invalidator.clone();
+                self.scroll_h.diff_listen(move |_, s| {
                     inv.try_upgrade_invalidate(s)
                 }, s);
 
@@ -3134,54 +3171,85 @@ mod text_view {
 
                 let lines = self.page.runs.borrow(s).len();
                 // relay attrs of affected lines
+                // work in chunks of lines
                 {
-                    let mut utf16_chars = 0;
-                    text_view_begin_editing(self.text_view, s);
-                    for (i, run) in self.page.runs.borrow(s).iter().enumerate() {
-                        let gui = *run.gui_info.borrow(s);
-                        let next_code_units = utf16_chars + gui.codeunits + if i < lines - 1 { 1 } else { 0 };
+                    let runs = self.page.runs.borrow(s);
+                    let len = runs.len();
 
-                        if gui.dirty {
-                            self.assign_attributes(utf16_chars..next_code_units, i, run, s);
-                        }
-
-                        utf16_chars = next_code_units;
-                    }
-                    text_view_end_editing(self.text_view, s);
-                }
-
-                // rewrite line numbers
-                // and recalculate line heights
-                {
-                    let mut utf16_chars = 0;
                     let mut total_height = 0.0;
-                    for (i, run) in self.page.runs.borrow(s).iter().enumerate() {
-                        let mut gui = *run.gui_info.borrow(s);
-                        let next_code_units = utf16_chars + gui.codeunits + if i < lines - 1 { 1 } else { 0 };
+                    let cutoff_height = -self.page.gui_info.borrow(s).start_y_pos + *self.scroll_y.borrow(s) + *self.scroll_h.borrow(s);
+                    let mut utf16_chars = 0;
+                    let mut end_applying_attributes = false;
+                    for c in 0 .. len.div_ceil(PAGE_RUNCHUNK_SIZE) {
+                        let u = c * PAGE_RUNCHUNK_SIZE;
+                        let v = ((c + 1) * PAGE_RUNCHUNK_SIZE).min(len);
 
-                        if gui.dirty || self.width_change {
-                            // calculating line height
-                            gui.page_height = text_view_get_line_height(self.text_view, i, utf16_chars..utf16_chars + gui.codeunits, self.last_size.w, s);
-                            gui.dirty = true;
+                        // if within window range, apply attributes
+                        let mut utf16_chars_copy = utf16_chars;
+
+                        text_view_begin_editing(self.text_view, s);
+                        for i in u..v {
+                            let run = &runs[i];
+
+                            let gui = *run.gui_info.borrow(s);
+                            let next_code_units = utf16_chars_copy + gui.codeunits + if i < lines - 1 { 1 } else { 0 };
+
+                            if (!end_applying_attributes && gui.attribute_dirty) || gui.content_dirty  {
+                                self.assign_attributes(utf16_chars_copy..next_code_units, i, run, s);
+                            }
+
+                            utf16_chars_copy = next_code_units;
+                        }
+                        text_view_end_editing(self.text_view, s);
+
+                        // rename for clarity
+                        let applied_attributes = !end_applying_attributes;
+
+                        // always rewrite line numbers
+                        // and recalculate line heights (assuming a change)
+                        for i in u..v {
+                            let run = &runs[i];
+                            let mut gui = *run.gui_info.borrow(s);
+                            let next_code_units = utf16_chars + gui.codeunits + if i < lines - 1 { 1 } else { 0 };
+
+                            // if we changed the attributes, the content, or the width
+                            // the line height may have changed
+                            if (gui.attribute_dirty && applied_attributes) ||
+                                gui.content_dirty ||
+                                self.width_change
+                            {
+                                gui.page_height = text_view_get_line_height(self.text_view, i, utf16_chars..utf16_chars + gui.codeunits, self.last_size.w, s);
+                            }
+
+                            // only send flush if necessary
+                            if (gui.attribute_dirty && applied_attributes)  ||
+                                gui.content_dirty ||
+                                self.width_change ||
+                                gui.line != i
+                            {
+                                // we always apply attributes when there content change
+                                if applied_attributes || gui.content_dirty {
+                                    gui.attribute_dirty = false;
+                                }
+                                gui.content_dirty = false;
+                                gui.line = i;
+                                run.gui_info.apply(Set(gui), s);
+                            }
+
+                            total_height += gui.page_height;
+                            utf16_chars = next_code_units;
                         }
 
-                        // only send flush if necessary
-                        if gui.dirty || gui.line != i {
-                            gui.dirty = false;
-                            gui.line = i;
-                            run.gui_info.apply(Set(gui), s);
-                        }
-
-                        total_height += gui.page_height;
-                        utf16_chars = next_code_units;
+                        end_applying_attributes |= total_height > cutoff_height;
                     }
 
+                    // finalize page changes
                     let mut gui = *self.page.gui_info.borrow(s);
                     gui.content_height = total_height;
                     gui.cursor_pos = if focused &&
                         self.page.cursor.end_char(s) == self.page.cursor.start_char(s) &&
                         self.page.cursor.end_run(s) == self.page.cursor.start_run(s)
-                        {
+                    {
                         Some(text_view_cursor_pos(self.text_view, s))
                     } else { None };
                     self.page.gui_info.apply(Set(gui), s);
@@ -3259,6 +3327,8 @@ mod text_view {
                         EventResult::NotHandled
                     }
                     else if mouse_down && !intersects {
+                        // TODO
+                        println!("Release Focus");
                         EventResult::FocusRelease
                     }
                     else {
@@ -3274,7 +3344,10 @@ mod text_view {
             }
         }
 
-        impl<E, P> PageVP<E, P> where E: Environment, P: TextViewProvider<E> {
+        impl<E, P, B> PageVP<E, P, B>
+            where E: Environment, P: TextViewProvider<E>,
+                  B: Binding<Filterless<ScreenUnit>>
+        {
             fn assign_attributes(&self, utf16_char_range: Range<usize>, line: usize, run: &Run<P::IntrinsicAttribute, P::DerivedAttribute>, s: MSlock) {
                 // adjust line attributes
                 let run_intrinsic = run.intrinsic(s);
@@ -3341,7 +3414,8 @@ mod text_view {
                 let weak_inv = invalidator.clone();
                 let handle_run = move |run: &Run<P::IntrinsicAttribute, P::DerivedAttribute>, s: Slock| {
                     let mut curr = *run.gui_info.borrow(s);
-                    curr.dirty = true;
+                    curr.content_dirty = true;
+                    curr.attribute_dirty = true;
 
                     if !curr.added_vp_listener {
                         curr.added_vp_listener = true;
@@ -3391,13 +3465,18 @@ mod text_view {
                         run.gui_info.apply(Set(curr), s);
 
                         let invalidator_copy = weak_inv.clone();
+                        let mut old_attribute_dirty = false;
+                        let mut old_content_dirty = false;
                         run.gui_info.listen(move |gui, s| {
                             let Some(invalidator) = invalidator_copy.upgrade() else {
                                 return false;
                             };
-                            if gui.dirty {
+                            if (gui.attribute_dirty && !old_attribute_dirty) ||
+                                (gui.content_dirty && !old_content_dirty) {
                                 invalidator.invalidate(s);
                             }
+                            old_attribute_dirty = gui.attribute_dirty;
+                            old_content_dirty = gui.content_dirty;
                             true
                         }, s);
                     } else {

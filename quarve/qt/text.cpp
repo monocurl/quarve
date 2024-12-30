@@ -447,10 +447,28 @@ protected:
                     keyEvent->accept();
                     return;
                 }
+                else {
+                    // don't enable shift return as it causes blocks with multiple new lines
+                    keyEvent->ignore();
+                    return;
+                }
             } else {
                 if (front_execute_key_callback(key_handler, TEXTVIEW_CALLBACK_KEYCODE_NEWLINE)) {
                     keyEvent->accept();
                     return;
+                }
+                else {
+                    QTextCursor cursor = textCursor();
+                    int position = cursor.position();
+                    int anchor = cursor.anchor();
+
+                    // bug on empty line for some reason
+                    if (position == anchor && cursor.block().text().isEmpty()) {
+                        cursor.insertBlock();
+                        setTextCursor(cursor);
+                        keyEvent->accept();
+                        return;
+                    }
                 }
             }
         }
@@ -557,8 +575,10 @@ back_text_view_set_font(void *tv, uint8_t const* font_path, double font_size)
 extern "C" void
 back_text_view_set_editing_state(void *tv, uint8_t editing)
 {
-    (void) tv;
-    (void) editing;
+    auto* textView = static_cast<TextView*>(tv);
+
+    textView->setUpdatesEnabled(!editing);
+    textView->blockSignals(editing);
 }
 
 extern "C" void

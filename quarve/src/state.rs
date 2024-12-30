@@ -650,6 +650,9 @@ mod group {
                                 VecActionBasis::Insert(store, _) => {
                                     /* make sure it is updated of the listener */
                                     store.subtree_general_listener(f.clone(), s);
+                                },
+                                VecActionBasis::InsertMany(stores, _) => {
+                                    stores.iter().for_each(|st| st.subtree_general_listener(f.clone(), s))
                                 }
                                 _ => {
                                     /* nothing necessary here either (only care about updates) */
@@ -676,6 +679,9 @@ mod group {
                                 VecActionBasis::Insert(store, _) => {
                                     /* make sure it is updated of the inverse listener */
                                     store.subtree_inverse_listener(f.clone(), s);
+                                },
+                                VecActionBasis::InsertMany(stores, _) => {
+                                    stores.iter().for_each(|st| st.subtree_inverse_listener(f.clone(), s))
                                 }
                                 _ => {
                                     /* nothing necessary here either (only care about updates) */
@@ -700,6 +706,9 @@ mod group {
                             match a {
                                 VecActionBasis::Insert(store, _) => {
                                     store.subtree_undo_bucket(bucket, s);
+                                }
+                                VecActionBasis::InsertMany(stores, _) => {
+                                    stores.iter().for_each(|st| st.subtree_undo_bucket(bucket, s))
                                 }
                                 _ => {
                                     /* nothing necessary here either (only care about updates) */
