@@ -9,9 +9,12 @@
 #include <QTextCursor>
 #include <QTextCharFormat>
 #include <QTextBlockFormat>
+#include <QMainWindow>
 #include <QFontMetrics>
 #include <QApplication>
 #include <QClipboard>
+#include <QMenuBar>
+#include <QAction>
 #include <QTextBlock>
 #include <QMimeData>
 
@@ -461,6 +464,36 @@ protected:
         }
     }
 
+    // not a great solution...
+    bool dfsMenu(QMenu* menu, QKeySequence const& target) {
+        auto actions = menu->actions();
+        for (auto action : actions) {
+            if (action->menu()) {
+                if (dfsMenu(action->menu(), target)) {
+                    return true;
+                }
+            } else {
+                if (action->shortcut() == target) {
+                    action->trigger();
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    void dfsMenuBar(QMenuBar* menu, QKeySequence const& target) {
+        auto actions = menu->actions();
+        for (auto action : actions) {
+            if (action->menu()) {
+                if (dfsMenu(action->menu(), target)) {
+                    return;
+                }
+            }
+        }
+    }
+
     void keyPressEvent(QKeyEvent* keyEvent) override {
         if (keyEvent->key() == Qt::Key_Escape) {
             if (front_execute_key_callback(key_handler, TEXTVIEW_CALLBACK_KEYCODE_ESCAPE)) {
@@ -539,10 +572,28 @@ protected:
                 return;
             }
         }
+        // TODO not the best way to elide redo/undo
+        // but even if redo/undo is disabled, qt seems to eat the event
+        else if (keyEvent->key() == Qt::Key_Z) {
+            if (keyEvent->modifiers() & Qt::ControlModifier) {
+                QMainWindow *mainWindow = qobject_cast<QMainWindow *>(QApplication::activeWindow());
+
+                if (keyEvent->modifiers() & Qt::ShiftModifier) {
+                    dfsMenuBar(mainWindow->menuBar(), QKeySequence(Qt::ControlModifier | Qt::ShiftModifier | QChar('Z').unicode()));
+                }
+                else {
+                    dfsMenuBar(mainWindow->menuBar(), QKeySequence(Qt::ControlModifier | QChar('z').unicode()));
+                }
+
+                keyEvent->accept();
+                return;
+            }
+        }
 
         // fallthrough
         QTextEdit::keyPressEvent(keyEvent);
     }
+
 
     void focusInEvent(QFocusEvent *e) override {
         QTextEdit::focusInEvent(e);
