@@ -1,6 +1,7 @@
-use std::ffi::{CString};
+use std::ffi::CString;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
+
 use crate::core::APP;
 use crate::native;
 
@@ -33,6 +34,11 @@ pub fn local_storage() -> PathBuf {
 pub struct Resource(pub PathBuf);
 
 impl Resource {
+    pub fn font(rel_path: impl AsRef<Path>) -> Resource {
+        let path = resource_root().join("font/").join(rel_path);
+        Resource(path)
+    }
+
     pub fn named(rel_path: impl AsRef<Path>) -> Resource {
         let path = resource_root().join(rel_path);
         Resource(path)

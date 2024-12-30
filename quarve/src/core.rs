@@ -1191,8 +1191,10 @@ mod slock {
 
         #[cfg(not(debug_assertions))]
         {
+            // ensure same order as slock_force_main_owner to avoid deadlock
+            let ret = GLOBAL_STATE_LOCK.lock().expect("Unable to lock context");
             *LOCKED_THREAD.lock().unwrap() = Some(thread::current().id());
-            GLOBAL_STATE_LOCK.lock().expect("Unable to lock context")
+            ret
         }
     }
 
@@ -1310,10 +1312,10 @@ mod slock {
     impl<M> Drop for SlockOwner<M> where M: ThreadMarker {
         fn drop(&mut self) {
             if !self.is_nested {
-                *LOCKED_THREAD.lock().unwrap() = None;
-
                 SLOCK_DROP_LISTENER.lock().unwrap()
                     .retain_mut(|f| f(self.marker().to_general_slock()));
+
+                *LOCKED_THREAD.lock().unwrap() = None;
             }
         }
     }
