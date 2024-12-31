@@ -15,7 +15,7 @@
 extern "C" void
 back_main_loop() {
     int argc = 0;
-    char* argv[] = {};
+    char* argv[1] = { "" };
     QApplication a(argc, argv);
     front_will_spawn();
     a.exec();
@@ -101,7 +101,8 @@ protected:
             return false;
         }
 
-        buffer_event be = { .native_event = event };
+        buffer_event be = { 0 };
+        be.native_event = event;
         bool valid = false;
 
         // holds characters
@@ -131,7 +132,7 @@ protected:
                 be.is_up = true;
             }
 
-            strncpy((char *) buffer, keyEvent->text().toUtf8().data(), (sizeof buffer) - 1);
+            strncpy_s((char *) buffer, sizeof buffer, keyEvent->text().toUtf8().data(), (sizeof buffer) - 1);
             buffer[(sizeof buffer) - 1] = '\0';
             be.key_characters = buffer;
         }
@@ -327,7 +328,7 @@ back_view_insert_child(void *_view, void* _child, unsigned long long index) {
     }
     child->show();
 
-    for (int i = removed.size() - 1; i >= 0; --i) {
+    for (int i = (int) removed.size() - 1; i >= 0; --i) {
         removed[i]->setParent(view);
     }
 }

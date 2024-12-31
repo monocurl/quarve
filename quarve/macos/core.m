@@ -112,7 +112,7 @@ int performing_subview_insertion = 0;
 
     if (event.type == NSEventTypeKeyUp) {
         be.is_up = 1;
-        strncpy((char*) buffer, event.characters.UTF8String, (sizeof buffer) - 1);
+        strncpy_s((char*) buffer, sizeof buffer, event.characters.UTF8String, (sizeof buffer) - 1);
         buffer[(sizeof buffer) - 1] = '\0';
         be.key_characters = buffer;
     }
@@ -120,7 +120,7 @@ int performing_subview_insertion = 0;
         if (!event.ARepeat) {
             be.is_down = 1;
         }
-        strncpy((char*) buffer, event.characters.UTF8String, (sizeof buffer) - 1);
+        strncpy_s((char*) buffer, sizeof buffer, event.characters.UTF8String, (sizeof buffer) - 1);
         buffer[(sizeof buffer) - 1] = '\0';
         be.key_characters = buffer;
     }
