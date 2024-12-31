@@ -88,7 +88,7 @@ mod text {
         pub fn new(text: impl Into<String>) -> Self {
             Text {
                 text: FixedSignal::new(text.into()),
-                max_lines: 1
+                max_lines: 0
             }
         }
     }
@@ -101,10 +101,11 @@ mod text {
             }
         }
 
-        pub fn max_lines(mut self, max_lines: u32) -> Self {
-            self.max_lines = max_lines;
-            self
-        }
+        // TODO this is currently a bit off in qt
+        // pub fn max_lines(mut self, max_lines: u32) -> Self {
+        //     self.max_lines = max_lines;
+        //     self
+        // }
     }
 
     impl<E, S> IntoViewProvider<E> for Text<S>
