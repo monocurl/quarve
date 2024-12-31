@@ -480,14 +480,19 @@ mod text_field {
             self.paste_menu.unset(s);
         }
 
-        fn handle_event(&self, e: &Event, _s: MSlock) -> EventResult {
+        fn handle_event(&self, e: &Event, s: MSlock) -> EventResult {
             if e.is_mouse() {
                 if let EventPayload::Mouse(MouseEvent::LeftDown, at) = &e.payload {
-                    if self.last_size.full_rect().contains(*at) {
+                    let focused = *self.focused.borrow(s) == Some(self.focused_token);
+
+                    if !self.last_size.full_rect().contains(*at)  {
+                        EventResult::FocusRelease
+                    }
+                    else if !focused {
                         EventResult::FocusAcquire
                     }
                     else {
-                        EventResult::FocusRelease
+                        EventResult::NotHandled
                     }
                 }
                 else {
