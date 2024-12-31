@@ -52,21 +52,9 @@ impl Resource {
     pub(crate) fn cstring(&self) -> CString {
         let mut buf = Vec::new();
 
-        #[cfg(unix)] {
-            use std::os::unix::ffi::OsStrExt;
-            buf.extend(self.path().as_os_str().as_bytes());
-        }
-
-        #[cfg(windows)] {
-            use std::os::windows::ffi::OsStrExt;
-            buf.extend(self.path().as_os_str()
-                .encode_wide()
-                .map(|b| {
-                    let b = b.to_ne_bytes();
-                    b.get(0).map(|s| *s).into_iter().chain(b.get(1).map(|s| *s))
-                })
-                .flatten());
-        }
+        buf.extend(self.0.as_path()
+            .to_str().expect("Illegal Path")
+            .as_bytes());
 
         CString::new(buf).unwrap()
     }

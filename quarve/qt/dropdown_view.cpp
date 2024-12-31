@@ -94,7 +94,7 @@ back_view_dropdown_size(void *_view)
 {
     Dropdown* dd = static_cast<Dropdown*>(_view);
     QSize sizeHint = dd->sizeHint();
-    return (size) {
+    return {
         static_cast<double>(sizeHint.width()),
         static_cast<double>(sizeHint.height())
     };

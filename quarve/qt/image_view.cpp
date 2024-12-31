@@ -54,7 +54,7 @@ back_view_image_size(void* _image)
 {
     ImageView* imageView = (ImageView*) _image;
     QSize intrinsic = imageView->intrinsicSize();
-    return (size){
+    return {
         static_cast<double>(intrinsic.width()),
         static_cast<double>(intrinsic.height())
     };

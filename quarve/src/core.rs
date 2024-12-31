@@ -780,6 +780,14 @@ mod window {
         }
 
         fn layout_full(&self, w: f64, h: f64, s: MSlock) {
+            // occasionally a final layout will be sent
+            // after we hide everything (race condition)
+            // this check avoids layout in those conditions
+            if self.content_view.borrow_main(s)
+                .depth() == u32::MAX {
+                return;
+            }
+
             let mut env = self.environment.take().unwrap();
             self.layout_up(env.deref_mut(), None, -1, s);
 

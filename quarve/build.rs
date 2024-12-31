@@ -1,8 +1,7 @@
 #[cfg(any(not(target_os="macos"), feature = "qt_backend"))]
-use std::{
-    path::PathBuf,
-    process::{Command, Stdio}
-};
+use std::{path::PathBuf};
+#[cfg(all(target_os = "macos", feature = "qt_backend"))]
+use std::process::{Command, Stdio};
 
 use cc;
 
@@ -39,6 +38,7 @@ fn build() {
     let qt_frameworks = ["QtGui", "QtCore", "QtWidgets", "QtDBus"];
 
     let mut build = cc::Build::new();
+
     build
         .cpp(true)
         .file("qt/core.cpp")
@@ -82,6 +82,26 @@ fn build() {
         }
     }
 
+    #[cfg(target_os = "windows")]
+    {
+        let headers = qt_path.join("include");
+        build.include(&headers);
+
+        for framework in qt_frameworks {
+            let headers =
+                qt_path.join(format!("include\\{}", framework));
+            build.include(&headers);
+        }
+
+        let headers = qt_path.join("mkspecs\\win32-msvc");
+        build.include(&headers);
+
+        // use c++17
+        build.flag("-permissive-");
+        build.flag("-std:c++17");
+        build.flag("-Zc:__cplusplus");
+    }
+
     build.compile("backend");
 
     // link to framework/libraries
@@ -91,6 +111,20 @@ fn build() {
 
         for framework in qt_frameworks {
             println!("cargo:rustc-link-lib=framework={}", framework);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        #[cfg(debug_assertions)]
+        let qt_libs = ["Qt6Widgetsd", "Qt6Guid", "Qt6Cored"];
+        #[cfg(not(debug_assertions))]
+        let qt_libs = ["Qt6Widgets", "Qt6Gui", "Qt6Core"];
+
+        println!("cargo:rustc-link-search={}", qt_path.join("lib").to_str().expect("Invalid backend path"));
+
+        for lib in qt_libs {
+            println!("cargo:rustc-link-lib={}", lib);
         }
     }
 }

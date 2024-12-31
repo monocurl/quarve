@@ -2005,22 +2005,6 @@ mod text_view {
                         );
                 }
             }
-
-            #[cfg(test)]
-            mod test {
-                use crate::view::text::{AttributeSet, CharAttribute, PageAttribute, RunAttribute};
-
-                struct AS;
-                impl AttributeSet for AS {
-                    type CharAttribute = CharAttribute;
-                    type RunAttribute = RunAttribute;
-                    type PageAttribute = PageAttribute;
-                }
-
-                pub fn test_weird_borrow() {
-                    // let s = Store
-                }
-            }
         }
 
         mod text_view_state {

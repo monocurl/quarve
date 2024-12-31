@@ -726,7 +726,6 @@ pub mod view {
 
     pub mod image {
         use std::ffi::{c_void, CString};
-        use std::os::unix::ffi::OsStrExt;
         use std::path::Path;
 
         use crate::core::MSlock;
@@ -735,7 +734,7 @@ pub mod view {
 
         pub fn init_image_view(path: &Path, _s: MSlock) -> *mut c_void {
             unsafe {
-                let bytes = CString::new(path.as_os_str().as_bytes()).unwrap();
+                let bytes = CString::new(path.to_str ().expect("Invalid Path").as_bytes()).unwrap();
                 back_view_image_init(bytes.as_bytes().as_ptr())
             }
         }
