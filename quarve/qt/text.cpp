@@ -667,8 +667,9 @@ back_text_view_set_font(void *tv, uint8_t const* font_path, double font_size)
 }
 
 extern "C" void
-back_text_view_set_editing_state(void *tv, uint8_t editing)
+back_text_view_set_editing_state(void *tv, uint8_t editing, uint8_t first_editing_block)
 {
+    (void) first_editing_block;
     auto* textView = static_cast<TextView*>(tv);
 
     textView->setUpdatesEnabled(!editing);

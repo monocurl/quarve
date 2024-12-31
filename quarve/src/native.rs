@@ -601,7 +601,8 @@ pub mod view {
 
         fn back_text_view_set_font(tv: *mut c_void, font_path: *const u8, font_size: f64);
 
-        fn back_text_view_set_editing_state(tv: *mut c_void, editing: u8);
+        // is_first_editing_block only defined if editing is true
+        fn back_text_view_set_editing_state(tv: *mut c_void, editing: u8, is_first_editing_block: u8);
         fn back_text_view_set_line_attributes(
             tv: *mut c_void, line_no: usize, start: usize, end: usize,
             justification_sign: c_int, leading_indentation: c_double, trailing_indentation: c_double
@@ -1199,15 +1200,15 @@ pub mod view {
             }
         }
 
-        pub fn text_view_begin_editing(tv: *mut c_void, _s: MSlock) {
+        pub fn text_view_begin_editing(tv: *mut c_void, is_first: bool, _s: MSlock) {
             unsafe {
-                back_text_view_set_editing_state(tv, 1)
+                back_text_view_set_editing_state(tv, 1, if is_first { 1 } else { 0 })
             }
         }
 
         pub fn text_view_end_editing(tv: *mut c_void, _s: MSlock) {
             unsafe {
-                back_text_view_set_editing_state(tv, 0)
+                back_text_view_set_editing_state(tv, 0, 0)
             }
         }
 

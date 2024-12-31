@@ -518,6 +518,10 @@ back_text_view_init()
     tv.automaticDashSubstitutionEnabled = NO;
     tv.automaticLinkDetectionEnabled = NO;
     tv.automaticDataDetectionEnabled = NO;
+    tv.continuousSpellCheckingEnabled = NO;
+    tv.enabledTextCheckingTypes = 0;
+    tv.grammarCheckingEnabled = NO;
+    tv.smartInsertDeleteEnabled = NO;
     [tv turnOffKerning:nil];
     [tv turnOffLigatures:nil];
     tv.delegate = tv;
@@ -574,11 +578,13 @@ back_text_view_set_font(
 }
 
 void
-back_text_view_set_editing_state(void *tv, uint8_t editing)
+back_text_view_set_editing_state(void *tv, uint8_t editing, uint8_t first_editing_block)
 {
     TextView* textView = tv;
     if (editing) {
-        textView.needsDisplay = YES;
+        if (first_editing_block) {
+            textView.needsDisplay = YES;
+        }
         [textView.textStorage beginEditing];
     }
     else {

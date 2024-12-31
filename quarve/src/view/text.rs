@@ -2968,7 +2968,11 @@ mod text_view {
                 let want_range = 0.0 .. *self.scroll_h.borrow(s);
                 for (view, (run, is_visible)) in self.views.iter().zip(self.page.runs.borrow(s).iter().zip(self.view_displayed.iter_mut())) {
                     let height = run.gui_info.borrow(s).page_height;
-                    let now_visible = effective_y_pos < want_range.end &&  (effective_y_pos + height) > want_range.start;
+                    // sometimes we get invalidated before
+                    // the height has actually been computed.
+                    // After height gets recomputed, we'll recalculate
+                    // this anyway
+                    let now_visible = height > 0. && effective_y_pos < want_range.end &&  (effective_y_pos + height) > want_range.start;
 
                     if *is_visible && !now_visible {
                         // remove (slightly inefficient full scan)
@@ -3218,7 +3222,7 @@ mod text_view {
                         // if within window range, apply attributes
                         let mut utf16_chars_copy = utf16_chars;
 
-                        text_view_begin_editing(self.text_view, s);
+                        text_view_begin_editing(self.text_view, c == 0, s);
                         for i in u..v {
                             let run = &runs[i];
 
