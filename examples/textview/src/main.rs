@@ -193,11 +193,6 @@ impl WindowProvider for MainWindow {
         let state = StoreContainerSource::new(TextViewState::new());
         let content = Page::new(s);
         content.replace_range(0, 0, 0, 0, "Type with *asterisks* to \nbold certain text", s);
-        let run = content.run(0, s)
-            .char_derived_transaction(|r| {
-                r.set(Attribute { bold: true }, 8..12);
-            }, s);
-        content.replace_range(1, 17, 1, 17, "\n", s);
         state.insert_page(content, 0, s);
 
         // add undo support
