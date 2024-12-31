@@ -107,10 +107,6 @@ fn view(s: MSlock) -> impl IVP {
                     .bg_color(PURPLE)
                     .radius(4)
             )
-            .frame(
-                F.intrinsic(400, 400).unlimited_width()
-                    .align(Alignment::Center)
-            )
     )
 }
 

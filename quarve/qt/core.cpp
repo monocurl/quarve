@@ -15,7 +15,8 @@
 extern "C" void
 back_main_loop() {
     int argc = 0;
-    char* argv[1] = { "" };
+    char arg[] = "";
+    char *argv[1] = { arg };
     QApplication a(argc, argv);
     front_will_spawn();
     a.exec();
