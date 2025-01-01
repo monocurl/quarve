@@ -66,7 +66,7 @@ private:
             return;
         }
 
-        front_window_layout(this->handle, this->width(), this->height());
+        front_window_layout(this->handle, this->width(), this->height() - menuBar() -> height());
         this->needsLayout = false;
     }
 
@@ -166,7 +166,7 @@ protected:
             }
 
             be.cursor_x = mouseEvent->scenePosition().x();
-            be.cursor_y = mouseEvent->scenePosition().y();
+            be.cursor_y = mouseEvent->scenePosition().y() - menuBar()->height();
         }
         else if (event->type() == QEvent::Wheel) {
             valid = true;
@@ -178,7 +178,7 @@ protected:
             be.delta_y = wheelEvent->angleDelta().y();
 
             be.cursor_x = wheelEvent->scenePosition().x();
-            be.cursor_y = wheelEvent->scenePosition().y();
+            be.cursor_y = wheelEvent->scenePosition().y() - menuBar()->height();
         }
 
         if (valid) {
@@ -224,7 +224,8 @@ back_window_set_root(void *_window, void *root_view) {
     Window* widget = (Window*) _window;
 
     QWidget* content = (QWidget*) root_view;
-    content->setParent(widget);
+    widget->setCentralWidget(content);
+    content->setProperty(QUARVE_BACKEND_MOVED_PROPERTY, true);
     content->show();
 }
 

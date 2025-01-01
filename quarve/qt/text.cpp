@@ -466,16 +466,16 @@ protected:
 
     // not a great solution...
     bool dfsMenu(QMenu* menu, QKeySequence const& target) {
-        auto actions = menu->actions();
-        for (auto action : actions) {
+        QList<QAction*> actions = menu->actions();
+        for (QAction* action : actions) {
             if (action->menu()) {
                 if (dfsMenu(action->menu(), target)) {
                     return true;
                 }
             } else {
                 if (action->shortcut() == target) {
-                    action->trigger();
-                    return true;
+                     action->trigger();
+                     return true;
                 }
             }
         }

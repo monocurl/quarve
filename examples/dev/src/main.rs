@@ -89,7 +89,6 @@ fn view(s: MSlock) -> impl IVP {
             )
             .push(
                 text("This is a lot of text\n line 2\n line 3")
-                    .max_lines(2)
                     .text_font("SignikaNegative-Regular.ttf")
             )
             .push(dynamic_flex)

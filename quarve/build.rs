@@ -116,9 +116,6 @@ fn build() {
 
     #[cfg(target_os = "windows")]
     {
-        #[cfg(debug_assertions)]
-        let qt_libs = ["Qt6Widgetsd", "Qt6Guid", "Qt6Cored"];
-        #[cfg(not(debug_assertions))]
         let qt_libs = ["Qt6Widgets", "Qt6Gui", "Qt6Core"];
 
         println!("cargo:rustc-link-search={}", qt_path.join("lib").to_str().expect("Invalid backend path"));
