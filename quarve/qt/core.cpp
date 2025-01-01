@@ -39,6 +39,9 @@ class Window : public QMainWindow {
 public:
     fat_pointer handle{};
     bool needsLayout{false};
+    bool executing_back_fullscreen{false};
+
+    QMenuBar* menuBarCache{nullptr};
 
     Window() { }
 
@@ -57,6 +60,14 @@ public:
                 safeThis->layout();
             }
         });
+    }
+
+    ~Window() {
+        // if outside of fullscreen mode
+        // we have ownership of the menu bar and should free it
+        if (!this->menuBar()) {
+            delete this->menuBarCache;
+        }
     }
 
 private:
@@ -83,7 +94,7 @@ protected:
             Qt::WindowStates oldState = stateEvent->oldState();
             Qt::WindowStates newState = windowState();
 
-            if ((newState & Qt::WindowFullScreen) != (oldState & Qt::WindowFullScreen)) {
+            if (!executing_back_fullscreen && (newState & Qt::WindowFullScreen) != (oldState & Qt::WindowFullScreen)) {
                 front_window_will_fullscreen(this->handle, (newState & Qt::WindowFullScreen) != 0);
             }
         }
@@ -254,17 +265,21 @@ back_window_set_max_size(void *_window, double w, double h) {
 
 extern "C" void
 back_window_set_fullscreen(void *_window, uint8_t fs) {
-    QWidget* window = (QWidget*) _window;
+    Window* window = (Window*) _window;
+    window->executing_back_fullscreen = true;
     if (fs) {
+        window->setMenuBar(nullptr);
         window->setWindowState(
             window->windowState() | Qt::WindowFullScreen
         );
     }
     else {
+        window->setMenuBar(window->menuBarCache);
         window->setWindowState(
             window->windowState() & ~Qt::WindowFullScreen
         );
     }
+    window->executing_back_fullscreen = false;
 }
 
 extern "C" void
@@ -273,7 +288,11 @@ back_window_set_menu(void *_window, void *_menu)
     Window* window = (Window *) _window;
     QMenuBar* mb = (QMenuBar *) _menu;
 
-    window->setMenuBar(mb);
+    window->menuBarCache = mb;
+    if (!(window->windowState() & Qt::WindowFullScreen)) {
+        // don't set if already in full screen
+        window->setMenuBar(mb);
+    }
 }
 
 extern "C" void

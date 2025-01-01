@@ -148,7 +148,7 @@ impl WindowProvider for MainWindow {
     }
 
     fn is_fullscreen(&self, _env: &<Self::Environment as Environment>::Const, s: MSlock) -> impl Binding<Filterless<bool>> {
-        let ret = Store::new(false);
+        let ret = Store::new(true);
         if config::ENABLE_FULLSCREEN_LOGGING {
             ret.listen(|val, _s| {
                 println!("Fullscreen State: {}", *val);
