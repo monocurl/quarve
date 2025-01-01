@@ -1541,6 +1541,13 @@ pub mod path {
             .join("Resources/")
     }
 
+    #[cfg(all(target_os = "windows", quarve_managed_run))]
+    pub fn production_resource_root() -> PathBuf {
+        std::env::current_exe().unwrap()
+            .parent().unwrap()
+            .join("res")
+    }
+
     pub fn local_storage(app_name: &str) -> PathBuf {
         let raw = unsafe {
             let cstring = CString::new(app_name).unwrap();
