@@ -2,6 +2,7 @@
 #import "color.h"
 #import "util.h"
 #import "front.h"
+#import "cursor_view.h"
 
 #import <stdlib.h>
 
@@ -29,7 +30,8 @@ int performing_subview_insertion = 0;
     /* callbacks */
     @public fat_pointer handle;
     @public NSMenu* menu;
-}
+};
+@property BOOL executing_back_fullscreen;
 @end
 
 @implementation ContentView
@@ -59,6 +61,7 @@ int performing_subview_insertion = 0;
 
     self.handle = (fat_pointer) { NULL, NULL };
     self.menu = NULL;
+    self.executing_back_fullscreen = NO;
 
     return self;
 }
@@ -221,10 +224,14 @@ int performing_subview_insertion = 0;
 }
 
 - (void)windowWillEnterFullScreen:(NSNotification *)notification {
-    front_window_will_fullscreen(handle, YES);
+    if (!self.executing_back_fullscreen) {
+        front_window_will_fullscreen(handle, YES);
+    }
 }
 - (void)windowWillExitFullScreen:(NSNotification *)notification {
-    front_window_will_fullscreen(handle, NO);
+    if (!self.executing_back_fullscreen) {
+        front_window_will_fullscreen(handle, NO);
+    }
 }
 
 - (NSText *)fieldEditor:(BOOL)createFlag
@@ -333,7 +340,9 @@ void
 back_window_set_fullscreen(void *_window, uint8_t fs) {
     Window* window = _window;
     if (!!(window.styleMask & NSWindowStyleMaskFullScreen) != fs) {
+        window.executing_back_fullscreen = YES;
         [window toggleFullScreen:nil];
+        window.executing_back_fullscreen = NO;
     }
 }
 

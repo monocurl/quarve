@@ -1,4 +1,5 @@
 pub use general_layout::*;
+pub use split::*;
 pub use vec_layout::*;
 
 mod general_layout {
@@ -145,7 +146,8 @@ mod split {
 
     use crate::core::{Environment, MSlock};
     use crate::event::{Event, EventPayload, EventResult, MouseEvent};
-    use crate::prelude::{GRAY, LayoutProvider, Rect, ScreenUnit, Size};
+    use crate::native::view::cursor::{init_cursor_view, pop_cursor, push_cursor};
+    use crate::prelude::{Cursor, GRAY, LayoutProvider, Rect, ScreenUnit, Size};
     use crate::state::FixedSignal;
     use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, TrivialContextViewRef, View, ViewProvider, ViewRef, WeakInvalidator};
     use crate::view::color_view::ColorView;
@@ -154,7 +156,7 @@ mod split {
     const BAR_WIDTH: ScreenUnit = 1.0;
     const SPLITTER_WIDTH: ScreenUnit = 7.0;
 
-    struct VSplit<E, L, R>
+    pub struct VSplit<E, L, R>
         where E: Environment,
               L: IntoViewProvider<E>,
               R: IntoViewProvider<E, DownContext=L::DownContext>,
@@ -203,7 +205,7 @@ mod split {
         }
     }
 
-    struct HSplit<E, L, R>
+    pub struct HSplit<E, L, R>
         where E: Environment,
               L: IntoViewProvider<E>,
               R: IntoViewProvider<E, DownContext=L::DownContext>,
@@ -247,7 +249,7 @@ mod split {
                 self.left.into_view_provider(env, s),
                 self.split_color,
                 self.right.into_view_provider(env, s),
-                false, s
+                true, s
             ).into_layout_view_provider()
         }
     }
@@ -261,6 +263,7 @@ mod split {
         invalidator: Option<WeakInvalidator<E>>,
 
         // mouse
+        is_focused: Cell<bool>,
         virtual_position: Cell<ScreenUnit>,
         actual_position: ScreenUnit,
     }
@@ -301,7 +304,9 @@ mod split {
                 nv
             }
             else {
-                NativeView::layout_view(s)
+                unsafe {
+                    NativeView::new(init_cursor_view(if self.is_horizontal { Cursor::HorizontalResize } else { Cursor::VerticalResize }, s), s)
+                }
             };
 
             subtree.push_subview(&self.bar, env, s);
@@ -318,12 +323,22 @@ mod split {
         fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
             self.actual_position = *layout_context;
 
-            let bar_frame = Rect::new(
-                frame.w / 2.0 - BAR_WIDTH / 2.0,
-                0.0,
-                BAR_WIDTH,
-                frame.h
-            );
+            let bar_frame = if self.is_horizontal {
+                Rect::new(
+                    frame.w / 2.0 - BAR_WIDTH / 2.0,
+                    0.0,
+                    BAR_WIDTH,
+                    frame.h
+                )
+            } else {
+                Rect::new(
+                    0.0,
+                    frame.h / 2.0 - BAR_WIDTH / 2.0,
+                    frame.w,
+                    BAR_WIDTH,
+                )
+            };
+
             self.bar.layout_down(bar_frame, env, s);
 
             (frame.full_rect(), frame.full_rect())
@@ -333,22 +348,30 @@ mod split {
             if let EventPayload::Mouse(event, at) = e.payload {
                 match event {
                     MouseEvent::LeftDown => {
+                        self.is_focused.set(true);
+                        push_cursor(if self.is_horizontal { Cursor::HorizontalResize } else { Cursor::VerticalResize });
                         EventResult::FocusAcquire
                     }
                     MouseEvent::LeftDrag(_, _) => {
-                        // update position
-                        let delta = if self.is_horizontal {
-                            at.x + self.width / 2.0
-                        } else {
-                            at.y + self.width / 2.0
-                        };
-                        self.virtual_position.set(
-                            self.actual_position + delta
-                        );
-                        self.invalidator.as_ref().unwrap().try_upgrade_invalidate(s);
-                        EventResult::NotHandled
+                        if self.is_focused.get() {
+                            // update position
+                            let delta = if self.is_horizontal {
+                                at.x - self.width / 2.0
+                            } else {
+                                at.y - self.width / 2.0
+                            };
+                            self.virtual_position.set(
+                                self.actual_position + delta
+                            );
+                            self.invalidator.as_ref().unwrap().try_upgrade_invalidate(s);
+                        }
+                        EventResult::Handled
                     }
                     MouseEvent::LeftUp => {
+                        if e.for_focused {
+                            pop_cursor();
+                            self.is_focused.set(false);
+                        }
                         EventResult::FocusRelease
                     }
                     _ => {
@@ -375,6 +398,7 @@ mod split {
                 width: SPLITTER_WIDTH,
                 is_horizontal,
                 invalidator: None,
+                is_focused: Cell::new(false),
                 virtual_position: Cell::new(0.0),
                 actual_position: 0.0,
             }.into_view(s);
@@ -467,13 +491,20 @@ mod split {
         }
 
         fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> Rect {
-            let pos = 0.0;
+            let (min, max) = if self.is_horizontal {
+                (self.lead.xsquished_size(s).w, self.lead.xstretched_size(s).w)
+            } else {
+                (self.lead.ysquished_size(s).w, self.lead.ystretched_size(s).w)
+            };
+            let pos = (self.splitter.up_context(s) - BAR_WIDTH / 2.0)
+                .clamp(min, max);
+
             if self.is_horizontal {
                 self.lead.layout_down_with_context(
                     Rect::new(0.0, 0.0, pos, frame.h),
                     layout_context, env, s);
 
-                let ctx = pos + self.splitter_size / 2.0;
+                let ctx = pos + BAR_WIDTH / 2.0;
                 self.splitter.layout_down_with_context(
                     Rect::new(pos + BAR_WIDTH / 2.0 - self.splitter_size / 2.0, 0.0, self.splitter_size, frame.h),
                    &ctx,
@@ -487,9 +518,9 @@ mod split {
                 self.lead.layout_down_with_context(
                     Rect::new(0.0, 0.0, frame.w, pos),
                     layout_context, env, s);
-                let ctx = pos + self.splitter_size / 2.0;
+                let ctx = pos + BAR_WIDTH / 2.0;
                 self.splitter.layout_down_with_context(
-                    Rect::new(0.0,pos + BAR_WIDTH / 2.0 - self.splitter_size / 2.0, frame.w, self.splitter_size),
+                    Rect::new(0.0,pos - self.splitter_size / 2.0, frame.w, self.splitter_size),
                     &ctx,
                     env, s
                 );

@@ -26,7 +26,29 @@ impl ApplicationProvider for App {
     }
 }
 
-fn view(s: MSlock) -> impl IVP {
+fn split(s: MSlock) -> impl IVP {
+    let left = BLUE
+        .padding(10)
+        .frame(F
+            .squished(100, 100)
+            .intrinsic(150, 150)
+            .stretched(200, 200)
+        );
+
+    let right = RED
+        .padding(10)
+        .frame(F
+            .squished(100, 400)
+            .intrinsic(300, 400)
+            .stretched(600, 400)
+        );
+
+    HSplit::new(
+        left, right
+    )
+}
+
+fn wormpool(s: MSlock) -> impl IVP {
     let selection = Store::new(None);
     selection.listen(|a, _s| {
         println!("Changed {:?}", a);
@@ -129,7 +151,7 @@ impl WindowProvider for MainWindow {
     }
 
     fn root(&self, env: &<Env as Environment>::Const, s: MSlock) -> impl ViewProvider<Env, DownContext=()> {
-        view(s)
+        split(s)
             .into_view_provider(env, s)
     }
 
@@ -148,7 +170,7 @@ impl WindowProvider for MainWindow {
     }
 
     fn is_fullscreen(&self, _env: &<Self::Environment as Environment>::Const, s: MSlock) -> impl Binding<Filterless<bool>> {
-        let ret = Store::new(true);
+        let ret = Store::new(false);
         if config::ENABLE_FULLSCREEN_LOGGING {
             ret.listen(|val, _s| {
                 println!("Fullscreen State: {}", *val);

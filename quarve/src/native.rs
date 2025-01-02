@@ -523,7 +523,9 @@ pub mod view {
 
         /* Cursor View */
         fn back_view_cursor_init(cursor_type: c_int) -> *mut c_void;
-        fn back_view_cursor_update(view: *mut c_void, cursor_type: std::ffi::c_int);
+        fn back_view_cursor_update(view: *mut c_void, cursor_type: c_int);
+        fn back_push_cursor(cursor_type: c_int);
+        fn back_pop_cursor();
 
         /* scroll view */
         fn back_view_scroll_init(
@@ -750,7 +752,7 @@ pub mod view {
         use std::ffi::c_void;
 
         use crate::core::MSlock;
-        use crate::native::view::{back_view_cursor_init, back_view_cursor_update};
+        use crate::native::view::{back_pop_cursor, back_push_cursor, back_view_cursor_init, back_view_cursor_update};
         use crate::view::modifers::Cursor;
 
         pub fn init_cursor_view(cursor: Cursor, _s: MSlock) -> *mut c_void {
@@ -762,6 +764,18 @@ pub mod view {
         pub fn update_cursor_view(view: *mut c_void, cursor: Cursor) {
             unsafe {
                 back_view_cursor_update(view, cursor as i32 as std::ffi::c_int);
+            }
+        }
+
+        pub fn push_cursor(cursor: Cursor) {
+            unsafe {
+                back_push_cursor(cursor as i32 as std::ffi::c_int)
+            }
+        }
+
+        pub fn pop_cursor() {
+            unsafe {
+                back_pop_cursor()
             }
         }
     }

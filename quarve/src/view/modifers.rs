@@ -2249,7 +2249,9 @@ mod cursor {
     pub enum Cursor {
         Arrow = 0,
         Pointer = 1,
-        IBeam = 2
+        IBeam = 2,
+        HorizontalResize = 3,
+        VerticalResize = 4,
     }
 
     pub struct CursorIVP<E, I> where E: Environment, I: IntoViewProvider<E> {

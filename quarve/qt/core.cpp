@@ -40,6 +40,9 @@ public:
     fat_pointer handle{};
     bool needsLayout{false};
     bool executing_back_fullscreen{false};
+    bool leftDown{false};
+    bool rightDown{false};
+    QPointF lastMousePosition;
 
     QMenuBar* menuBarCache{nullptr};
 
@@ -113,7 +116,7 @@ protected:
             return false;
         }
 
-        buffer_event be = { 0 };
+        buffer_event be{};
         be.native_event = event;
         bool valid = false;
 
@@ -144,7 +147,11 @@ protected:
                 be.is_up = true;
             }
 
+#ifdef __STDC_LIB_EXT1__
             strncpy_s((char *) buffer, sizeof buffer, keyEvent->text().toUtf8().data(), (sizeof buffer) - 1);
+#else
+            strncpy((char *) buffer, keyEvent->text().toUtf8().data(), (sizeof buffer) - 1);
+#endif
             buffer[(sizeof buffer) - 1] = '\0';
             be.key_characters = buffer;
         }
@@ -161,20 +168,36 @@ protected:
                 if (mouseEvent->button() == Qt::LeftButton) {
                     be.is_left_button = true;
                     be.is_down = true;
+                    this->leftDown = true;
                 } else if (mouseEvent->button() == Qt::RightButton) {
                     be.is_right_button = true;
                     be.is_down = true;
+                    this->rightDown = true;
                 }
+            }
+            else if (event->type() == QEvent::MouseMove) {
+                if (leftDown) {
+                    be.is_left_button = true;
+                }
+                if (rightDown) {
+                    be.is_right_button = true;
+                }
+                be.delta_x = mouseEvent->scenePosition().x() - lastMousePosition.x();
+                be.delta_y = mouseEvent->scenePosition().y() - lastMousePosition.y();
             }
             else if (event->type() == QEvent::MouseButtonRelease) {
                 if (mouseEvent->button() == Qt::LeftButton) {
                     be.is_left_button = true;
                     be.is_up = true;
+                    this->leftDown = false;
                 } else if (mouseEvent->button() == Qt::RightButton) {
                     be.is_right_button = true;
                     be.is_up = true;
+                    this->rightDown = false;
                 }
             }
+
+            lastMousePosition = mouseEvent->scenePosition();
 
             be.cursor_x = mouseEvent->scenePosition().x();
             be.cursor_y = mouseEvent->scenePosition().y() - menuBar()->height();

@@ -46,6 +46,12 @@ from_quarve_cursor(int cursor_type)
     else if (cursor_type == CURSOR_POINTER) {
         cursor = [NSCursor pointingHandCursor];
     }
+    else if (cursor_type == CURSOR_HORIZONTAL_RESIZE) {
+        cursor = [NSCursor resizeLeftRightCursor];
+    }
+    else if (cursor_type == CURSOR_VERTICAL_RESIZE) {
+        cursor = [NSCursor resizeUpDownCursor];
+    }
     else {
         NSLog(@"Invalid cursor requested!");
         cursor = [NSCursor arrowCursor];
@@ -67,4 +73,15 @@ back_view_cursor_update(void *_view, int cursor_type) {
     CursorView* view = _view;
     view.cursor = c;
     [view.window invalidateCursorRectsForView: view];
+}
+
+void
+back_push_cursor(int cursor) {
+    NSCursor* c = from_quarve_cursor(cursor);
+    [c push];
+}
+
+void
+back_pop_cursor() {
+    [NSCursor pop];
 }

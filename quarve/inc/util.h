@@ -60,7 +60,9 @@ enum event_modifiers {
 enum cursor {
     CURSOR_ARROW  = 0,
     CURSOR_POINTER= 1,
-    CURSOR_IBEAM  = 2
+    CURSOR_IBEAM  = 2,
+    CURSOR_HORIZONTAL_RESIZE = 3,
+    CURSOR_VERTICAL_RESIZE = 4,
 };
 
 typedef struct size {
