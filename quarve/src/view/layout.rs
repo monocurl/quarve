@@ -23,12 +23,12 @@ mod general_layout {
         fn xsquished_size(&mut self, s: MSlock) -> Size {
             self.intrinsic_size(s)
         }
-
-        fn ysquished_size(&mut self, s: MSlock) -> Size {
+        
+        fn xstretched_size(&mut self, s: MSlock) -> Size {
             self.intrinsic_size(s)
         }
 
-        fn xstretched_size(&mut self, s: MSlock) -> Size {
+        fn ysquished_size(&mut self, s: MSlock) -> Size {
             self.intrinsic_size(s)
         }
 
@@ -137,6 +137,396 @@ mod general_layout {
         }
     }
 }
+
+mod split {
+    use std::cell::Cell;
+    use std::marker::PhantomData;
+    use std::mem::swap;
+
+    use crate::core::{Environment, MSlock};
+    use crate::event::{Event, EventPayload, EventResult, MouseEvent};
+    use crate::prelude::{GRAY, LayoutProvider, Rect, ScreenUnit, Size};
+    use crate::state::FixedSignal;
+    use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, TrivialContextViewRef, View, ViewProvider, ViewRef, WeakInvalidator};
+    use crate::view::color_view::ColorView;
+    use crate::view::util::Color;
+
+    const BAR_WIDTH: ScreenUnit = 1.0;
+    const SPLITTER_WIDTH: ScreenUnit = 7.0;
+
+    struct VSplit<E, L, R>
+        where E: Environment,
+              L: IntoViewProvider<E>,
+              R: IntoViewProvider<E, DownContext=L::DownContext>,
+    {
+        top: L,
+        bottom: R,
+        phantom: PhantomData<E>,
+        split_color: Color
+    }
+
+    impl<E, L, R> VSplit<E, L, R>
+        where E: Environment,
+              L: IntoViewProvider<E>,
+              R: IntoViewProvider<E, DownContext=L::DownContext>,
+    {
+        pub fn new(top: L, bottom: R) -> Self {
+            VSplit {
+                top,
+                bottom,
+                phantom: Default::default(),
+                split_color: GRAY
+            }
+        }
+
+        pub fn split_color(mut self, color: Color) -> Self {
+            self.split_color = color;
+            self
+        }
+    }
+
+    impl<E, L, R> IntoViewProvider<E> for VSplit<E, L, R>
+        where E: Environment,
+              L: IntoViewProvider<E>,
+              R: IntoViewProvider<E, DownContext=L::DownContext>,
+    {
+        type UpContext = ();
+        type DownContext = L::DownContext;
+
+        fn into_view_provider(self, env: &E::Const, s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
+            SplitViewVP::new(
+                self.top.into_view_provider(env, s),
+                self.split_color,
+                self.bottom.into_view_provider(env, s),
+                false, s
+            ).into_layout_view_provider()
+        }
+    }
+
+    struct HSplit<E, L, R>
+        where E: Environment,
+              L: IntoViewProvider<E>,
+              R: IntoViewProvider<E, DownContext=L::DownContext>,
+    {
+        left: L,
+        right: R,
+        phantom: PhantomData<E>,
+        split_color: Color
+    }
+
+    impl<E, L, R> HSplit<E, L, R>
+        where E: Environment,
+              L: IntoViewProvider<E>,
+              R: IntoViewProvider<E, DownContext=L::DownContext>,
+    {
+        pub fn new(left: L, right: R) -> Self {
+            HSplit {
+                left,
+                right,
+                phantom: Default::default(),
+                split_color: GRAY
+            }
+        }
+
+        pub fn split_color(mut self, color: Color) -> Self {
+            self.split_color = color;
+            self
+        }
+    }
+
+    impl<E, L, R> IntoViewProvider<E> for HSplit<E, L, R>
+        where E: Environment,
+              L: IntoViewProvider<E>,
+              R: IntoViewProvider<E, DownContext=L::DownContext>,
+    {
+        type UpContext = ();
+        type DownContext = L::DownContext;
+
+        fn into_view_provider(self, env: &E::Const, s: MSlock) -> impl ViewProvider<E, UpContext=Self::UpContext, DownContext=Self::DownContext> {
+            SplitViewVP::new(
+                self.left.into_view_provider(env, s),
+                self.split_color,
+                self.right.into_view_provider(env, s),
+                false, s
+            ).into_layout_view_provider()
+        }
+    }
+
+    struct SplitterVP<E>
+        where E: Environment
+    {
+        bar: View<E, ColorView<FixedSignal<Color>>>,
+        width: ScreenUnit,
+        is_horizontal: bool,
+        invalidator: Option<WeakInvalidator<E>>,
+
+        // mouse
+        virtual_position: Cell<ScreenUnit>,
+        actual_position: ScreenUnit,
+    }
+
+    impl<E> ViewProvider<E> for SplitterVP<E>
+        where E: Environment
+    {
+        type UpContext = ScreenUnit;
+        type DownContext = ScreenUnit;
+
+        fn intrinsic_size(&mut self, _s: MSlock) -> Size {
+            Size::default()
+        }
+
+        fn xsquished_size(&mut self, _s: MSlock) -> Size {
+            Size::default()
+        }
+
+        fn xstretched_size(&mut self, _s: MSlock) -> Size {
+            Size::default()
+        }
+
+        fn ysquished_size(&mut self, _s: MSlock) -> Size {
+            Size::default()
+        }
+
+        fn ystretched_size(&mut self, _s: MSlock) -> Size {
+            Size::default()
+        }
+
+        fn up_context(&mut self, _s: MSlock) -> Self::UpContext {
+            self.virtual_position.get()
+        }
+
+        fn init_backing(&mut self, invalidator: WeakInvalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+            let nv = if let Some((nv, bs)) = backing_source {
+                self.bar.take_backing(bs.bar, env, s);
+                nv
+            }
+            else {
+                NativeView::layout_view(s)
+            };
+
+            subtree.push_subview(&self.bar, env, s);
+
+            self.invalidator = Some(invalidator);
+
+            nv
+        }
+
+        fn layout_up(&mut self, _subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, _s: MSlock) -> bool {
+            true
+        }
+
+        fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> (Rect, Rect) {
+            self.actual_position = *layout_context;
+
+            let bar_frame = Rect::new(
+                frame.w / 2.0 - BAR_WIDTH / 2.0,
+                0.0,
+                BAR_WIDTH,
+                frame.h
+            );
+            self.bar.layout_down(bar_frame, env, s);
+
+            (frame.full_rect(), frame.full_rect())
+        }
+
+        fn handle_event(&self, e: &Event, s: MSlock) -> EventResult {
+            if let EventPayload::Mouse(event, at) = e.payload {
+                match event {
+                    MouseEvent::LeftDown => {
+                        EventResult::FocusAcquire
+                    }
+                    MouseEvent::LeftDrag(_, _) => {
+                        // update position
+                        let delta = if self.is_horizontal {
+                            at.x + self.width / 2.0
+                        } else {
+                            at.y + self.width / 2.0
+                        };
+                        self.virtual_position.set(
+                            self.actual_position + delta
+                        );
+                        self.invalidator.as_ref().unwrap().try_upgrade_invalidate(s);
+                        EventResult::NotHandled
+                    }
+                    MouseEvent::LeftUp => {
+                        EventResult::FocusRelease
+                    }
+                    _ => {
+                        EventResult::NotHandled
+                    }
+                }
+            }
+            else {
+                EventResult::NotHandled
+            }
+        }
+    }
+
+    impl<E, L, R> SplitViewVP<E, L, R>
+        where E: Environment,
+              L: ViewProvider<E>,
+              R: ViewProvider<E, DownContext=L::DownContext>,
+    {
+        fn new(left: L, color: Color, right: R, is_horizontal: bool, s: MSlock) -> Self {
+            let lead = left.into_view(s);
+            let bar = ColorView::new(color).into_view(s);
+            let splitter = SplitterVP {
+                bar,
+                width: SPLITTER_WIDTH,
+                is_horizontal,
+                invalidator: None,
+                virtual_position: Cell::new(0.0),
+                actual_position: 0.0,
+            }.into_view(s);
+            let trail = right.into_view(s);
+
+            SplitViewVP {
+                lead,
+                splitter,
+                trail,
+                splitter_size: SPLITTER_WIDTH,
+                is_horizontal,
+            }
+        }
+    }
+
+
+    struct SplitViewVP<E, L, R>
+        where E: Environment,
+              L: ViewProvider<E>,
+              R: ViewProvider<E, DownContext=L::DownContext>,
+    {
+        lead: View<E, L>,
+        splitter: View<E, SplitterVP<E>>,
+        trail: View<E, R>,
+        splitter_size: ScreenUnit,
+        is_horizontal: bool
+    }
+
+    impl<E, L, R> LayoutProvider<E> for SplitViewVP<E, L, R>
+        where E: Environment,
+              L: ViewProvider<E>,
+              R: ViewProvider<E, DownContext=L::DownContext>,
+    {
+        type UpContext = ();
+        type DownContext = L::DownContext;
+
+        fn intrinsic_size(&mut self, s: MSlock) -> Size {
+            self.combine_size(
+                self.lead.intrinsic_size(s),
+                self.trail.intrinsic_size(s)
+            )
+        }
+
+        fn xsquished_size(&mut self, s: MSlock) -> Size {
+            self.combine_size(
+                self.lead.xsquished_size(s),
+                self.trail.xsquished_size(s)
+            )
+        }
+
+        fn xstretched_size(&mut self, s: MSlock) -> Size {
+            self.combine_size(
+                self.lead.xstretched_size(s),
+                self.trail.xstretched_size(s)
+            )
+        }
+
+        fn ysquished_size(&mut self, s: MSlock) -> Size {
+            self.combine_size(
+                self.lead.ysquished_size(s),
+                self.trail.ysquished_size(s)
+            )
+        }
+
+        fn ystretched_size(&mut self, s: MSlock) -> Size {
+            self.combine_size(
+                self.lead.ystretched_size(s),
+                self.trail.ystretched_size(s)
+            )
+        }
+
+        fn up_context(&mut self, _s: MSlock) -> Self::UpContext {
+            ()
+        }
+
+        fn init(&mut self, _invalidator: WeakInvalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<Self>, env: &mut EnvRef<E>, s: MSlock) {
+            if let Some(source) = backing_source {
+                self.lead.take_backing(source.lead, env, s);
+                self.splitter.take_backing(source.splitter, env, s);
+                self.trail.take_backing(source.trail, env, s);
+            }
+
+            subtree.push_subview(&self.lead, env, s);
+            subtree.push_subview(&self.trail, env, s);
+            subtree.push_subview(&self.splitter, env, s);
+        }
+
+        fn layout_up(&mut self, _subtree: &mut Subtree<E>, _env: &mut EnvRef<E>, _s: MSlock) -> bool {
+            true
+        }
+
+        fn layout_down(&mut self, _subtree: &Subtree<E>, frame: Size, layout_context: &Self::DownContext, env: &mut EnvRef<E>, s: MSlock) -> Rect {
+            let pos = 0.0;
+            if self.is_horizontal {
+                self.lead.layout_down_with_context(
+                    Rect::new(0.0, 0.0, pos, frame.h),
+                    layout_context, env, s);
+
+                let ctx = pos + self.splitter_size / 2.0;
+                self.splitter.layout_down_with_context(
+                    Rect::new(pos + BAR_WIDTH / 2.0 - self.splitter_size / 2.0, 0.0, self.splitter_size, frame.h),
+                   &ctx,
+                    env, s
+                );
+                self.trail.layout_down_with_context(
+                    Rect::new(pos + BAR_WIDTH, 0.0, frame.w - pos - BAR_WIDTH, frame.h),
+                    layout_context, env, s);
+            }
+            else {
+                self.lead.layout_down_with_context(
+                    Rect::new(0.0, 0.0, frame.w, pos),
+                    layout_context, env, s);
+                let ctx = pos + self.splitter_size / 2.0;
+                self.splitter.layout_down_with_context(
+                    Rect::new(0.0,pos + BAR_WIDTH / 2.0 - self.splitter_size / 2.0, frame.w, self.splitter_size),
+                    &ctx,
+                    env, s
+                );
+                self.trail.layout_down_with_context(
+                    Rect::new(0.0, pos + BAR_WIDTH, frame.w, frame.h - pos - BAR_WIDTH),
+                    layout_context, env, s);
+            }
+
+            frame.full_rect()
+        }
+    }
+
+    impl<E, L, R> SplitViewVP<E, L, R>
+        where E: Environment,
+              L: ViewProvider<E>,
+              R: ViewProvider<E, DownContext=L::DownContext>,
+    {
+        fn combine_size(&self, mut u: Size, mut v: Size) -> Size {
+            if self.is_horizontal {
+                swap(&mut u.w, &mut u.h);
+                swap(&mut v.w, &mut v.h);
+            }
+
+            let mut ret = Size::new(
+                u.w.max(v.w),
+                u.h + BAR_WIDTH + v.h
+            );
+
+            if self.is_horizontal {
+                swap(&mut ret.w, &mut ret.h);
+            }
+
+            ret
+        }
+    }
+}
+
 
 mod vec_layout {
     pub use binding_layout::*;
