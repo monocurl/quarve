@@ -426,7 +426,7 @@ pub mod geo {
             Rect {
                 x,
                 y,
-                w: (self.x + self.w).max(with.x + with.x) - x,
+                w: (self.x + self.w).max(with.x + with.w) - x,
                 h: (self.y + self.h).max(with.y + with.h) - y,
             }
         }
