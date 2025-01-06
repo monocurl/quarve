@@ -844,7 +844,6 @@ impl<'a, E> Subtree<'a, E> where E: Environment {
             borrow.show(&subview_this, &weak, env.0, self.graph.depth + 1, s);
         }
 
-        println!("Superview of child is {:?}", self.owner.as_ptr());
         borrow.set_superview(Some(Arc::downgrade(self.owner)));
         self.graph.subviews.insert(index, subview.clone());
 
@@ -855,10 +854,6 @@ impl<'a, E> Subtree<'a, E> where E: Environment {
 
         drop(borrow);
         self.ensure_subtree_has_layout_up_done(env, s);
-    }
-
-    pub(crate) fn subview_at(&self, at: usize) -> &Arc<MainSlockCell<dyn InnerViewBase<E>>> {
-        &self.graph.subviews[at]
     }
 
     // note that cyclic is technically possible if you work hard enough

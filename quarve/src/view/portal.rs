@@ -72,8 +72,6 @@ impl<E, U, D> PortalReceiver<E, U, D>
 
     #[inline]
     fn mount(&mut self, s: MSlock) {
-        println!("Mount {:?}", self.invalidator.as_ref().unwrap());
-
         let mut borrow = self.portal.inner.borrow_mut();
 
         // if not currently contained add it
@@ -94,8 +92,6 @@ impl<E, U, D> PortalReceiver<E, U, D>
 
     #[inline]
     fn unmount(&self, s: MSlock) {
-        println!("Unmount {:?}", self.invalidator.as_ref().unwrap());
-
         self.portal.inner.borrow_mut()
             .receiver_invalidator
             .retain(|inv| {

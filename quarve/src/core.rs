@@ -654,13 +654,6 @@ mod window {
 
             let org_targ_depth = to.as_ref().map(|t| t.borrow_main(s).depth() as i32).unwrap_or(-1);
             let mut targ_depth = org_targ_depth;
-            if targ_depth == 3 {
-                println!("Parent Addr {:?}",
-                    to.as_ref().unwrap().borrow_main(s)
-                        .superview().unwrap().as_ptr()
-                );
-            }
-
             let mut targ = to.clone();
             while *curr_depth > targ_depth {
                 if *curr_depth == min_depth {
