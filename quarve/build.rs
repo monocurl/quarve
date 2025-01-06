@@ -102,6 +102,20 @@ fn build() {
         build.flag("-Zc:__cplusplus");
     }
 
+    #[cfg(target_os = "linux")]
+    {
+        let headers = qt_path.join("include");
+        build.include(&headers);
+
+        for framework in qt_frameworks {
+            let headers =
+                qt_path.join(format!("include/{}", framework));
+            build.include(&headers);
+        }
+
+        // use c++17
+        build.flag("-std=c++17"); 
+    }
     build.compile("backend");
 
     // link to framework/libraries
@@ -117,6 +131,17 @@ fn build() {
     #[cfg(target_os = "windows")]
     {
         let qt_libs = ["Qt6Widgets", "Qt6Gui", "Qt6Core"];
+
+        println!("cargo:rustc-link-search={}", qt_path.join("lib").to_str().expect("Invalid backend path"));
+
+        for lib in qt_libs {
+            println!("cargo:rustc-link-lib={}", lib);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let qt_libs = ["Qt6Gui", "Qt6Widgets", "Qt6Core"];
 
         println!("cargo:rustc-link-search={}", qt_path.join("lib").to_str().expect("Invalid backend path"));
 
