@@ -2,21 +2,20 @@ use std::any::Any;
 use std::cell::Cell;
 use std::ffi::c_void;
 use std::sync::{Arc, Weak};
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::core::{Environment, MSlock, WindowViewCallback};
 use crate::event::{Event, EventResult};
 use crate::native;
 use crate::native::backend::AUTO_CLIPS_CHILDREN;
 use crate::native::view::{view_add_child_at, view_clear_children, view_remove_child, view_set_frame};
-use crate::state::Buffer;
 use crate::state::slock_cell::MainSlockCell;
+use crate::state::Buffer;
 use crate::util::geo;
 use crate::util::geo::{Point, Rect, ScreenUnit, Size};
 use crate::util::rust_util::PhantomUnsendUnsync;
-use crate::view::{EnvRef, View, WeakInvalidator};
 use crate::view::util::SizeContainer;
 use crate::view::view_provider::ViewProvider;
+use crate::view::{EnvRef, View, WeakInvalidator};
 
 pub(crate) trait InnerViewBase<E> where E: Environment {
     /* native methods */
@@ -111,8 +110,6 @@ pub(crate) struct InnerView<E, P> where E: Environment,
 
     needs_layout_up: Cell<bool>,
     needs_layout_down: Cell<bool>,
-    // wonder if there is better solution
-    performing_up: Arc<AtomicBool>,
 
     /* cached layout results */
     last_suggested: Rect,
@@ -373,9 +370,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
             owner: this,
         };
 
-        self.performing_up.store(true, Ordering::SeqCst);
         let ret = self.provider.layout_up(&mut subtree, &mut handle, s);
-        self.performing_up.store(false, Ordering::SeqCst);
 
         self.needs_layout_up.set(false);
         self.needs_layout_down.set(true);
@@ -924,7 +919,6 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
                 last_view_frame: Rect::default(),
                 last_bounding_rect: Rect::default(),
                 provider,
-                performing_up: Arc::new(false.into()),
             }, s)
         )
     }
