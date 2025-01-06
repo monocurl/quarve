@@ -165,6 +165,9 @@ back_text_size(void* view, size suggested)
 - (void)viewDidMoveToWindow {
     if (self.scheduled_focused) {
         [self becomeFirstResponder];
+        // run next event loop to avoid duplicate borrow
+        //dispatch_async(dispatch_get_main_queue(),^{
+        // });
     }
 }
 

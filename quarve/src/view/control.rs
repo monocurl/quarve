@@ -178,14 +178,14 @@ mod button {
             if !inside || matches!(&e.payload, EventPayload::Mouse(MouseEvent::LeftUp, _)) {
                 if *self.is_click.borrow(s) {
                     self.is_click.apply(SetAction::Set(false), s);
-                    return EventResult::Handled;
+                    return EventResult::FocusRelease;
                 }
             } else if inside && matches!(&e.payload, EventPayload::Mouse(MouseEvent::LeftDown, _)) {
                 if !*self.is_click.borrow(s) {
                     (self.action)(s);
 
                     self.is_click.apply(SetAction::Set(true), s);
-                    return EventResult::Handled;
+                    return EventResult::FocusAcquire;
                 }
             }
 

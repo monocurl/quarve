@@ -1654,8 +1654,12 @@ mod env_modifier {
     use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
 
     pub trait EnvironmentModifier<E>: 'static where E: Environment {
+        /// You should really only be calling invalidate_environment
+        /// if you ever use the invalidator at all
         fn init(&mut self, invalidator: WeakInvalidator<E>, s: MSlock);
+
         fn push_environment(&mut self, env: &mut E::Variable, s: MSlock);
+
         fn pop_environment(&mut self, env: &mut E::Variable, s: MSlock);
     }
 

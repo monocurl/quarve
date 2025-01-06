@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::ptr;
 use std::rc::{Rc, Weak};
+use std::sync::Arc;
 
 use crate::core::{Environment, MSlock};
 use crate::event::{Event, EventResult};
@@ -71,6 +72,8 @@ impl<E, U, D> PortalReceiver<E, U, D>
 
     #[inline]
     fn mount(&mut self, s: MSlock) {
+        println!("Mount {:?}", self.invalidator.as_ref().unwrap());
+
         let mut borrow = self.portal.inner.borrow_mut();
 
         // if not currently contained add it
@@ -91,6 +94,8 @@ impl<E, U, D> PortalReceiver<E, U, D>
 
     #[inline]
     fn unmount(&self, s: MSlock) {
+        println!("Unmount {:?}", self.invalidator.as_ref().unwrap());
+
         self.portal.inner.borrow_mut()
             .receiver_invalidator
             .retain(|inv| {
@@ -175,14 +180,22 @@ impl<E, U, D> ViewProvider<E> for PortalReceiver<E, U, D>
     }
 
     fn layout_up(&mut self, subtree: &mut Subtree<E>, env: &mut EnvRef<E>, s: MSlock) -> bool {
-        subtree.clear_subviews(s);
-
         if let Some(arc) = self.subview().map(|v| v.to_view_base())
         {
-            subtree.insert_arc_even_if_mounted_on_another_view(arc, 0, env, s);
-        }
+            let remount = arc.borrow_main(s).superview().is_none_or(|s| {
+                !Arc::ptr_eq(&s, &self.invalidator.as_ref().and_then(|a| a.view()).unwrap())
+            });
 
-        self.mount(s);
+            if remount {
+                subtree.clear_subviews(s);
+                subtree.insert_arc_even_if_mounted_on_another_view(arc.clone(), 0, env, s);
+
+                self.mount(s);
+            }
+        }
+        else {
+            subtree.clear_subviews(s);
+        }
 
         true
     }
@@ -201,6 +214,14 @@ impl<E, U, D> ViewProvider<E> for PortalReceiver<E, U, D>
         }
     }
 
+    fn pre_show(&mut self, s: MSlock) {
+        self.mount(s);
+
+        if let Some(ref i) = self.invalidator {
+            i.try_upgrade_invalidate(s);
+        }
+    }
+
     fn pre_hide(&mut self, s: MSlock) {
         self.unmount(s);
     }
@@ -212,7 +233,7 @@ pub struct PortalSenderIVP<E, U, D, I, W>
           W: IntoViewProvider<E>
 {
     portal: Portal<E, U, D>,
-    wrapping: W,
+    source: W,
     view: I
 }
 
@@ -228,7 +249,7 @@ impl<E, U, D, I, W> IntoViewProvider<E> for PortalSenderIVP<E, U, D, I, W>
         PortalSenderVP {
             portal: self.portal,
             content: Rc::new(self.view.into_view_provider(env, s).into_view(s)),
-            source: self.wrapping.into_view_provider(env, s),
+            source: self.source.into_view_provider(env, s),
             invalidator: None,
             conditional_enabled: true,
             mounted: false,
@@ -247,7 +268,7 @@ impl<E, U, D, I, W> ConditionalIVPModifier<E> for PortalSenderIVP<E, U, D, I, W>
         PortalSenderVP {
             portal: self.portal,
             content: Rc::new(self.view.into_view_provider(env, s).into_view(s)),
-            source: self.wrapping.into_conditional_view_provider(env, s),
+            source: self.source.into_conditional_view_provider(env, s),
             invalidator: None,
             conditional_enabled: true,
             mounted: false
@@ -285,6 +306,7 @@ impl<E, U, D, P, W> PortalSenderVP<E, U, D, P, W>
 
         let needs_change = {
             borrow.sent_view.is_none() ||
+                borrow.sender_count == 0 || // effectively none
                 !ptr::addr_eq(Weak::as_ptr(borrow.sent_view.as_ref().unwrap()), Rc::as_ptr(&self.content))
         };
 
@@ -468,7 +490,7 @@ impl<E, I> PortalSendable<E> for I where E: Environment, I: IntoViewProvider<E> 
     {
         PortalSenderIVP {
             portal: Portal { inner: portal.inner.clone() },
-            wrapping: self,
+            source: self,
             view,
         }
     }

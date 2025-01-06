@@ -1,13 +1,18 @@
-use quarve::core::clock_signal;
+use quarve::core::{clock_signal, with_app};
 use quarve::event::EventModifiers;
 use quarve::prelude::*;
 use quarve::state::{Filterless, TokenStore};
 use quarve::view::color_view::ColorView;
 use quarve::view::control::Dropdown;
+use quarve::view::menu::{MenuChannel, MenuReceiver, MenuSend};
 use quarve::view::scroll::ScrollView;
 use quarve::view::text::{Text, TextField, TextModifier};
 
+use crate::portal::dynamic_portal;
+
 mod config;
+mod modal;
+mod portal;
 
 struct App;
 struct MainWindow;
@@ -131,6 +136,12 @@ fn wormpool(s: MSlock) -> impl IVP {
     )
 }
 
+fn new_window(s: MSlock) {
+    with_app(|app| {
+        app.spawn_window(MainWindow, s)
+    }, s);
+}
+
 // The main code where you specify a view hierarchy
 impl WindowProvider for MainWindow {
     type Environment = Env;
@@ -151,17 +162,21 @@ impl WindowProvider for MainWindow {
     }
 
     fn root(&self, env: &<Env as Environment>::Const, s: MSlock) -> impl ViewProvider<Env, DownContext=()> {
-        split(s)
+        dynamic_portal(s)
             .into_view_provider(env, s)
     }
 
     fn menu(&self, env: &<Self::Environment as Environment>::Const, s: MSlock) -> WindowMenu {
+        // in practice, this initialization would be done
+        // somewhere else (likely in environment initialization)
+        // so that we can also give the channel to the views
+        // but lets ignore that for sake of example
+        let channel = MenuChannel::new();
+
         WindowMenu::standard(
             env,
             Menu::new("File")
-                .push(MenuButton::new("New", "N", EventModifiers::default().set_command(), |_s| {
-                    println!("Clicked menu button");
-                })),
+                .push(MenuReceiver::new(&channel, "New", "N", EventModifiers::default().set_command(), s)),
             Menu::new("Edit"),
             Menu::new("View"),
             Menu::new("Help"),
@@ -180,6 +195,7 @@ impl WindowProvider for MainWindow {
         ret.binding()
     }
 }
+
 
 // Boilerplate; mainly necessary for advanced projects
 impl Environment for Env {

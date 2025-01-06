@@ -1,10 +1,11 @@
+pub(crate) use run::*;
 
 #[cfg(target_os = "macos")]
 mod run {
     use std::fs::remove_dir_all;
     use std::path::{Path, PathBuf};
     use std::process::{Command, Stdio};
-    use crate::run::QT_FRAMEWORKS;
+
     use crate::util::cargo_util::{find_name, find_path};
     use crate::util::file_util::copy_directory;
 
@@ -162,8 +163,9 @@ mod run {
     use std::fs;
     use std::fs::{create_dir_all, remove_dir_all};
     use std::os::windows::process::CommandExt;
-    use std::path::{PathBuf};
+    use std::path::PathBuf;
     use std::process::Command;
+
     use crate::util::cargo_util::{find_name, find_path};
     use crate::util::file_util::copy_directory;
 
@@ -266,4 +268,3 @@ mod run {
     }
 }
 
-pub(crate) use run::*;

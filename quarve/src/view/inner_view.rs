@@ -4,7 +4,7 @@ use std::ffi::c_void;
 use std::sync::{Arc, Weak};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::core::{Environment, MSlock, Slock, WindowViewCallback};
+use crate::core::{Environment, MSlock, WindowViewCallback};
 use crate::event::{Event, EventResult};
 use crate::native;
 use crate::native::backend::AUTO_CLIPS_CHILDREN;
@@ -32,6 +32,9 @@ pub(crate) trait InnerViewBase<E> where E: Environment {
     fn mut_graph(&mut self) -> &mut Graph<E>;
 
     fn depth(&self) -> u32;
+    fn unmounted(&self) -> bool {
+        self.depth() == u32::MAX
+    }
 
     // true if handled
     fn handle_mouse_event(&self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, event: &mut Event, prev_position: Point, focused: bool, s: MSlock) -> bool;
@@ -92,7 +95,8 @@ pub(crate) trait InnerViewBase<E> where E: Environment {
     // even though it doesn't need a layout up
     fn set_needs_layout_down(&self);
     fn set_needs_layout_up(&self);
-    fn invalidate(&self, this: Weak<MainSlockCell<dyn InnerViewBase<E>>>, s: Slock);
+    fn start_invalidation(&self);
+    fn request_invalidation(&self, this: Weak<MainSlockCell<dyn InnerViewBase<E>>>, s: MSlock);
 
     /* environment */
     fn push_environment(&mut self, env: &mut E, s: MSlock);
@@ -159,11 +163,13 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
             || suggested.size() != self.last_suggested.size();
 
         let (view_frame, exclusion) = if actually_needs_layout {
+            let window = self.graph.window.clone().unwrap();
             let subtree = Subtree {
                 graph: &mut self.graph,
                 owner: this,
             };
-            let (actual_frame, exclusion) = self.provider.layout_down(&subtree, suggested.size(), context, &mut EnvRef(env), s);
+
+            let (actual_frame, exclusion) = self.provider.layout_down(&subtree, suggested.size(), context, &mut EnvRef(env, &window), s);
 
             /* children were mounted with respect to the origin, but the used may translate
                that somewhat, so we must negate this account
@@ -237,8 +243,8 @@ impl<E, P> InnerView<E, P> where E: Environment, P: ViewProvider<E> {
             self.provider.push_environment(env.0.variable_env_mut(), s);
 
             let invalidator = WeakInvalidator {
-                performing_up: Arc::clone(&self.performing_up),
-                view: Arc::downgrade(this)
+                view: Arc::downgrade(this),
+                window: env.1.clone(),
             };
             let mut subtree = Subtree {
                 graph: &mut self.graph,
@@ -360,7 +366,8 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
     fn layout_up(&mut self, this: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, env: &mut E, s: MSlock) -> bool {
         debug_assert!(self.needs_layout_up());
 
-        let mut handle = EnvRef(env);
+        let window = self.graph.window.clone().unwrap();
+        let mut handle = EnvRef(env, &window);
         let mut subtree = Subtree {
             graph: &mut self.graph,
             owner: this,
@@ -459,35 +466,35 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
     }
 
     fn intrinsic_size(&mut self, s: MSlock) -> Size {
-        debug_assert!(!self.needs_layout_up() && self.depth() != u32::MAX,
+        debug_assert!(!self.needs_layout_up() && !self.unmounted(),
                       "This method must only be called after the subview \
                       has been mounted to the parent. Also, this view cannot be in an invalidated/dirty state");
          self.provider.intrinsic_size(s)
     }
 
     fn xsquished_size(&mut self, s: MSlock) -> Size {
-        debug_assert!(!self.needs_layout_up() && self.depth() != u32::MAX,
+        debug_assert!(!self.needs_layout_up() && !self.unmounted(),
                       "This method must only be called after the subview \
                       has been mounted to the parent. Also, this view cannot be in an invalidated/dirty state");
         self.provider.xsquished_size(s)
     }
 
     fn xstretched_size(&mut self, s: MSlock) -> Size {
-        debug_assert!(!self.needs_layout_up() && self.depth() != u32::MAX,
+        debug_assert!(!self.needs_layout_up() && !self.unmounted(),
                       "This method must only be called after the subview \
                       has been mounted to the parent. Also, this view cannot be in an invalidated/dirty state");
         self.provider.xstretched_size(s)
     }
 
     fn ysquished_size(&mut self, s: MSlock) -> Size {
-        debug_assert!(!self.needs_layout_up() && self.depth() != u32::MAX,
+        debug_assert!(!self.needs_layout_up() && !self.unmounted(),
                       "This method must only be called after the subview \
                       has been mounted to the parent. Also, this view cannot be in an invalidated/dirty state");
         self.provider.ysquished_size(s)
     }
 
     fn ystretched_size(&mut self, s: MSlock) -> Size {
-        debug_assert!(!self.needs_layout_up() && self.depth() != u32::MAX,
+        debug_assert!(!self.needs_layout_up() && !self.unmounted(),
                       "This method must only be called after the subview \
                       has been mounted to the parent. Also, this view cannot be in an invalidated/dirty state");
         self.provider.ystretched_size(s)
@@ -530,10 +537,10 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         /* init backing if necessary */
         if self.native_view().is_null() {
             let invalidator = WeakInvalidator {
-                performing_up: Arc::clone(&self.performing_up),
-                view: Arc::downgrade(this)
+                view: Arc::downgrade(this),
+                window: window.clone(),
             };
-            let mut handle = EnvRef(e);
+            let mut handle = EnvRef(e, window);
             let mut subtree = Subtree {
                 graph: &mut self.graph,
                 owner: this,
@@ -566,7 +573,7 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         self.provider.post_show(s);
 
         if self.needs_layout_up.get() {
-            self.invalidate(Arc::downgrade(this), s.to_general_slock());
+            self.request_invalidation(Arc::downgrade(this), s);
         }
 
         /* pop environment */
@@ -594,23 +601,17 @@ impl<E, P> InnerViewBase<E> for InnerView<E, P> where E: Environment, P: ViewPro
         self.needs_layout_up.set(true);
     }
 
-    fn invalidate(&self, this: Weak<MainSlockCell<dyn InnerViewBase<E>>>, s: Slock) {
+    // called by window
+    fn start_invalidation(&self) {
         self.needs_layout_up.set(true);
         self.needs_layout_down.set(true);
+    }
 
-        // currently unmounted
-        if self.graph.depth == u32::MAX {
-            return;
-        }
-
-        if let Some(window) = self.graph.window.as_ref().and_then(|window| window.upgrade()) {
-            // safety:
-            // the only part of window we're touching
-            // is send (guaranteed by protocol)
-            unsafe {
-                window.borrow_non_main_non_send(s)
-                    .invalidate_view(Arc::downgrade(&window), this, self.graph.depth, s);
-            }
+    fn request_invalidation(&self, this: Weak<MainSlockCell<dyn InnerViewBase<E>>>, s: MSlock) {
+        if let Some(window) = self.graph().window.clone() {
+            window.upgrade().unwrap()
+                .borrow_main(s)
+                .invalidate_view(window, this, s.to_general_slock());
         }
     }
 
@@ -739,7 +740,9 @@ impl<'a, E> Subtree<'a, E> where E: Environment {
         // safety is same reason invalidate above is safe
         // (only touching send parts)
         let borrow = curr.borrow_main(s);
-        borrow.invalidate(Arc::downgrade(curr), s.to_general_slock());
+
+        // actually invalidate
+        borrow.request_invalidation(Arc::downgrade(curr), s);
 
         for subview in borrow.graph().subviews() {
             Subtree::dfs(subview, s);
@@ -841,6 +844,7 @@ impl<'a, E> Subtree<'a, E> where E: Environment {
             borrow.show(&subview_this, &weak, env.0, self.graph.depth + 1, s);
         }
 
+        println!("Superview of child is {:?}", self.owner.as_ptr());
         borrow.set_superview(Some(Arc::downgrade(self.owner)));
         self.graph.subviews.insert(index, subview.clone());
 
@@ -851,6 +855,10 @@ impl<'a, E> Subtree<'a, E> where E: Environment {
 
         drop(borrow);
         self.ensure_subtree_has_layout_up_done(env, s);
+    }
+
+    pub(crate) fn subview_at(&self, at: usize) -> &Arc<MainSlockCell<dyn InnerViewBase<E>>> {
+        &self.graph.subviews[at]
     }
 
     // note that cyclic is technically possible if you work hard enough

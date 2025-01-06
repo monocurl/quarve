@@ -1,11 +1,14 @@
+use std::fmt::{Debug, Formatter};
 use std::sync::{Arc, Weak};
-use std::sync::atomic::{AtomicBool, Ordering};
-use crate::core::{Environment, MSlock, Slock};
-use crate::state::slock_cell::{MainSlockCell};
+
+pub use view_ref::*;
+
+use crate::core::{Environment, MSlock, Slock, WindowViewCallback};
+use crate::state::slock_cell::MainSlockCell;
+use crate::util::marker::ThreadMarker;
 use crate::util::rust_util::EnsureSend;
 use crate::view::inner_view::{InnerView, InnerViewBase};
 use crate::view::view_provider::ViewProvider;
-use crate::util::marker::ThreadMarker;
 
 pub struct View<E, P>(pub(crate) Arc<MainSlockCell<InnerView<E, P>>>)
     where E: Environment, P: ViewProvider<E> + ?Sized;
@@ -38,18 +41,18 @@ impl<E, P> View<E, P> where E: Environment, P: ViewProvider<E> {
     // without significant overhead
     pub(crate) fn invalidate(&self, s: MSlock) {
         let weak = Arc::downgrade(&self.0) as Weak<MainSlockCell<dyn InnerViewBase<E>>>;
-        self.0.borrow_mut_main(s).invalidate(weak, s.to_general_slock());
+        self.0.borrow_mut_main(s).request_invalidation(weak, s);
     }
 }
 
 mod view_ref {
     use std::sync::Arc;
+
     use crate::core::{Environment, MSlock};
     use crate::state::slock_cell::MainSlockCell;
     use crate::util::geo::{Point, Rect, Size};
     use crate::view::{EnvRef, InnerViewBase, View, ViewProvider};
     use crate::view::util::SizeContainer;
-
 
     /* hides provider type */
     // FIXME lots of repeated code
@@ -186,11 +189,18 @@ mod view_ref {
         }
     }
 }
-pub use view_ref::*;
 
 pub struct WeakInvalidator<E> where E: Environment {
-    pub(crate) performing_up: Arc<AtomicBool>,
-    pub(crate) view: Weak<MainSlockCell<dyn InnerViewBase<E>>>
+    pub(crate) view: Weak<MainSlockCell<dyn InnerViewBase<E>>>,
+    pub(crate) window: Weak<MainSlockCell<dyn WindowViewCallback<E>>>
+}
+
+impl<E> Debug for WeakInvalidator<E> where E: Environment {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WeakInvalidator")
+            .field("view", &self.view.as_ptr())
+            .finish()
+    }
 }
 
 impl<E> WeakInvalidator<E> where E: Environment {
@@ -202,14 +212,23 @@ impl<E> WeakInvalidator<E> where E: Environment {
         true
     }
 
-    pub fn upgrade(&self) -> Option<Invalidator<E>> {
+    pub(crate) fn view(&self) -> Option<Arc<MainSlockCell<dyn InnerViewBase<E>>>> {
         self.view.upgrade()
-            .map(|view| {
-                Invalidator {
-                    performing_up: Arc::clone(&self.performing_up),
-                    view
-                }
+    }
+
+    pub fn upgrade(&self) -> Option<Invalidator<E>> {
+        let v = self.view.upgrade();
+        let w = self.window.upgrade();
+
+        if let (Some(v), Some(w)) = (v, w) {
+            Some(Invalidator {
+                view: v,
+                window: w
             })
+        }
+        else {
+            None
+        }
     }
 }
 
@@ -225,19 +244,18 @@ impl<E> Eq for WeakInvalidator<E> where E: Environment {
 impl<E> Clone for WeakInvalidator<E> where E: Environment {
     fn clone(&self) -> Self {
         WeakInvalidator {
-            performing_up: Arc::clone(&self.performing_up),
             view: self.view.clone(),
+            window: self.window.clone(),
         }
     }
 }
 
 pub struct Invalidator<E> where E: Environment {
-    performing_up: Arc<AtomicBool>,
-    view: Arc<MainSlockCell<dyn InnerViewBase<E>>>
+    view: Arc<MainSlockCell<dyn InnerViewBase<E>>>,
+    window: Arc<MainSlockCell<dyn WindowViewCallback<E>>>
 }
 
 impl<E> Invalidator<E> where E: Environment {
-    // Should never be called during layout down
     pub fn invalidate(&self, s: Slock<impl ThreadMarker>) {
         // invalidate just this
         // safety:
@@ -247,36 +265,34 @@ impl<E> Invalidator<E> where E: Environment {
         // and the window back pointer, whereas for window
         // it's just the list of invalidated views)
         // FIXME add better descriptions of safety
-
-        if self.performing_up.load(Ordering::SeqCst) {
-            return
-        }
-
         unsafe {
-            self.view.borrow_non_main_non_send(s.to_general_slock())
-                .invalidate(Arc::downgrade(&self.view), s.to_general_slock());
+            self.window.borrow_non_main_non_send(s.to_general_slock())
+                .invalidate_view(Arc::downgrade(&self.window), Arc::downgrade(&self.view), s.to_general_slock());
         }
     }
 
-    fn dfs(curr: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, s: Slock<impl ThreadMarker>) {
+    fn dfs(curr: &Arc<MainSlockCell<dyn InnerViewBase<E>>>, window: &dyn WindowViewCallback<E>, window_handle: Weak<MainSlockCell<dyn WindowViewCallback<E>>>, s: Slock<impl ThreadMarker>) {
         // safety is same reason invalidate above is safe
         // (only touching send parts)
-        unsafe {
-            let borrow = curr.borrow_non_main_non_send(s.to_general_slock());
-            borrow.invalidate(Arc::downgrade(curr), s.to_general_slock());
+        window.invalidate_view(window_handle.clone(), Arc::downgrade(curr), s.to_general_slock());
+        let borrow = unsafe {
+            curr.borrow_non_main_non_send(s.to_general_slock())
+        };
 
-            for subview in borrow.graph().subviews() {
-                Invalidator::dfs(subview, s.to_general_slock());
-            }
+        for subview in borrow.graph().subviews() {
+            Invalidator::dfs(subview, window, window_handle.clone(),  s.to_general_slock());
         }
     }
 
     pub fn invalidate_environment(&self, s: Slock<impl ThreadMarker>) {
-        Invalidator::dfs(&self.view, s);
+        let window = unsafe {
+            self.window.borrow_non_main_non_send(s.to_general_slock())
+        };
+        Invalidator::dfs(&self.view, &*window, Arc::downgrade(&self.window), s);
     }
 }
 
-pub struct EnvRef<'a, E>(pub(crate) &'a mut E) where E: Environment;
+pub struct EnvRef<'a, E>(pub(crate) &'a mut E, pub(crate) &'a Weak<MainSlockCell<dyn WindowViewCallback<E>>>) where E: Environment;
 
 impl<'a, E> EnvRef<'a, E> where E: Environment {
     pub fn const_env<'b>(&'b self) -> &'a E::Const

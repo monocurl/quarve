@@ -390,7 +390,7 @@ mod window {
         // this method is guaranteed to only touch
         // Send parts of self
         // handle is because of some async operations
-        fn invalidate_view(&self, handle: Weak<MainSlockCell<dyn WindowViewCallback<E>>>, view: Weak<MainSlockCell<dyn InnerViewBase<E>>>, depth: u32, s: Slock);
+        fn invalidate_view(&self, handle: Weak<MainSlockCell<dyn WindowViewCallback<E>>>, view: Weak<MainSlockCell<dyn InnerViewBase<E>>>, s: Slock);
 
         fn request_focus(&self, view: Weak<MainSlockCell<dyn InnerViewBase<E>>>);
         fn unrequest_focus(&self, view: Weak<MainSlockCell<dyn InnerViewBase<E>>>);
@@ -418,6 +418,7 @@ mod window {
         // it is common to take out the environment
         // and put it back in
         environment: Cell<Option<Box<P::Environment>>>,
+        up_views_queue: RefCell<Vec<Weak<MainSlockCell<dyn InnerViewBase<P::Environment>>>>>,
         // avoid having to borrow window mutably
         // when invalidating
         up_views: RefCell<BinaryHeap<InvalidatedEntry<P::Environment>>>,
@@ -449,6 +450,7 @@ mod window {
             key_listeners: RefCell::new(Vec::new()),
             is_fullscreen,
             environment: Cell::new(Some(Box::new(root_env))),
+            up_views_queue: RefCell::new(Vec::new()),
             up_views: RefCell::new(BinaryHeap::new()),
             down_views: RefCell::new(BinaryHeap::new()),
             performing_layout_down: Cell::new(false),
@@ -646,11 +648,18 @@ mod window {
             min_depth: i32,
             s: MSlock
         ) -> bool {
+
             // equalize level
             let mut targ_stack = vec![];
 
             let org_targ_depth = to.as_ref().map(|t| t.borrow_main(s).depth() as i32).unwrap_or(-1);
             let mut targ_depth = org_targ_depth;
+            if targ_depth == 3 {
+                println!("Parent Addr {:?}",
+                    to.as_ref().unwrap().borrow_main(s)
+                        .superview().unwrap().as_ptr()
+                );
+            }
 
             let mut targ = to.clone();
             while *curr_depth > targ_depth {
@@ -659,19 +668,24 @@ mod window {
                     return false;
                 }
 
+                debug_assert!(curr.as_ref().is_none_or(|c| {
+                    c.borrow_main(s).depth() as i32 == *curr_depth
+                }));
+
                 *curr = {
                     let mut borrow = curr.as_mut().unwrap().borrow_mut_main(s);
                     borrow.pop_environment(env, s);
                     borrow.superview()
                 };
                 *curr_depth -= 1;
+                debug_assert!(curr.is_some() || *curr_depth == -1);
             }
 
             // (while not equal)
             while !(
                 (curr.is_none() && targ.is_none()) ||
                     (curr.is_some() && targ.is_some() &&
-                        std::ptr::addr_eq(curr.as_ref().unwrap().as_ptr(), targ.as_ref().unwrap().as_ptr())
+                        Arc::ptr_eq(curr.as_ref().unwrap(), targ.as_ref().unwrap())
                     )
             )
             {
@@ -679,6 +693,10 @@ mod window {
                     if *curr_depth == min_depth {
                         return false;
                     }
+
+                    debug_assert!(curr.as_ref().is_none_or(|c| {
+                        c.borrow_main(s).depth() as i32 == *curr_depth
+                    }));
 
                     // need to advance curr as well
                     *curr = {
@@ -696,7 +714,10 @@ mod window {
                     res
                 };
                 targ_depth -= 1;
+                debug_assert!(targ.is_some() || targ_depth == -1);
             }
+
+            debug_assert!(*curr_depth == targ_depth);
 
             // walk towards the target
             for node in targ_stack.into_iter().rev() {
@@ -980,13 +1001,17 @@ mod window {
 
     impl<P, B> WindowViewCallback<P::Environment> for Window<P, B> where P: WindowProvider, B: Binding<Filterless<bool>> {
         fn layout_up(&self, env: &mut P::Environment, right_below: Option<Arc<MainSlockCell<dyn InnerViewBase<P::Environment>>>>, depth: i32, s: MSlock) {
-            // the environment is right above this node
+            // the environment is right below this node
             let mut env_spot = right_below.clone();
             let mut env_depth = depth;
 
+
             // generally very rare (some portals outside of subtree)
             let mut unhandled = vec![];
+            self.enqueue_up_views(&mut unhandled, depth, s);
+
             while !self.up_views.borrow().is_empty() {
+
                 let curr = {
                     let mut borrow = self.up_views.borrow_mut();
                     // finished subtree
@@ -1008,11 +1033,13 @@ mod window {
                     continue;
                 }
 
+
                 // move environment to target
                 drop(view_borrow);
                 if !Self::walk_env(env, &mut env_spot, Some(view.clone()), &mut env_depth, depth, s) {
                     // must be out of scope, mark as unhandled
                     unhandled.push(curr);
+                    self.enqueue_up_views(&mut unhandled, depth, s);
                     continue;
                 }
 
@@ -1048,6 +1075,9 @@ mod window {
                             depth: -curr.depth
                         });
                 }
+
+                // enqueue remaining
+                self.enqueue_up_views(&mut unhandled, depth, s);
             }
 
             let mut up_views = self.up_views.borrow_mut();
@@ -1064,10 +1094,10 @@ mod window {
             Self::walk_env(env, &mut env_spot, None, &mut env_depth, depth, s);
         }
 
-        fn invalidate_view(&self, handle: Weak<MainSlockCell<dyn WindowViewCallback<P::Environment>>>, view: Weak<MainSlockCell<dyn InnerViewBase<P::Environment>>>, depth: u32, s: Slock) {
+        fn invalidate_view(&self, handle: Weak<MainSlockCell<dyn WindowViewCallback<P::Environment>>>, view: Weak<MainSlockCell<dyn InnerViewBase<P::Environment>>>, s: Slock) {
             // note that we're only touching send parts of self
-            let mut borrow = self.up_views.borrow_mut();
-            if borrow.is_empty() {
+            let mut borrow = self.up_views_queue.borrow_mut();
+            if borrow.is_empty() && self.up_views.borrow().is_empty() {
                 // schedule a layout
                 let native_handle = self.handle;
                 run_main_maybe_sync(move |m| {
@@ -1078,10 +1108,8 @@ mod window {
                 }, s);
             }
 
-            borrow.push(InvalidatedEntry {
-                view,
-                depth: depth as i32
-            });
+
+            borrow.push(view);
         }
 
         fn request_focus(&self, view: Weak<MainSlockCell<dyn InnerViewBase<P::Environment>>>) {
@@ -1120,6 +1148,45 @@ mod window {
         fn unrequest_key_listener(&self, view: Weak<MainSlockCell<dyn InnerViewBase<P::Environment>>>) {
             self.key_listeners.borrow_mut()
                 .retain(|w| !std::ptr::eq(w.as_ptr(), view.as_ptr()))
+        }
+    }
+
+    impl<P, B> Window<P, B> where B: Binding<Filterless<bool>>, P: WindowProvider {
+        fn enqueue_up_views(&self, skip_list: &mut Vec<InvalidatedEntry<P::Environment>>, min_depth: i32, s: MSlock) {
+
+            let mut uvq = self.up_views_queue.borrow_mut();
+            if uvq.is_empty() {
+                return
+            }
+
+            let enqueued = std::mem::take(&mut *uvq);
+
+            let mut up_views = self.up_views.borrow_mut();
+            for view in enqueued.into_iter() {
+                // prepare view by properly marking invalidations
+                if let Some(ref arc) = view.upgrade() {
+                    let arc = arc.borrow_main(s);
+                    // start invalidation even if unmounted
+                    // so that once it is mounted, it will be
+                    // properly layed out
+                    arc.start_invalidation();
+
+                    if !arc.unmounted() {
+                        let depth = arc.depth() as i32;
+                        if depth <= min_depth {
+                            skip_list.push(InvalidatedEntry {
+                                view,
+                                depth,
+                            })
+                        } else {
+                            up_views.push(InvalidatedEntry {
+                                view,
+                                depth,
+                            });
+                        }
+                    }
+                }
+            }
         }
     }
 

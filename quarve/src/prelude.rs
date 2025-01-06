@@ -76,6 +76,7 @@ mod view {
     pub use crate::view::{IntoViewProvider, ViewProvider};
     pub use crate::view::conditional::*;
     use crate::view::control::Button;
+    pub use crate::view::functional_ivp::ivp_from;
     use crate::view::image_view::ImageView;
     pub use crate::view::menu::{Menu, MenuButton, WindowMenu};
     use crate::view::scroll::ScrollView;
