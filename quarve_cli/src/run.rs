@@ -12,17 +12,18 @@ mod run {
     const QT_FRAMEWORKS: [&'static str; 4] = ["QtGui", "QtCore", "QtWidgets", "QtDBus"];
 
     pub(crate) fn platform_run(name_hint: Option<&str>, release: bool) {
-        let root = find_path();
+        let root = find_path(".");
         let Some(name) = find_name(name_hint) else {
             eprintln!("Could not find binary named '{}'", name_hint.unwrap());
             return
         };
 
         let mut source = root.clone();
+        source.push("target");
         if release {
-            source.push("target/release/");
+            source.push("release");
         } else {
-            source.push("target/debug/");
+            source.push("debug");
         }
         source.push(&name);
 
@@ -39,7 +40,8 @@ mod run {
         quarve_target.pop();
 
         let binary = quarve_target
-            .join("Contents/MacOS")
+            .join("Contents")
+            .join("MacOS")
             .join(name);
         attach_qt(release, &binary, &mut quarve_target);
 
@@ -175,17 +177,18 @@ mod run {
 
 
     pub(crate) fn platform_run(name_hint: Option<&str>, release: bool) {
-        let root = find_path();
+        let root = find_path(".");
         let Some(name) = find_name(name_hint) else {
             eprintln!("Could not find binary named '{}'", name_hint.unwrap());
             return
         };
 
         let mut source = root.clone();
+        source.push("target");
         if release {
-            source.push("target/release/");
+            source.push("release");
         } else {
-            source.push("target/debug/");
+            source.push("debug");
         }
         source.push(name.clone() + ".exe");
 

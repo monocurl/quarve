@@ -1,9 +1,9 @@
-use std::fs::remove_dir_all;
-use std::ops::Deref;
-use clap::{arg, Command};
-use util::cargo_util::new;
 use crate::run::platform_run;
 use crate::util::cargo_util::find_path;
+use clap::{arg, Command};
+use std::fs::remove_dir_all;
+use std::ops::Deref;
+use util::cargo_util::new;
 
 mod util;
 mod run;
@@ -75,7 +75,7 @@ fn main() {
             )
         },
         Some(("clean", _)) => {
-            let mut root = find_path();
+            let mut root = find_path(".");
             root.push("quarve_target");
             // don't worry about errors
             let _ = remove_dir_all(&root);
