@@ -27,7 +27,7 @@ impl<E, F, V> IntoViewProvider<E> for FunctionalIVP<E, F, V>
     }
 }
 
-pub fn ivp_from<E, F, V>(function: F) -> impl IntoViewProvider<E, UpContext=V::UpContext, DownContext=V::DownContext>
+pub fn ivp_using<E, F, V>(function: F) -> impl IntoViewProvider<E, UpContext=V::UpContext, DownContext=V::DownContext>
     where F: FnOnce(&E::Const, MSlock) -> V + 'static,
           E: Environment,
           V: IntoViewProvider<E>

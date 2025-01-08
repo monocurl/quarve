@@ -35,7 +35,7 @@ pub struct Resource(pub PathBuf);
 
 impl Resource {
     pub fn font(rel_path: impl AsRef<Path>) -> Resource {
-        let path = resource_root().join("font/").join(rel_path);
+        let path = resource_root().join("font").join(rel_path);
         Resource(path)
     }
 

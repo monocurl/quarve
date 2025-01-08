@@ -5,4 +5,4 @@ members = [
     "examples/dev",
     "examples/flex", "examples/textview", "examples/multithread", "examples/conditional", "examples/scroll",
     "quarve",
-    "quarve_cli", "quarve_derive", "examples/test1"]
+    "quarve_cli", "quarve_derive"]

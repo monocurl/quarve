@@ -58,6 +58,8 @@ mod run {
     // quarve target expected to be at root .app directory
     fn attach_qt(release: bool, binary: &Path, quarve_target: &mut PathBuf) {
         /* qt, if provided */
+        // TODO this should only attach based
+        // on the qt_backend feature not on the env var
         if let Ok(qt_path) = std::env::var("QUARVE_BACKEND_PATH") {
             if release {
                 // copy relevant frameworks

@@ -10,8 +10,8 @@ mod button {
     use crate::native::view::button::{init_button_view, update_button_view};
     use crate::state::{Binding, SetAction, Signal, Store};
     use crate::util::geo::{Rect, Size};
-    use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, View, ViewProvider, ViewRef, WeakInvalidator};
     use crate::view::text::Text;
+    use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, View, ViewProvider, ViewRef, WeakInvalidator};
 
     pub struct Button {
         phantom_data: PhantomData<()>
@@ -181,15 +181,22 @@ mod button {
                     return EventResult::FocusRelease;
                 }
             } else if inside && matches!(&e.payload, EventPayload::Mouse(MouseEvent::LeftDown, _)) {
-                if !*self.is_click.borrow(s) {
+                return if !*self.is_click.borrow(s) {
                     (self.action)(s);
 
                     self.is_click.apply(SetAction::Set(true), s);
-                    return EventResult::FocusAcquire;
+                    EventResult::FocusAcquire
+                } else {
+                    EventResult::Handled
                 }
             }
 
-            self.source.handle_event(e, s)
+            if e.for_focused {
+                EventResult::Handled
+            }
+            else {
+                self.source.handle_event(e, s)
+            }
         }
     }
 

@@ -73,15 +73,15 @@ mod view {
     use crate::core::{Environment, MSlock, StandardVarEnv};
     use crate::resource::Resource;
     use crate::state::{Binding, Filterless, Signal};
-    pub use crate::view::{IntoViewProvider, ViewProvider};
     pub use crate::view::conditional::*;
     use crate::view::control::Button;
-    pub use crate::view::functional_ivp::ivp_from;
+    pub use crate::view::functional_ivp::ivp_using;
     use crate::view::image_view::ImageView;
     pub use crate::view::menu::{Menu, MenuButton, WindowMenu};
     use crate::view::scroll::ScrollView;
     use crate::view::text::{Text, TextField};
     pub use crate::view::view_match::ViewMatchIVP;
+    pub use crate::view::{IntoViewProvider, ViewProvider};
 
     pub fn text(label: impl Into<String>) -> Text<impl Signal<Target=String>>
     {
