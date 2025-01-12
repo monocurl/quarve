@@ -388,6 +388,7 @@ public:
     int bugged_paste_remove{};
     int bugged_paste_add{};
 
+    QTextCursor editingCursor{};
 
     TextView() : QTextEdit(), executing_back(false), page_id(0) {
         setFrameStyle(QFrame::NoFrame);
@@ -400,6 +401,8 @@ public:
         setAcceptRichText(false);
         setUndoRedoEnabled(false);
         setAutoFormatting(QTextEdit::AutoNone);
+
+        this->editingCursor = QTextCursor(document());
 
         connect(document(), &QTextDocument::contentsChange, this,
             [this](int position, int removed, int added) {
@@ -671,9 +674,19 @@ back_text_view_set_editing_state(void *tv, uint8_t editing, uint8_t first_editin
 {
     (void) first_editing_block;
     auto* textView = static_cast<TextView*>(tv);
+    textView->executing_back = true;
+
+    if (editing) {
+        textView->editingCursor.beginEditBlock();
+    }
+    else {
+        textView->editingCursor.endEditBlock();
+    }
 
     textView->setUpdatesEnabled(!editing);
     textView->blockSignals(editing);
+
+    textView->executing_back = false;
 }
 
 extern "C" void
@@ -689,7 +702,7 @@ back_text_view_set_line_attributes(
     auto* textView = static_cast<TextView*>(tv);
     textView->executing_back = true;
 
-    QTextCursor cursor(textView->document());
+    QTextCursor &cursor = textView->editingCursor;
     cursor.setPosition(start);
     cursor.setPosition(end, QTextCursor::KeepAnchor);
 
@@ -722,7 +735,7 @@ back_text_view_set_char_attributes(
     auto* textView = static_cast<TextView*>(tv);
     textView->executing_back = true;
 
-    QTextCursor cursor(textView->document());
+    QTextCursor &cursor = textView->editingCursor;
     cursor.setPosition(start);
     cursor.setPosition(end, QTextCursor::KeepAnchor);
 

@@ -2171,7 +2171,7 @@ mod text_view {
         }
         // when handling groups of attribute changes, proceed in chunks
         // we can do more advanced heuristic later
-        pub(crate) const PAGE_RUNCHUNK_SIZE: usize = 20;
+        pub(crate) const PAGE_RUNCHUNK_SIZE: usize = 40;
 
         pub trait TextViewProvider<E> : 'static where E: Environment {
             type IntrinsicAttribute: AttributeSet;
@@ -3219,7 +3219,8 @@ mod text_view {
                             let gui = *run.gui_info.borrow(s);
                             let next_code_units = utf16_chars_copy + gui.codeunits + if i < lines - 1 { 1 } else { 0 };
 
-                            if (!end_applying_attributes && (gui.run_attribute_dirty || gui.char_attribute_dirty)) || gui.content_dirty  {
+                            // note that content dirty imlies attribute dirty
+                            if (!end_applying_attributes && (gui.run_attribute_dirty || gui.char_attribute_dirty)) {
                                 self.assign_attributes(utf16_chars_copy..next_code_units, i, run, gui.run_attribute_dirty, gui.char_attribute_dirty, s);
                             }
 
@@ -3252,8 +3253,7 @@ mod text_view {
                                 self.width_change ||
                                 gui.line != i
                             {
-                                // we always apply attributes when there content change
-                                if applied_attributes || gui.content_dirty {
+                                if applied_attributes {
                                     gui.run_attribute_dirty = false;
                                     gui.char_attribute_dirty = false;
                                 }
