@@ -46,12 +46,12 @@ mod run {
         attach_qt(release, &binary, &mut quarve_target);
 
         /* run app */
-        if !Command::new("open")
-            .arg(quarve_target)
-            .status()
-            .expect("Unable to open application")
-            .success() {
-            return
+        if !release {
+            assert!(Command::new("open")
+                        .arg(quarve_target)
+                        .status()
+                        .expect("Unable to open application")
+                        .success(), "Unable to open application");
         }
     }
 
@@ -208,10 +208,13 @@ mod run {
         attach_qt(&mut quarve_target);
 
         // launch
-        Command::new(quarve_target.join(&name))
-            .creation_flags(WINDOWS_CREATE_NO_WINDOW)
-            .spawn()
-            .expect("Unable to launch application");
+        if (!release) {
+            assert!(Command::new(quarve_target.join(&name))
+                        .creation_flags(WINDOWS_CREATE_NO_WINDOW)
+                        .status()
+                        .expect("Unable to launch application")
+                        .success(), "Unable to launch application");
+        }
     }
 
     fn attach_qt(quarve_target: &mut PathBuf) {
