@@ -866,10 +866,12 @@ mod window {
             self.clear_focus_request(s);
             // theoretically there can be another invalidation requested
             // by the clearing of focus (or during the layout down)
-            let relayout = !self.up_views.borrow().is_empty();
+            let relayout = !self.up_views_queue.borrow().is_empty();
             if relayout {
                 self.layout_full(w, h, s);
             }
+
+            debug_assert!(self.up_views_queue.borrow().is_empty());
         }
 
         // FIXME, when weak fails to upgrade make the option None
@@ -1180,6 +1182,8 @@ mod window {
                     }
                 }
             }
+
+            debug_assert!(uvq.is_empty());
         }
     }
 
