@@ -8,7 +8,7 @@ use util::cargo_util::new;
 mod util;
 mod run;
 
-fn run(name_hint: Option<&str>, release: bool) {
+fn run(name_hint: Option<&str>, package_manager: Option<&str>, release: bool) {
     let mut build = std::process::Command::new("cargo");
     build.arg("build");
     build.arg("--all");
@@ -27,8 +27,16 @@ fn run(name_hint: Option<&str>, release: bool) {
     platform_run(name_hint, release);
 }
 
-fn deploy(name_hint: Option<&str>) {
-    run(name_hint, true)
+fn deploy(name_hint: Option<&str>, package_manager: Option<&str>) {
+    // hm is this really the best place to put it
+    #[cfg(not(target_os = "linux"))]
+    {
+        if package_manager.is_some() {
+            eprintln!("Package manager flag should only be given for linux");
+        }
+    }
+
+    run(name_hint, package_manager, true)
 }
 
 fn main() {
@@ -49,6 +57,7 @@ fn main() {
         .subcommand(
             Command::new("deploy")
                 .arg(arg!(-n --name <NAME> "Explicitly specifies the name of the app to deploy"))
+                .arg(arg!(-pm --package_manager <PACKAGE_MANAGER> "When deploying for linux, specify to use 'rpm' or 'deb' package type"))
                 .about("Build a quarve project for release")
         )
         .subcommand(
@@ -70,7 +79,10 @@ fn main() {
             )
         },
         Some(("deploy", submatches)) => {
+
             deploy(submatches.get_one::<String>("name")
+                    .map(|s| s.deref()),
+                    submatches.get_one::<String>("package_manager")
                     .map(|s| s.deref())
             )
         },

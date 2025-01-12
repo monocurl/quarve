@@ -11,7 +11,7 @@ mod run {
 
     const QT_FRAMEWORKS: [&'static str; 4] = ["QtGui", "QtCore", "QtWidgets", "QtDBus"];
 
-    pub(crate) fn platform_run(name_hint: Option<&str>, release: bool) {
+    pub(crate) fn platform_run(name_hint: Option<&str>, _package_manager: Option<&str>, release: bool) {
         let root = find_path(".");
         let Some(name) = find_name(name_hint) else {
             eprintln!("Could not find binary named '{}'", name_hint.unwrap());
@@ -47,11 +47,10 @@ mod run {
 
         /* run app */
         if !release {
-            assert!(Command::new("open")
-                        .arg(quarve_target)
-                        .status()
-                        .expect("Unable to open application")
-                        .success(), "Unable to open application");
+            Command::new("open")
+                .arg(quarve_target)
+                .spawn()
+                .expect("Unable to open application");
         }
     }
 
@@ -157,9 +156,96 @@ mod run {
     }
 }
 
+// TODO make this much more uniform across OS
+// and the quarve_target.push is stupid
 #[cfg(target_os = "linux")]
 mod run {
-    pub(crate) fn platform_run(name_hint: Option<&str>, release: bool) {}
+    use std::fs;
+    use std::fs::{create_dir_all, remove_dir_all};
+    use std::path::PathBuf;
+    use std::process::Command;
+
+    use crate::util::cargo_util::{find_name, find_path};
+    use crate::util::file_util::copy_directory;
+
+
+    pub(crate) fn platform_run(name_hint: Option<&str>, package_manager: Option<&str>, release: bool) {
+        let root = find_path(".");
+        let Some(name) = find_name(name_hint) else {
+            eprintln!("Could not find binary named '{}'", name_hint.unwrap());
+            return
+        };
+
+        let mut source = root.clone();
+        if release {
+            source.push("target/release/");
+        } else {
+            source.push("target/debug/");
+        }
+        source.push(name.clone());
+
+        let mut quarve_target = root.clone();
+        quarve_target.push("quarve_target");
+
+        quarve_target.push(&name);
+        let _ = remove_dir_all(&quarve_target);
+        create_dir_all(&quarve_target).expect("Unable to create output directory");
+
+        attach_binary(&name, &mut source, &mut quarve_target);
+        attach_resources(root, &name, &mut quarve_target);
+
+        // launch
+        if (!release) {
+            Command::new(quarve_target.join(format!("usr/bin/{}", name)))
+                .spawn()
+                .expect("Unable to launch application");
+        }
+    }
+
+     
+    fn attach_binary(name: &str, source: &mut PathBuf, quarve_target: &mut PathBuf) {
+        quarve_target.push("usr");
+        quarve_target.push("bin");
+        create_dir_all(&quarve_target).unwrap();
+
+        quarve_target.push(name);
+        fs::copy(&source, &quarve_target)
+            .expect("Unable to copy binary");
+
+        // /usr/local/share/app/lib
+        // /usr/local/bin/app
+        assert!(Command::new("patchelf")
+            .arg("--set-rpath")
+            .arg(format!("$ORIGIN/../share/{}/lib", &name))
+            .arg(&quarve_target)
+            .status()
+            .expect("Unable to add runtime search paths, maybe patchelf is not installed?").success(), "Unable to add runtime search paths");
+        quarve_target.pop();
+
+        quarve_target.pop();
+        quarve_target.pop();
+    }
+
+    fn attach_resources(root: PathBuf, name: &str, quarve_target: &mut PathBuf) {
+        /* Assets */
+        quarve_target.push("usr");
+        quarve_target.push("share");
+        quarve_target.push(name);
+
+        quarve_target.push("res");
+        create_dir_all(&quarve_target).unwrap();
+
+        let mut source = root.clone();
+        source.push("res");
+        create_dir_all(&source).unwrap();
+        copy_directory(&source, &quarve_target).unwrap();
+
+        quarve_target.pop();
+
+        quarve_target.pop();
+        quarve_target.pop();
+        quarve_target.pop();
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -178,7 +264,7 @@ mod run {
     const WINDOWS_CREATE_NO_WINDOW: u32 = 0x08000000;
 
 
-    pub(crate) fn platform_run(name_hint: Option<&str>, release: bool) {
+    pub(crate) fn platform_run(name_hint: Option<&str>, _package_manager: Option<&str>, release: bool) {
         let root = find_path(".");
         let Some(name) = find_name(name_hint) else {
             eprintln!("Could not find binary named '{}'", name_hint.unwrap());
@@ -209,11 +295,10 @@ mod run {
 
         // launch
         if (!release) {
-            assert!(Command::new(quarve_target.join(&name))
-                        .creation_flags(WINDOWS_CREATE_NO_WINDOW)
-                        .status()
-                        .expect("Unable to launch application")
-                        .success(), "Unable to launch application");
+            Command::new(quarve_target.join(&name))
+                .creation_flags(WINDOWS_CREATE_NO_WINDOW)
+                .spawn()
+                .expect("Unable to launch application");
         }
     }
 
@@ -250,6 +335,7 @@ mod run {
             base_path.pop();
             quarve_target.pop();
         }
+        base_path.pop();
         base_path.pop();
         quarve_target.pop();
 

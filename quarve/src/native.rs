@@ -1562,6 +1562,19 @@ pub mod path {
             .join("res")
     }
 
+    #[cfg(all(target_os = "linux", quarve_managed_run))]
+    pub fn production_resource_root() -> PathBuf {
+        // /usr/local/share/app/res
+        // /usr/local/bin/app
+        let exe = std::env::current_exe().unwrap();
+        let name = exe.file_name().unwrap();
+
+        std::env::current_exe().unwrap()
+            .parent().unwrap()
+            .parent().unwrap()
+            .join(format!("share/{}/res", name.to_str().unwrap()))
+    }
+
     pub fn local_storage(app_name: &str) -> PathBuf {
         let raw = unsafe {
             let cstring = CString::new(app_name).unwrap();
