@@ -1072,6 +1072,7 @@ mod window {
                 }
 
                 // enqueue remaining
+                drop(view_mut_borrow);
                 self.enqueue_up_views(&mut unhandled, depth, s);
             }
 
