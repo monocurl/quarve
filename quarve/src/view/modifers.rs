@@ -42,8 +42,8 @@ mod identity_modifier {
     use crate::core::{Environment, MSlock};
     use crate::event::{Event, EventResult};
     use crate::util::geo::{Rect, Size};
-    use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, ViewProvider, WeakInvalidator};
     use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
+    use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, ViewProvider, WeakInvalidator};
 
     pub struct UnmodifiedIVP<E, P> where E: Environment, P: IntoViewProvider<E> {
         source: P,
@@ -188,10 +188,10 @@ mod provider_modifier {
     use crate::event::{Event, EventResult};
     use crate::state::{FixedSignal, Signal, SignalOrValue};
     use crate::util::geo;
-    use crate::util::geo::{Alignment, HorizontalAlignment, Point, Rect, ScreenUnit, Size, UNBOUNDED, VerticalAlignment};
+    use crate::util::geo::{Alignment, HorizontalAlignment, Point, Rect, ScreenUnit, Size, VerticalAlignment, UNBOUNDED};
     use crate::util::marker::ThreadMarker;
-    use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, ViewProvider, WeakInvalidator};
     use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
+    use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, ViewProvider, WeakInvalidator};
 
     // Note that you should generally not
     // affect the subtree in any way
@@ -849,9 +849,9 @@ mod layer_modifier {
     use crate::native::view::layer::set_layer_view_frame;
     use crate::state::{FixedSignal, Signal, SignalOrValue};
     use crate::util::geo::{Rect, ScreenUnit, Size};
-    use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, View, ViewProvider, ViewRef, WeakInvalidator};
     use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
     use crate::view::util::Color;
+    use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, View, ViewProvider, ViewRef, WeakInvalidator};
 
     pub struct Layer<S1, S2, S3, S4, S5>
         where S1: Signal<Target=Color>, S2: Signal<Target=ScreenUnit>, S3: Signal<Target=Color>, S4: Signal<Target=ScreenUnit>, S5: Signal<Target=f32> {
@@ -1112,6 +1112,8 @@ mod layer_modifier {
         }
 
         fn init_backing(&mut self, invalidator: WeakInvalidator<E>, subtree: &mut Subtree<E>, backing_source: Option<(NativeView, Self)>, env: &mut EnvRef<E>, s: MSlock) -> NativeView {
+            // whenever any of the properties
+            // have changed, invalidate the state of this view
             self.layer.opacity.add_invalidator(&invalidator, s);
             self.layer.border_width.add_invalidator(&invalidator, s);
             self.layer.border_color.add_invalidator(&invalidator, s);
@@ -1126,6 +1128,7 @@ mod layer_modifier {
                 nv
             }
             else {
+                // this is you how you add subviews
                 subtree.push_subview(&self.view, env, s);
 
                 let nv = NativeView::layer_view(s);
@@ -1230,8 +1233,8 @@ mod foreback_modifier {
 
     use crate::core::{Environment, MSlock};
     use crate::util::geo::{Rect, Size};
-    use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, View, ViewProvider, ViewRef, WeakInvalidator};
     use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
+    use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, View, ViewProvider, ViewRef, WeakInvalidator};
 
     pub struct ForeBackIVP<E, I, J> where E: Environment,
                                           I: IntoViewProvider<E>,
@@ -1441,9 +1444,9 @@ mod when_modifier {
     use crate::event::{Event, EventResult};
     use crate::state::{ActualDiffSignal, Signal};
     use crate::util::geo::{Rect, Size};
-    use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, ViewProvider, WeakInvalidator};
-    use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
     use crate::view::modifers::identity_modifier::UnmodifiedIVP;
+    use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
+    use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, ViewProvider, WeakInvalidator};
 
     // FIXME, if Associated impl trait was allowed
     // we would be able to use ProviderModifier
@@ -1650,8 +1653,8 @@ mod env_modifier {
     use crate::core::{Environment, MSlock};
     use crate::event::{Event, EventResult};
     use crate::util::geo::{Rect, Size};
-    use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, ViewProvider, WeakInvalidator};
     use crate::view::modifers::{ConditionalIVPModifier, ConditionalVPModifier};
+    use crate::view::{EnvRef, IntoViewProvider, NativeView, Subtree, ViewProvider, WeakInvalidator};
 
     pub trait EnvironmentModifier<E>: 'static where E: Environment {
         /// You should really only be calling invalidate_environment

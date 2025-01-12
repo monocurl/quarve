@@ -12,17 +12,18 @@ mod run {
     const QT_FRAMEWORKS: [&'static str; 4] = ["QtGui", "QtCore", "QtWidgets", "QtDBus"];
 
     pub(crate) fn platform_run(name_hint: Option<&str>, release: bool) {
-        let root = find_path();
+        let root = find_path(".");
         let Some(name) = find_name(name_hint) else {
             eprintln!("Could not find binary named '{}'", name_hint.unwrap());
             return
         };
 
         let mut source = root.clone();
+        source.push("target");
         if release {
-            source.push("target/release/");
+            source.push("release");
         } else {
-            source.push("target/debug/");
+            source.push("debug");
         }
         source.push(&name);
 
@@ -39,23 +40,26 @@ mod run {
         quarve_target.pop();
 
         let binary = quarve_target
-            .join("Contents/MacOS")
+            .join("Contents")
+            .join("MacOS")
             .join(name);
         attach_qt(release, &binary, &mut quarve_target);
 
         /* run app */
-        if !Command::new("open")
-            .arg(quarve_target)
-            .status()
-            .expect("Unable to open application")
-            .success() {
-            return
+        if !release {
+            assert!(Command::new("open")
+                        .arg(quarve_target)
+                        .status()
+                        .expect("Unable to open application")
+                        .success(), "Unable to open application");
         }
     }
 
     // quarve target expected to be at root .app directory
     fn attach_qt(release: bool, binary: &Path, quarve_target: &mut PathBuf) {
         /* qt, if provided */
+        // TODO this should only attach based
+        // on the qt_backend feature not on the env var
         if let Ok(qt_path) = std::env::var("QUARVE_BACKEND_PATH") {
             if release {
                 // copy relevant frameworks
@@ -315,17 +319,18 @@ mod run {
 
 
     pub(crate) fn platform_run(name_hint: Option<&str>, release: bool) {
-        let root = find_path();
+        let root = find_path(".");
         let Some(name) = find_name(name_hint) else {
             eprintln!("Could not find binary named '{}'", name_hint.unwrap());
             return
         };
 
         let mut source = root.clone();
+        source.push("target");
         if release {
-            source.push("target/release/");
+            source.push("release");
         } else {
-            source.push("target/debug/");
+            source.push("debug");
         }
         source.push(name.clone() + ".exe");
 
@@ -343,10 +348,13 @@ mod run {
         attach_qt(&mut quarve_target);
 
         // launch
-        Command::new(quarve_target.join(&name))
-            .creation_flags(WINDOWS_CREATE_NO_WINDOW)
-            .spawn()
-            .expect("Unable to launch application");
+        if (!release) {
+            assert!(Command::new(quarve_target.join(&name))
+                        .creation_flags(WINDOWS_CREATE_NO_WINDOW)
+                        .status()
+                        .expect("Unable to launch application")
+                        .success(), "Unable to launch application");
+        }
     }
 
     fn attach_qt(quarve_target: &mut PathBuf) {

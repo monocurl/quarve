@@ -1,14 +1,31 @@
+use crate::IVP;
 use quarve::prelude::*;
 use quarve::state::NumericAction;
 use quarve::view::color_view::EmptyView;
+use quarve::view::image_view::ImageView;
 use quarve::view::portal::{Portal, PortalReceiver, PortalSendable};
 use quarve::view::text::TextField;
+use quarve::view::util::Color;
 
-use crate::IVP;
+fn profile(name: &str, image: &str, color: Color) -> impl IVP {
+    hstack()
+        .push(
+            ImageView::new(&image)
+                .intrinsic(30, 30)
+                .padding(5)
+        )
+        .push(text(name))
+        .padding(5)
+        .layer(L.bg_color(color).radius(4))
+}
 
 pub fn basic_portal() -> impl IVP {
     // create the communication channel
     let p = Portal::new();
+
+    ivp_using(|env, s| {
+
+    })
 
     vstack()
         .push(
