@@ -14,7 +14,7 @@ cc = "1.0.94"
 rand = "0.8.5"
 
 [dependencies]
-quarve_derive = { path = '../quarve_derive'}
+quarve_derive = { path = '../quarve_derive', version = "0.1.0"}
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(quarve_managed_run)'] }
