@@ -11,6 +11,6 @@ name = "quarve"
 path = "src/main.rs"
 
 [dependencies]
-cargo_metadata = "0.18.1"
+cargo_metadata = "0.19.1"
 clap = { version = "4.5.4", features = ["derive"] }
 serde_json = "1.0.116"
