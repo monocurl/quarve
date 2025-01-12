@@ -169,7 +169,7 @@ mod run {
     use crate::util::file_util::copy_directory;
 
 
-    pub(crate) fn platform_run(name_hint: Option<&str>, package_manager: Option<&str>, release: bool) {
+    pub(crate) fn platform_run(name_hint: Option<&str>, _package_manager: Option<&str>, release: bool) {
         let root = find_path(".");
         let Some(name) = find_name(name_hint) else {
             eprintln!("Could not find binary named '{}'", name_hint.unwrap());

@@ -24,7 +24,7 @@ fn run(name_hint: Option<&str>, package_manager: Option<&str>, release: bool) {
         return
     }
 
-    platform_run(name_hint, release);
+    platform_run(name_hint, package_manager, release);
 }
 
 fn deploy(name_hint: Option<&str>, package_manager: Option<&str>) {
@@ -75,6 +75,7 @@ fn main() {
         Some(("run", submatches)) => {
             run(submatches.get_one::<String>("name")
                 .map(|s| s.deref()),
+                None,
                 false
             )
         },
