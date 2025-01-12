@@ -574,7 +574,7 @@ mod group {
             use std::ops::Range;
 
             use crate::core::Slock;
-            use crate::state::{GeneralListener, GroupBasis, InverseListener, Stateful, StoreContainer, Word};
+            use crate::state::{GeneralListener, GroupBasis, IntoAction, InverseListener, Stateful, StoreContainer, Word};
             use crate::util::marker::{ThreadMarker, TrueMarker};
             use crate::view::undo_manager::UndoBucket;
 
@@ -720,6 +720,14 @@ mod group {
                         // realistically not a huge issue though anyways
                         true
                     })
+                }
+            }
+
+
+            impl<T, const N: usize> IntoAction<Word<VecActionBasis<T>>, Vec<T>> for [VecActionBasis<T>; N] where T: Send
+            {
+                fn into_action(self, _target: &Vec<T>) -> Word<VecActionBasis<T>> {
+                    Word::new(self.into_iter().collect())
                 }
             }
         }
@@ -1141,8 +1149,8 @@ mod store {
     pub use token_store::*;
 
     use crate::core::Slock;
-    use crate::state::{IntoAction, Signal, StateFilter, Stateful, UndoBarrier};
     use crate::state::listener::{GeneralListener, InverseListener};
+    use crate::state::{IntoAction, Signal, StateFilter, Stateful, UndoBarrier};
     use crate::util::marker::ThreadMarker;
     use crate::view::undo_manager::UndoBucket;
 
@@ -1286,9 +1294,9 @@ mod store {
         use std::sync::Arc;
 
         use crate::core::Slock;
-        use crate::state::{IntoAction, StateFilter, Stateful};
         use crate::state::slock_cell::SlockCell;
         use crate::state::store::store_dispatcher::StoreDispatcher;
+        use crate::state::{IntoAction, StateFilter, Stateful};
         use crate::util::marker::ThreadMarker;
 
         pub(super) trait RawStore<F: StateFilter>: Sized + Send + 'static {
@@ -1318,11 +1326,11 @@ mod store {
         use std::sync::Arc;
 
         use crate::core::Slock;
-        use crate::state::{Binding, Filter, Filterable, IntoAction, Signal, StateFilter, Stateful, UndoBarrier};
         use crate::state::listener::StateListener;
         use crate::state::slock_cell::SlockCell;
         use crate::state::store::general_binding::GeneralWeakBinding;
         use crate::state::store::raw_store::RawStore;
+        use crate::state::{Binding, Filter, Filterable, IntoAction, Signal, StateFilter, Stateful, UndoBarrier};
         use crate::util::marker::ThreadMarker;
 
         pub(super) trait RawStoreSharedOwner<F: StateFilter> : Signal<Target=F::Target> + Sync {
@@ -1396,10 +1404,10 @@ mod store {
         use std::sync::Weak;
 
         use crate::core::MSlock;
-        use crate::state::{StateFilter, Stateful};
         use crate::state::listener::DirectlyInvertible;
         use crate::state::slock_cell::SlockCell;
         use crate::state::store::raw_store::RawStore;
+        use crate::state::{StateFilter, Stateful};
 
         pub(super) struct ActionInverter<F: StateFilter, I> where I: RawStore<F> {
             action: Option<<F::Target as Stateful>::Action>,
@@ -1455,8 +1463,8 @@ mod store {
         use std::marker::PhantomData;
         use std::ops::Deref;
 
-        use crate::state::StateFilter;
         use crate::state::store::raw_store::RawStore;
+        use crate::state::StateFilter;
 
         pub(super) struct StateRef<'a, F, I> where F: StateFilter, I: RawStore<F> {
             pub(super) main_ref: Ref<'a, I>,
@@ -1544,9 +1552,9 @@ mod store {
 
     mod store_dispatcher {
         use crate::core::Slock;
-        use crate::state::{DirectlyInvertible, GeneralListener, GroupBasis, IntoAction, InverseListener, StateFilter, Stateful, UndoBarrier};
         use crate::state::listener::StateListener;
         use crate::state::store::inverse_listener_holder::InverseListenerHolder;
+        use crate::state::{DirectlyInvertible, GeneralListener, GroupBasis, IntoAction, InverseListener, StateFilter, Stateful, UndoBarrier};
         use crate::util::marker::ThreadMarker;
         use crate::util::test_util::QuarveAllocTag;
         use crate::view::undo_manager::UndoBucket;
@@ -1773,16 +1781,9 @@ mod store {
         use std::ops::{Deref, DerefMut};
         use std::sync::Arc;
 
-        use crate::{
-            core::Slock,
-            state::{Filterless, GeneralSignal, IntoAction, Signal, StateFilter, Stateful, StoreContainer},
-        };
-        use crate::state::{Bindable, StateListener};
-        use crate::state::Filter;
         use crate::state::listener::{GeneralListener, InverseListener};
         use crate::state::slock_cell::SlockCell;
         use crate::state::store::action_inverter::ActionInverter;
-        use crate::state::store::EXECUTING_INVERSE;
         use crate::state::store::general_binding::{GeneralBinding, GeneralWeakBinding};
         use crate::state::store::inverse_listener_holder::InverseListenerHolderImpl;
         use crate::state::store::macros::{impl_adhoc_inner, impl_bindable_inner, impl_signal_inner, impl_store_container_inner};
@@ -1790,8 +1791,15 @@ mod store {
         use crate::state::store::raw_store_shared_owner::RawStoreSharedOwner;
         use crate::state::store::state_ref::StateRef;
         use crate::state::store::store_dispatcher::StoreDispatcher;
+        use crate::state::store::EXECUTING_INVERSE;
+        use crate::state::Filter;
+        use crate::state::{Bindable, StateListener};
         use crate::util::marker::ThreadMarker;
         use crate::view::undo_manager::UndoBucket;
+        use crate::{
+            core::Slock,
+            state::{Filterless, GeneralSignal, IntoAction, Signal, StateFilter, Stateful, StoreContainer},
+        };
 
         pub(super) struct InnerStore<S: Stateful, F: StateFilter<Target=S>> {
             dispatcher: StoreDispatcher<S, F, InverseListenerHolderImpl>
@@ -1924,12 +1932,8 @@ mod store {
         use std::sync::Arc;
 
         use crate::core::Slock;
-        use crate::state::{Bindable, StateListener};
-        use crate::state::{Filter, Filterless, GeneralListener, GeneralSignal, IntoAction, Signal, StateFilter, Stateful, StoreContainer};
-        use crate::state::InverseListener;
         use crate::state::slock_cell::SlockCell;
         use crate::state::store::action_inverter::ActionInverter;
-        use crate::state::store::EXECUTING_INVERSE;
         use crate::state::store::general_binding::{GeneralBinding, GeneralWeakBinding};
         use crate::state::store::inverse_listener_holder::InverseListenerHolderImpl;
         use crate::state::store::macros::{impl_adhoc_inner, impl_bindable_inner, impl_signal_inner, impl_store_container_inner};
@@ -1937,6 +1941,10 @@ mod store {
         use crate::state::store::raw_store_shared_owner::RawStoreSharedOwner;
         use crate::state::store::state_ref::StateRef;
         use crate::state::store::store_dispatcher::StoreDispatcher;
+        use crate::state::store::EXECUTING_INVERSE;
+        use crate::state::InverseListener;
+        use crate::state::{Bindable, StateListener};
+        use crate::state::{Filter, Filterless, GeneralListener, GeneralSignal, IntoAction, Signal, StateFilter, Stateful, StoreContainer};
         use crate::util::marker::ThreadMarker;
         use crate::view::undo_manager::UndoBucket;
 
@@ -2098,14 +2106,6 @@ mod store {
         use std::ops::{Deref, DerefMut};
         use std::sync::Arc;
 
-        use crate::{
-            core::Slock,
-            state::{
-                Filterless, GeneralSignal, IntoAction, Signal, StateFilter, Stateful, StoreContainer,
-            },
-        };
-        use crate::state::{Bindable, StateListener};
-        use crate::state::Filter;
         use crate::state::listener::{GeneralListener, InverseListener};
         use crate::state::slock_cell::SlockCell;
         use crate::state::store::general_binding::{GeneralBinding, GeneralWeakBinding};
@@ -2115,8 +2115,16 @@ mod store {
         use crate::state::store::raw_store_shared_owner::RawStoreSharedOwner;
         use crate::state::store::state_ref::StateRef;
         use crate::state::store::store_dispatcher::StoreDispatcher;
+        use crate::state::Filter;
+        use crate::state::{Bindable, StateListener};
         use crate::util::marker::ThreadMarker;
         use crate::view::undo_manager::UndoBucket;
+        use crate::{
+            core::Slock,
+            state::{
+                Filterless, GeneralSignal, IntoAction, Signal, StateFilter, Stateful, StoreContainer,
+            },
+        };
 
         pub(super) struct InnerDerivedStore<S: Stateful, F: StateFilter<Target=S>> {
             dispatcher: StoreDispatcher<S, F, NullInverseListenerHolder>
@@ -2244,13 +2252,13 @@ mod store {
         use std::sync::{Arc, Weak};
 
         use crate::core::Slock;
-        use crate::state::{StateFilter, StateListener, WeakBinding};
-        use crate::state::Signal;
         use crate::state::signal::GeneralSignal;
         use crate::state::slock_cell::SlockCell;
         use crate::state::store::raw_store::RawStore;
         use crate::state::store::raw_store_shared_owner::RawStoreSharedOwner;
         use crate::state::store::state_ref::StateRef;
+        use crate::state::Signal;
+        use crate::state::{StateFilter, StateListener, WeakBinding};
         use crate::util::marker::ThreadMarker;
 
         // will find better solution in the future
@@ -2372,12 +2380,12 @@ mod store {
         use std::sync::Arc;
 
         use crate::core::Slock;
-        use crate::state::{GeneralSignal, IntoAction, Signal, StateFilter, Stateful};
         use crate::state::slock_cell::{MainSlockCell, SlockCell};
         use crate::state::store::inverse_listener_holder::InverseListenerHolderImpl;
         use crate::state::store::raw_store::RawStore;
         use crate::state::store::raw_store_shared_owner::RawStoreSharedOwner;
         use crate::state::store::store_dispatcher::StoreDispatcher;
+        use crate::state::{GeneralSignal, IntoAction, Signal, StateFilter, Stateful};
         use crate::util::marker::ThreadMarker;
 
         pub struct UnreachableBindingInner<F>(pub PhantomData<Arc<MainSlockCell<F>>>) where F: StateFilter;
@@ -2623,8 +2631,8 @@ mod signal {
         use std::sync::Arc;
 
         use crate::core::Slock;
-        use crate::state::Signal;
         use crate::state::slock_cell::SlockCell;
+        use crate::state::Signal;
         use crate::util::marker::ThreadMarker;
         use crate::util::test_util::QuarveAllocTag;
 
@@ -2695,13 +2703,13 @@ mod signal {
         use std::sync::Arc;
 
         use crate::core::Slock;
-        use crate::state::Signal;
         use crate::state::slock_cell::SlockCell;
+        use crate::state::Signal;
         use crate::util::marker::ThreadMarker;
         use crate::util::test_util::QuarveAllocTag;
 
-        use super::{InnerSignal, SignalAudience};
         use super::SignalRef;
+        use super::{InnerSignal, SignalAudience};
 
         struct GeneralInnerSignal<T> where T: Send + 'static {
             _quarve_tag: QuarveAllocTag,
@@ -2795,16 +2803,16 @@ mod signal {
 
     mod joined_signal {
         use std::ops::{Deref, DerefMut};
-        use std::sync::Arc;
         use std::sync::atomic::AtomicU8;
         use std::sync::atomic::Ordering::SeqCst;
+        use std::sync::Arc;
 
         use crate::core::Slock;
-        use crate::state::{GeneralSignal, Signal};
-        use crate::state::signal::InnerSignal;
         use crate::state::signal::signal_audience::SignalAudience;
         use crate::state::signal::signal_ref::SignalRef;
+        use crate::state::signal::InnerSignal;
         use crate::state::slock_cell::SlockCell;
+        use crate::state::{GeneralSignal, Signal};
         use crate::util::marker::ThreadMarker;
         use crate::util::test_util::QuarveAllocTag;
 
@@ -2978,18 +2986,18 @@ mod signal {
 
     mod timed_signal {
         use std::ops::{Deref, DerefMut};
-        use std::sync::Arc;
         use std::sync::atomic::AtomicU8;
         use std::sync::atomic::Ordering::SeqCst;
+        use std::sync::Arc;
         use std::time::Duration;
 
-        use crate::core::{Slock, timed_worker};
-        use crate::state::{GeneralSignal, Signal};
+        use crate::core::{timed_worker, Slock};
         use crate::state::capacitor::Capacitor;
-        use crate::state::signal::InnerSignal;
         use crate::state::signal::signal_audience::SignalAudience;
         use crate::state::signal::signal_ref::SignalRef;
+        use crate::state::signal::InnerSignal;
         use crate::state::slock_cell::SlockCell;
+        use crate::state::{GeneralSignal, Signal};
         use crate::util::marker::ThreadMarker;
         use crate::util::test_util::QuarveAllocTag;
 
@@ -3214,12 +3222,12 @@ mod test {
 
     use rand::Rng;
 
-    use crate::core::{clock_signal, setup_timing_thread, Slock, slock_main_owner, slock_owner, SlockOwner, timed_worker};
+    use crate::core::{clock_signal, setup_timing_thread, slock_main_owner, slock_owner, timed_worker, Slock, SlockOwner};
     use crate::native::global::mark_thread_main;
-    use crate::state::{Bindable, Binding, Buffer, DerivedStore, DirectlyInvertible, EditingString, Filterable, FixedSignal, GroupAction, InverseListener, JoinedSignal, NumericAction, SetAction, Signal, Store, StoreContainer, StringActionBasis, TokenStore, UndoBarrier, WeakBinding, WithCapacitor, Word};
     use crate::state::capacitor::{ConstantSpeedCapacitor, ConstantTimeCapacitor, SmoothCapacitor};
     use crate::state::SetAction::{Identity, Set};
     use crate::state::VecActionBasis::{Insert, Remove, Swap};
+    use crate::state::{Bindable, Binding, Buffer, DerivedStore, DirectlyInvertible, EditingString, Filterable, FixedSignal, GroupAction, InverseListener, JoinedSignal, NumericAction, SetAction, Signal, Store, StoreContainer, StringActionBasis, TokenStore, UndoBarrier, WeakBinding, WithCapacitor, Word};
     use crate::util::marker::MainThreadMarker;
     use crate::util::numeric::Norm;
     use crate::util::test_util::HeapChecker;
