@@ -2,6 +2,9 @@
 name = "quarve"
 version = "0.1.0"
 edition = "2021"
+repository = "https://github.com/monocurl/quarve"
+description = "Desktop GUI framework thats declarative, fast, and designed for Rust"
+license = "MIT"
 
 [features]
 default=[]

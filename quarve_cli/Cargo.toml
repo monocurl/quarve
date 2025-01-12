@@ -2,6 +2,9 @@
 name = "quarve_cli"
 version = "0.1.0"
 edition = "2021"
+repository = "https://github.com/monocurl/quarve"
+description = "CLI for quarve that allows you to easily create, run, and deploy quarve applications"
+license = "MIT"
 
 [[bin]]
 name = "quarve"
