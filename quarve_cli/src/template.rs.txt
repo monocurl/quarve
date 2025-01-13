@@ -42,7 +42,7 @@ impl WindowProvider for MainWindow {
             .frame(
                 F.intrinsic(400, 400).unlimited_stretch()
             )
-            .background(WHITE)
+            .bg_color(WHITE)
             .into_view_provider(env, s)
     }
 

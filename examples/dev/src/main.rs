@@ -7,12 +7,13 @@ use quarve::view::control::Dropdown;
 use quarve::view::menu::{MenuChannel, MenuReceiver, MenuSend};
 use quarve::view::scroll::ScrollView;
 use quarve::view::text::{Text, TextField, TextModifier};
-
+use crate::icpc::icpc_viewer;
 use crate::portal::dynamic_portal;
 
 mod config;
 mod modal;
 mod portal;
+mod icpc;
 
 struct App;
 struct MainWindow;
@@ -162,7 +163,7 @@ impl WindowProvider for MainWindow {
     }
 
     fn root(&self, env: &<Env as Environment>::Const, s: MSlock) -> impl ViewProvider<Env, DownContext=()> {
-        dynamic_portal(s)
+        icpc_viewer()
             .into_view_provider(env, s)
     }
 

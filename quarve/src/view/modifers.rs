@@ -566,6 +566,10 @@ mod provider_modifier {
             self.amount.add_invalidator(invalidator, s);
         }
 
+        fn intrinsic_size(&mut self, src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, s: MSlock) -> Size {
+            self.apply(src.intrinsic_size(s), s)
+        }
+
         fn xsquished_size(&mut self, src: &mut impl ViewProvider<E, UpContext=U, DownContext=D>, s: MSlock) -> Size {
             self.apply(src.xsquished_size(s), s)
         }

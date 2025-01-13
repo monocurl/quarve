@@ -137,7 +137,7 @@ mod text {
         }
 
         fn xsquished_size(&mut self, _s: MSlock) -> Size {
-            Size::new(0.0, 0.0)
+            self.size
         }
 
         fn xstretched_size(&mut self, _s: MSlock) -> Size {
