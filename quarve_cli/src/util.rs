@@ -4,7 +4,7 @@ pub mod file_util {
     use std::path::Path;
     use std::{fs, io};
 
-    /// https://stackoverflow.com/questions/26958489/how-to-copy-a-folder-recursively-in-rust
+    // https://stackoverflow.com/questions/26958489/how-to-copy-a-folder-recursively-in-rust
     pub(crate) fn copy_directory(src: &Path, dst: &Path) -> io::Result<()> {
         fs::create_dir_all(&dst)?;
         for entry in fs::read_dir(src)? {

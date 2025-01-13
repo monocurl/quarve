@@ -1,7 +1,8 @@
 //! Quarve is a Rust UI library that aims to be declarative
 //! yet fast and expressible.
 //! The documentation is largely unfinished and users are recommended
-//! to reference the [Quarve Book](
+//! to reference the [Quarve Book](https://www.monocurl.com/quarve_book/)
+//!
 
 pub mod state;
 pub mod event;

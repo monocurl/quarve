@@ -2,8 +2,8 @@
 name = "textview"
 version = "0.1.0"
 edition = "2021"
+readme = ""
 
 [dependencies]
 quarve = { path = "../../quarve" }
 # quarve = { path = "../../quarve", features = ["qt_backend"] }
-
