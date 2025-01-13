@@ -1,6 +1,6 @@
 [package]
 name = "quarve"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 repository = "https://github.com/monocurl/quarve"
 description = "Experimental desktop GUI framework that's multithreaded, declarative and designed for Rust"
