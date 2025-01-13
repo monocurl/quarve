@@ -526,6 +526,7 @@ back_text_view_init()
     tv.grammarCheckingEnabled = NO;
     tv.smartInsertDeleteEnabled = NO;
     [tv layoutManager].allowsNonContiguousLayout = YES;
+    [tv layoutManager].backgroundLayoutEnabled = YES;
     [tv turnOffKerning:nil];
     [tv turnOffLigatures:nil];
     tv.delegate = tv;

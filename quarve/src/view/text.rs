@@ -2171,7 +2171,7 @@ mod text_view {
         }
         // when handling groups of attribute changes, proceed in chunks
         // we can do more advanced heuristic later
-        pub(crate) const PAGE_RUNCHUNK_SIZE: usize = 40;
+        pub(crate) const PAGE_RUNCHUNK_SIZE: usize = 20;
 
         pub trait TextViewProvider<E> : 'static where E: Environment {
             type IntrinsicAttribute: AttributeSet;
@@ -3210,23 +3210,24 @@ mod text_view {
                         let v = ((c + 1) * PAGE_RUNCHUNK_SIZE).min(len);
 
                         // if within window range, apply attributes
-                        let mut utf16_chars_copy = utf16_chars;
+                        if !end_applying_attributes {
+                            text_view_begin_editing(self.text_view, c == 0, s);
+                            let mut utf16_chars_copy = utf16_chars;
+                            for i in u..v {
+                                let run = &runs[i];
 
-                        text_view_begin_editing(self.text_view, c == 0, s);
-                        for i in u..v {
-                            let run = &runs[i];
+                                let gui = *run.gui_info.borrow(s);
+                                let next_code_units = utf16_chars_copy + gui.codeunits + if i < lines - 1 { 1 } else { 0 };
 
-                            let gui = *run.gui_info.borrow(s);
-                            let next_code_units = utf16_chars_copy + gui.codeunits + if i < lines - 1 { 1 } else { 0 };
+                                // note that content dirty imlies attribute dirty
+                                if !end_applying_attributes && (gui.run_attribute_dirty || gui.char_attribute_dirty) {
+                                    self.assign_attributes(utf16_chars_copy..next_code_units, i, run, gui.run_attribute_dirty, gui.char_attribute_dirty, s);
+                                }
 
-                            // note that content dirty imlies attribute dirty
-                            if (!end_applying_attributes && (gui.run_attribute_dirty || gui.char_attribute_dirty)) {
-                                self.assign_attributes(utf16_chars_copy..next_code_units, i, run, gui.run_attribute_dirty, gui.char_attribute_dirty, s);
+                                utf16_chars_copy = next_code_units;
                             }
-
-                            utf16_chars_copy = next_code_units;
+                            text_view_end_editing(self.text_view, s);
                         }
-                        text_view_end_editing(self.text_view, s);
 
                         // rename for clarity
                         let applied_attributes = !end_applying_attributes;
