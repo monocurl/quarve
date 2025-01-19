@@ -3,6 +3,7 @@ use std::path::Path;
 use crate::core::{Environment, MSlock};
 use crate::native;
 use crate::resource::Resource;
+use crate::util::geo;
 use crate::util::geo::{Rect, Size};
 use crate::view::{EnvRef, IntoViewProvider, WeakInvalidator, NativeView, Subtree, ViewProvider};
 
@@ -53,19 +54,19 @@ impl<E> ViewProvider<E> for ImageViewVP where E: Environment {
     }
 
     fn xsquished_size(&mut self, _s: MSlock) -> Size {
-        self.intrinsic
+        Size::new(0.0, 0.0)
     }
 
     fn xstretched_size(&mut self, _s: MSlock) -> Size {
-        self.intrinsic
+        Size::new(geo::UNBOUNDED, geo::UNBOUNDED)
     }
 
     fn ysquished_size(&mut self, _s: MSlock) -> Size {
-        self.intrinsic
+        Size::new(0.0, 0.0)
     }
 
     fn ystretched_size(&mut self, _s: MSlock) -> Size {
-        self.intrinsic
+        Size::new(geo::UNBOUNDED, geo::UNBOUNDED)
     }
 
     fn up_context(&mut self, _s: MSlock) -> Self::UpContext {
